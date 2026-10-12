@@ -11,8 +11,12 @@ use app::QuietReaderApp;
 use settings::AppSettings;
 
 fn main() -> eframe::Result<()> {
-    let settings = AppSettings::load();
     let initial_file = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    let Some(_instance_guard) = platform::acquire_single_instance(&initial_file) else {
+        return Ok(());
+    };
+
+    let settings = AppSettings::load();
 
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_min_inner_size([600.0, 400.0])

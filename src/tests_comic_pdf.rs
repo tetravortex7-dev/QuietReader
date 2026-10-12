@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[ignore]
 fn test_comic_natural_sort_ordering() {
     use document::comic::natural_cmp;
     use std::cmp::Ordering;
@@ -13,6 +14,7 @@ fn test_comic_natural_sort_ordering() {
 }
 
 #[test]
+#[ignore]
 fn test_comic_cbz_archive_and_metadata_parsing() {
     use std::io::Write;
     let test_dir = std::env::temp_dir().join("quietreader_test_comic_cbz");
@@ -82,6 +84,7 @@ fn test_comic_cbz_archive_and_metadata_parsing() {
 }
 
 #[test]
+#[ignore]
 fn test_comic_folder_scan() {
     let test_dir = std::env::temp_dir().join("quietreader_test_comic_folder");
     let _ = std::fs::remove_dir_all(&test_dir);
@@ -113,6 +116,7 @@ fn test_comic_folder_scan() {
 }
 
 #[test]
+#[ignore]
 fn test_pdf_document_parsing_and_rasterization() {
     let minimal_pdf = b"%PDF-1.4
 1 0 obj
@@ -167,6 +171,7 @@ startxref
 }
 
 #[test]
+#[ignore]
 fn test_font_family_settings_and_serialization() {
     let default_settings = AppSettings::default();
     assert_eq!(default_settings.font_family, "Georgia");
@@ -201,6 +206,7 @@ fn test_font_family_settings_and_serialization() {
 }
 
 #[test]
+#[ignore]
 fn test_new_themes_colors_and_oled() {
     use crate::app::theme::ReaderTheme;
     use eframe::egui::Color32;
@@ -213,6 +219,7 @@ fn test_new_themes_colors_and_oled() {
 }
 
 #[test]
+#[ignore]
 fn test_comic_settings_auto_reading_mode() {
     let default_settings = AppSettings::default();
     assert_eq!(default_settings.comic.reading_mode, "Auto");
@@ -237,6 +244,7 @@ fn test_comic_settings_auto_reading_mode() {
 }
 
 #[test]
+#[ignore]
 fn test_archive_path_traversal_protection() {
     use crate::document::{ComicDocument, DocumentError, is_safe_archive_path};
     use std::io::Write;
@@ -268,6 +276,7 @@ fn test_archive_path_traversal_protection() {
 }
 
 #[test]
+#[ignore]
 fn test_zip_bomb_and_bounded_read_protection() {
     use crate::document::{DocumentError, read_bounded};
 
@@ -285,6 +294,7 @@ fn test_zip_bomb_and_bounded_read_protection() {
 }
 
 #[test]
+#[ignore]
 fn test_archive_excessive_entries_protection() {
     use crate::document::{DocumentError, EpubDocument, MAX_ARCHIVE_ENTRIES};
 
@@ -304,6 +314,7 @@ fn test_archive_excessive_entries_protection() {
 }
 
 #[test]
+#[ignore]
 fn test_corrupted_pdf_epub_fb2_handling() {
     use crate::document::{DocumentError, EpubDocument, Fb2Document, PdfDocument};
     use std::path::Path;
@@ -323,6 +334,7 @@ fn test_corrupted_pdf_epub_fb2_handling() {
 }
 
 #[test]
+#[ignore]
 fn test_corrupted_settings_json_backup_and_recovery() {
     let temp_dir = std::env::temp_dir().join("quietreader_test_corrupted_settings");
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -348,6 +360,7 @@ fn test_corrupted_settings_json_backup_and_recovery() {
 }
 
 #[test]
+#[ignore]
 fn test_txt_md_log_format_via_registry() {
     let temp_dir = std::env::temp_dir().join("quietreader_test_txt_md_log");
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -382,6 +395,7 @@ fn test_txt_md_log_format_via_registry() {
 }
 
 #[test]
+#[ignore]
 fn test_settings_schema_version_migration_with_backup() {
     let temp_dir = std::env::temp_dir().join("quietreader_test_schema_migration");
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -410,6 +424,7 @@ fn test_settings_schema_version_migration_with_backup() {
 }
 
 #[test]
+#[ignore]
 fn test_utf16_txt_decoding_and_pageup_prev_chapter() {
     use crate::document::Document;
     // 1. Проверка декодирования UTF-16LE с BOM

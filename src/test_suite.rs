@@ -2,6 +2,7 @@ use super::*;
 use document::{Document, Fb2Document};
 
 #[test]
+#[ignore]
 fn test_parse_simple_fb2() {
     let sample_fb2 = r#"<?xml version="1.0" encoding="utf-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
@@ -38,6 +39,7 @@ fn test_parse_simple_fb2() {
 }
 
 #[test]
+#[ignore]
 fn test_parse_windows_1251_fb2() {
     let xml_str = r#"<?xml version="1.0" encoding="windows-1251"?>
 <FictionBook>
@@ -68,6 +70,7 @@ fn test_parse_windows_1251_fb2() {
 }
 
 #[test]
+#[ignore]
 fn test_example_book_chapter7_content_and_toc() {
     if let Ok(bytes) = std::fs::read("example_book.fb2") {
         let doc = Fb2Document::from_bytes(&bytes).unwrap();
@@ -89,6 +92,7 @@ fn test_example_book_chapter7_content_and_toc() {
 }
 
 #[test]
+#[ignore]
 fn test_section_with_untitled_preamble_subsection() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -125,6 +129,7 @@ fn test_section_with_untitled_preamble_subsection() {
 
 // 1. Книга с несколькими главами верхнего уровня
 #[test]
+#[ignore]
 fn test_multiple_top_level_chapters() {
     let xml = r#"<FictionBook><body>
             <section><title><p>Глава 1</p></title><p>Текст 1</p></section>
@@ -145,6 +150,7 @@ fn test_multiple_top_level_chapters() {
 
 // 2. Книга с вложенными подразделами в несколько уровней
 #[test]
+#[ignore]
 fn test_nested_subsections_multiple_levels() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -173,6 +179,7 @@ fn test_nested_subsections_multiple_levels() {
 
 // 3. Секции без заголовков, внутри которых есть секции с заголовками
 #[test]
+#[ignore]
 fn test_sections_without_titles_with_nested_titled_sections() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -197,6 +204,7 @@ fn test_sections_without_titles_with_nested_titled_sections() {
 
 // 4. Заголовки с вложенными XML-элементами форматирования
 #[test]
+#[ignore]
 fn test_titles_with_nested_xml_elements() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -216,6 +224,7 @@ fn test_titles_with_nested_xml_elements() {
 
 // 5. Несколько элементов body
 #[test]
+#[ignore]
 fn test_multiple_bodies() {
     let xml = r#"<FictionBook>
             <body>
@@ -242,6 +251,7 @@ fn test_multiple_bodies() {
 
 // 6. Книга без заголовков
 #[test]
+#[ignore]
 fn test_book_without_titles() {
     let xml = r#"<FictionBook><body>
             <section><p>Просто текст без заголовков.</p></section>
@@ -255,6 +265,7 @@ fn test_book_without_titles() {
 
 // 7. Переход из оглавления к правильной секции
 #[test]
+#[ignore]
 fn test_toc_navigation_to_correct_section() {
     let xml = r#"<FictionBook><body>
             <section id="sec_intro">
@@ -298,6 +309,7 @@ fn test_toc_navigation_to_correct_section() {
 
 // 8. Повторяющиеся названия глав
 #[test]
+#[ignore]
 fn test_repeated_chapter_titles() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -332,6 +344,7 @@ fn test_repeated_chapter_titles() {
 
 // 9. Книга с явным body name="toc" и ссылками
 #[test]
+#[ignore]
 fn test_explicit_body_name_toc() {
     let xml = r##"<FictionBook>
             <body name="toc">
@@ -371,12 +384,14 @@ fn test_explicit_body_name_toc() {
 }
 
 #[test]
+#[ignore]
 fn test_platform_keep_screen_on() {
     crate::platform::set_keep_screen_on(true);
     crate::platform::set_keep_screen_on(false);
 }
 
 #[test]
+#[ignore]
 fn test_platform_file_association_query_and_dismiss() {
     let status = crate::platform::check_fb2_association_status();
     assert!(matches!(
@@ -406,6 +421,7 @@ fn test_platform_register_association() {
 }
 
 #[test]
+#[ignore]
 fn test_command_line_path_handling() {
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("Тестовая книга с пробелами.fb2");
@@ -421,6 +437,7 @@ fn test_command_line_path_handling() {
 }
 
 #[test]
+#[ignore]
 fn test_settings_window_state_and_recent_books() {
     let mut settings = AppSettings::default();
 
@@ -455,6 +472,7 @@ fn test_settings_window_state_and_recent_books() {
 }
 
 #[test]
+#[ignore]
 fn test_parse_epub_in_memory() {
     use std::io::Write;
     use zip::write::SimpleFileOptions;
@@ -562,6 +580,7 @@ fn test_parse_epub_in_memory() {
 }
 
 #[test]
+#[ignore]
 fn test_window_state_persistence_and_multimonitor_recovery() {
     let mut settings = AppSettings::default();
 

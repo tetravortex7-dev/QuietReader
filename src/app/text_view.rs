@@ -32,7 +32,11 @@ impl TextView {
             let total_chapters = doc.chapters().len();
             let chapter = doc.chapters().get(*current_chapter);
 
-            let mut scroll_area = ScrollArea::vertical().auto_shrink([false, false]);
+            let allow_select = !ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+
+            let mut scroll_area = ScrollArea::vertical()
+                .id_salt(("text_scroll", current_file_path, *current_chapter))
+                .auto_shrink([false, false]);
             if let Some(offset) = pending_scroll_y.take() {
                 scroll_area = scroll_area.vertical_scroll_offset(offset);
             }
@@ -49,7 +53,8 @@ impl TextView {
                                 .size(font_size * 1.35)
                                 .strong()
                                 .color(theme.text_color());
-                            let resp = ui.add(egui::Label::new(title_heading).selectable(true));
+                            let resp =
+                                ui.add(egui::Label::new(title_heading).selectable(allow_select));
                             resp.context_menu(|ui| {
                                 if ui.button("📋 Копировать").clicked() {
                                     ui.ctx().copy_text(ch.title.clone());
@@ -80,7 +85,8 @@ impl TextView {
                                 let text = RichText::new(&text_content)
                                     .size(font_size)
                                     .color(theme.text_color());
-                                let resp = ui.add(egui::Label::new(text).wrap().selectable(true));
+                                let resp =
+                                    ui.add(egui::Label::new(text).wrap().selectable(allow_select));
                                 resp.context_menu(|ui| {
                                     if ui.button("📋 Копировать").clicked() {
                                         ui.ctx().copy_text(paragraph.clone());

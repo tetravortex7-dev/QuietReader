@@ -91,6 +91,10 @@ pub struct AppSettings {
     pub window: WindowState,
     pub recent_books: Vec<RecentBook>,
     pub last_opened_book: Option<PathBuf>,
+    #[serde(default)]
+    pub open_tabs: Vec<PathBuf>,
+    #[serde(default)]
+    pub active_tab_index: usize,
     pub font_size: f32,
     #[serde(default = "default_font_family")]
     pub font_family: String,
@@ -112,6 +116,8 @@ impl Default for AppSettings {
             window: WindowState::default(),
             recent_books: Vec::new(),
             last_opened_book: None,
+            open_tabs: Vec::new(),
+            active_tab_index: 0,
             font_size: 19.0,
             font_family: "Georgia".to_string(),
             theme: "Sepia".to_string(),

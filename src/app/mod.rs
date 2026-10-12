@@ -4,6 +4,7 @@ pub mod dialogs;
 pub mod document_loader;
 pub mod fonts;
 pub mod settings_view;
+pub mod tabs;
 pub mod text_view;
 pub mod theme;
 pub mod toc_view;
@@ -19,12 +20,15 @@ pub use self::comic_view::ComicViewState;
 pub use self::dialogs::{Dialogs, SettingsTab};
 pub use self::fonts::apply_font_family;
 pub use self::settings_view::SettingsView;
+pub use self::tabs::{BookTab, TabBarAction, TabsBar};
 pub use self::text_view::TextView;
 pub use self::theme::ReaderTheme;
 pub use self::toc_view::TocView;
 
 /// Главное состояние и координатор приложения QuietReader
 pub struct QuietReaderApp {
+    pub tabs: Vec<BookTab>,
+    pub active_tab: usize,
     pub document: Option<std::sync::Arc<dyn Document>>,
     pub current_file_path: Option<PathBuf>,
     pub current_chapter: usize,
@@ -88,6 +92,8 @@ impl QuietReaderApp {
             crate::platform::supports_file_association() && !is_already_associated && !dismissed;
 
         Self {
+            tabs: Vec::new(),
+            active_tab: 0,
             document: None,
             current_file_path: None,
             current_chapter: 0,
@@ -120,18 +126,31 @@ impl QuietReaderApp {
         settings: AppSettings,
     ) -> Self {
         apply_font_family(&cc.egui_ctx, &settings.font_family);
+        let saved_tabs = settings.open_tabs.clone();
+        let saved_active_idx = settings.active_tab_index;
         let mut app = Self::from_settings(settings);
         crate::platform::set_keep_screen_on(app.keep_screen_on);
 
-        if let Some(path) = initial_file {
-            if path.exists() && path.is_file() {
-                app.load_file(path);
+        if !saved_tabs.is_empty() {
+            for tab_path in saved_tabs {
+                if tab_path.exists() {
+                    app.load_file(tab_path);
+                }
+            }
+            if !app.tabs.is_empty() {
+                let target_idx = saved_active_idx.min(app.tabs.len() - 1);
+                app.activate_tab(target_idx);
             }
         } else if let Some(last_path) = app.settings.last_opened_book.clone()
             && last_path.exists()
-            && last_path.is_file()
         {
             app.load_file(last_path);
+        }
+
+        if let Some(path) = initial_file
+            && path.exists()
+        {
+            app.load_file(path);
         }
 
         app
@@ -144,7 +163,17 @@ impl QuietReaderApp {
             .is_some()
     }
 
-    pub fn sync_and_save_settings(&mut self) {
+    pub fn save_active_to_tab(&mut self) {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab)
+            && self.document.is_some()
+        {
+            tab.current_chapter = self.current_chapter;
+            tab.last_rendered_chapter = self.last_rendered_chapter;
+            tab.current_scroll_y = self.current_scroll_y;
+            tab.viewport_height = self.viewport_height;
+            tab.max_scroll_y = self.max_scroll_y;
+            tab.comic_page = self.comic_view.current_page;
+        }
         ReaderCore::record_progress(
             &mut self.settings,
             &self.document,
@@ -153,6 +182,89 @@ impl QuietReaderApp {
             self.comic_view.current_page,
             self.current_scroll_y,
         );
+    }
+
+    pub fn activate_tab(&mut self, idx: usize) {
+        if idx >= self.tabs.len() {
+            return;
+        }
+        self.save_active_to_tab();
+        self.autoscroll.stop();
+        self.apply_tab_state(idx);
+        self.sync_and_save_settings();
+    }
+
+    fn apply_tab_state(&mut self, idx: usize) {
+        if let Some(tab) = self.tabs.get(idx).cloned() {
+            self.active_tab = idx;
+            self.document = Some(tab.document);
+            self.current_file_path = Some(tab.file_path.clone());
+            self.current_chapter = tab.current_chapter;
+            self.last_rendered_chapter = tab.current_chapter;
+            self.pending_scroll_y = Some(tab.current_scroll_y);
+            self.current_scroll_y = tab.current_scroll_y;
+            self.viewport_height = tab.viewport_height;
+            self.max_scroll_y = tab.max_scroll_y;
+            self.comic_view.clear_cache();
+            self.comic_view.current_page = tab.comic_page;
+            self.settings.last_opened_book = Some(tab.file_path);
+            self.settings.active_tab_index = idx;
+            self.status_message = Some(format!("Вкладка [{}]: {}", tab.format_badge, tab.title));
+        }
+    }
+
+    pub fn close_tab(&mut self, idx: usize) {
+        if idx >= self.tabs.len() {
+            return;
+        }
+        self.save_active_to_tab();
+        self.tabs.remove(idx);
+
+        if self.tabs.is_empty() {
+            self.active_tab = 0;
+            self.document = None;
+            self.current_file_path = None;
+            self.current_chapter = 0;
+            self.last_rendered_chapter = 0;
+            self.pending_scroll_y = None;
+            self.current_scroll_y = 0.0;
+            self.max_scroll_y = 0.0;
+            self.comic_view.clear_cache();
+            self.autoscroll.stop();
+            self.status_message = Some("Все вкладки закрыты".to_string());
+        } else {
+            let next_idx = if idx < self.active_tab {
+                self.active_tab - 1
+            } else {
+                self.active_tab.min(self.tabs.len() - 1)
+            };
+            self.apply_tab_state(next_idx);
+        }
+        self.sync_and_save_settings();
+    }
+
+    pub fn next_tab(&mut self) {
+        if self.tabs.len() > 1 {
+            let next = (self.active_tab + 1) % self.tabs.len();
+            self.activate_tab(next);
+        }
+    }
+
+    pub fn prev_tab(&mut self) {
+        if self.tabs.len() > 1 {
+            let prev = if self.active_tab == 0 {
+                self.tabs.len() - 1
+            } else {
+                self.active_tab - 1
+            };
+            self.activate_tab(prev);
+        }
+    }
+
+    pub fn sync_and_save_settings(&mut self) {
+        self.save_active_to_tab();
+        self.settings.open_tabs = self.tabs.iter().map(|t| t.file_path.clone()).collect();
+        self.settings.active_tab_index = self.active_tab;
         self.settings.font_size = self.font_size;
         self.settings.keep_screen_on = self.keep_screen_on;
         self.settings.show_toc = self.show_toc;
@@ -181,7 +293,7 @@ impl QuietReaderApp {
     }
 
     pub fn open_file_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(paths) = rfd::FileDialog::new()
             .add_filter(
                 "Все поддерживаемые документы",
                 &[
@@ -200,9 +312,11 @@ impl QuietReaderApp {
                 "Текстовые файлы (*.txt, *.md, *.log)",
                 &["txt", "md", "markdown", "log"],
             )
-            .pick_file()
+            .pick_files()
         {
-            self.load_file(path);
+            for path in paths {
+                self.load_file(path);
+            }
         }
     }
 
@@ -216,12 +330,30 @@ impl QuietReaderApp {
     }
 
     pub fn load_file(&mut self, path: PathBuf) {
+        if let Some(existing_idx) = self.tabs.iter().position(|t| t.file_path == path) {
+            self.activate_tab(existing_idx);
+            return;
+        }
+
+        self.save_active_to_tab();
+        self.autoscroll.stop();
+
         match document_loader::DocumentLoader::load_file(
             path,
             &mut self.settings,
             &mut self.comic_view,
         ) {
             Ok(state) => {
+                let tab = BookTab::new(
+                    state.file_path.clone(),
+                    state.document.clone(),
+                    state.chapter,
+                    state.scroll_y,
+                    state.comic_page,
+                );
+                self.tabs.push(tab);
+                self.active_tab = self.tabs.len() - 1;
+
                 self.current_file_path = Some(state.file_path);
                 self.document = Some(state.document);
                 self.current_chapter = state.chapter;
@@ -230,6 +362,7 @@ impl QuietReaderApp {
                 self.current_scroll_y = state.scroll_y;
                 self.comic_view.current_page = state.comic_page;
                 self.status_message = Some(state.status_message);
+                self.sync_and_save_settings();
             }
             Err(e) => {
                 self.status_message = Some(e);
@@ -254,6 +387,17 @@ impl QuietReaderApp {
 impl eframe::App for QuietReaderApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        crate::platform::register_primary_window_hwnd();
+        let (should_focus, ipc_files) = crate::platform::poll_single_instance_requests();
+        if should_focus {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            for path in ipc_files {
+                self.load_file(path);
+            }
+            ctx.request_repaint();
+        }
 
         if !self.is_fullscreen {
             if !ctx.input(|i| i.pointer.any_down()) && crate::platform::ensure_window_on_screen() {
@@ -284,8 +428,28 @@ impl eframe::App for QuietReaderApp {
             let path = dropped.path();
             if !path.as_os_str().is_empty() {
                 self.load_file(path.to_path_buf());
-                break;
             }
+        }
+
+        let (ctrl_o, ctrl_w, next_tab_key, prev_tab_key) = ctx.input(|i| {
+            let cmd_mod = i.modifiers.ctrl || i.modifiers.command;
+            let shift = i.modifiers.shift;
+            (
+                cmd_mod && i.key_pressed(egui::Key::O),
+                cmd_mod && i.key_pressed(egui::Key::W),
+                cmd_mod && !shift && i.key_pressed(egui::Key::Tab),
+                cmd_mod && shift && i.key_pressed(egui::Key::Tab),
+            )
+        });
+        if ctrl_o {
+            self.open_file_dialog();
+        }
+        if ctrl_w && !self.tabs.is_empty() {
+            self.close_tab(self.active_tab);
+        } else if next_tab_key {
+            self.next_tab();
+        } else if prev_tab_key {
+            self.prev_tab();
         }
 
         if self.current_chapter != self.last_rendered_chapter {
@@ -461,15 +625,15 @@ impl eframe::App for QuietReaderApp {
         ctx.set_visuals(self.theme.create_visuals());
 
         let ptr_top = ctx
-            .input(|i| i.pointer.latest_pos().map(|p| p.y < 36.0))
+            .input(|i| i.pointer.latest_pos().map(|p| p.y < 72.0))
             .unwrap_or(false);
         if !self.is_fullscreen || ptr_top || self.show_settings_dialog {
             Panel::top("top_bar").show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("📂 Открыть...").on_hover_text("Открыть файл книги, PDF или комикса (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z)").clicked() {
+                    if ui.button("📂 Открыть...").on_hover_text("Открыть один или несколько файлов в новых вкладках (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z)").clicked() {
                         self.open_file_dialog();
                     }
-                    if ui.button("📁 Папка...").on_hover_text("Открыть каталог с изображениями манги или комикса").clicked() {
+                    if ui.button("📁 Папка...").on_hover_text("Открыть каталог с изображениями манги или комикса в новой вкладке").clicked() {
                         self.open_folder_dialog();
                     }
                     if ui.button("📚 Недавние...").on_hover_text("Список недавно открытых книг").clicked() {
@@ -493,6 +657,19 @@ impl eframe::App for QuietReaderApp {
                     });
                 });
             });
+
+            if !self.tabs.is_empty() {
+                let mut tab_action = TabBarAction::None;
+                Panel::top("tabs_bar").show(ui, |ui| {
+                    tab_action = TabsBar::render(ui, &self.tabs, self.active_tab, &self.theme);
+                });
+                match tab_action {
+                    TabBarAction::None => {}
+                    TabBarAction::Activate(idx) => self.activate_tab(idx),
+                    TabBarAction::Close(idx) => self.close_tab(idx),
+                    TabBarAction::OpenNewFile => self.open_file_dialog(),
+                }
+            }
 
             Panel::bottom("bottom_bar").show(ui, |ui| {
                 ui.horizontal(|ui| {

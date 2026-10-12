@@ -238,7 +238,9 @@ impl ComicViewState {
         let is_double = settings.page_layout == "Double" && !is_webtoon;
 
         if is_webtoon {
-            let mut scroll_area = ScrollArea::vertical().auto_shrink([false, false]);
+            let mut scroll_area = ScrollArea::vertical()
+                .id_salt(("webtoon_scroll", self.doc_generation))
+                .auto_shrink([false, false]);
             if let Some(offset) = pending_scroll_y.take() {
                 scroll_area = scroll_area.vertical_scroll_offset(offset);
             }
