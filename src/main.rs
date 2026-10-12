@@ -114,6 +114,58 @@ mod tests {
         assert_eq!(doc.chapters()[doc.toc()[0].chapter_index].paragraphs[0], "«Мой дядя самых честных правил...");
     }
 
+    #[test]
+    fn test_example_book_chapter7_content_and_toc() {
+        if let Ok(bytes) = std::fs::read("example_book.fb2") {
+            let doc = Fb2Document::from_bytes(&bytes).unwrap();
+            let toc = doc.toc();
+            let ch7_toc = toc.iter().find(|item| item.title.contains("Живая плоть"))
+                .expect("Глава 7 должна присутствовать в TOC");
+            let ch7 = &doc.chapters()[ch7_toc.chapter_index];
+            assert!(ch7.title.contains("Живая плоть"));
+            assert!(!ch7.paragraphs.is_empty(), "Глава 7 не должна быть пустой!");
+            assert!(
+                ch7.paragraphs.iter().any(|p| p.contains("Диктовка. Глава 7: «Живая плоть»")),
+                "Глава 7 должна содержать текст диктовки"
+            );
+        }
+    }
+
+    #[test]
+    fn test_section_with_untitled_preamble_subsection() {
+        let xml = r#"<FictionBook><body>
+            <section>
+                <title>
+                    <p>Глава 7</p>
+                    <p>Живая плоть</p>
+                </title>
+                <section>
+                    <p>Вводный текст главы 7, диктовка.</p>
+                </section>
+                <section>
+                    <title><p>Сеанс 631</p></title>
+                    <p>Текст сеанса 631.</p>
+                </section>
+            </section>
+        </body></FictionBook>"#;
+
+        let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+        let toc = doc.toc();
+        assert_eq!(toc.len(), 1);
+        assert_eq!(toc[0].title, "Глава 7 — Живая плоть");
+        assert_eq!(toc[0].children.len(), 1);
+        assert_eq!(toc[0].children[0].title, "Сеанс 631");
+
+        let ch0 = &doc.chapters()[toc[0].chapter_index];
+        assert_eq!(ch0.title, "Глава 7 — Живая плоть");
+        assert_eq!(ch0.paragraphs.len(), 1);
+        assert_eq!(ch0.paragraphs[0], "Вводный текст главы 7, диктовка.");
+
+        let ch1 = &doc.chapters()[toc[0].children[0].chapter_index];
+        assert_eq!(ch1.title, "Сеанс 631");
+        assert_eq!(ch1.paragraphs[0], "Текст сеанса 631.");
+    }
+
     // 1. Книга с несколькими главами верхнего уровня
     #[test]
     fn test_multiple_top_level_chapters() {
@@ -440,6 +492,218 @@ mod tests {
         let json = serde_json::to_string(&settings).expect("Сериализация должна работать");
         let loaded: AppSettings = serde_json::from_str(&json).expect("Десериализация должна работать");
         assert_eq!(loaded, settings);
+    }
+
+    #[test]
+    fn test_parse_epub_in_memory() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let mut zip_buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut zip_buf);
+            let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+            // 1. META-INF/container.xml
+            let container_xml = r#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#;
+            zip.start_file("META-INF/container.xml", options).unwrap();
+            zip.write_all(container_xml.as_bytes()).unwrap();
+
+            // 2. OEBPS/content.opf
+            let content_opf = r#"<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Мастер и Маргарита</dc:title>
+    <dc:creator>Михаил Булгаков</dc:creator>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>"#;
+            zip.start_file("OEBPS/content.opf", options).unwrap();
+            zip.write_all(content_opf.as_bytes()).unwrap();
+
+            // 3. OEBPS/toc.ncx
+            let toc_ncx = r#"<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="np-1" playOrder="1">
+      <navLabel><text>Глава 1. Никогда не разговаривайте с неизвестными</text></navLabel>
+      <content src="chapter1.xhtml"/>
+    </navPoint>
+    <navPoint id="np-2" playOrder="2">
+      <navLabel><text>Глава 2. Понтий Пилат</text></navLabel>
+      <content src="chapter2.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>"#;
+            zip.start_file("OEBPS/toc.ncx", options).unwrap();
+            zip.write_all(toc_ncx.as_bytes()).unwrap();
+
+            // 4. OEBPS/chapter1.xhtml
+            let ch1_xhtml = r#"<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Глава 1</title></head>
+<body>
+  <h1>Глава 1. Никогда не разговаривайте с неизвестными</h1>
+  <p>Однажды весною, в час небывало жаркого заката, в Москве, на Патриарших прудах, появились два гражданина.</p>
+  <p>Первый из них — приблизительно сорокалетний, одетый в серенькую летнюю пару...</p>
+</body>
+</html>"#;
+            zip.start_file("OEBPS/chapter1.xhtml", options).unwrap();
+            zip.write_all(ch1_xhtml.as_bytes()).unwrap();
+
+            // 5. OEBPS/chapter2.xhtml
+            let ch2_xhtml = r#"<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Глава 2</title></head>
+<body>
+  <h1>Глава 2. Понтий Пилат</h1>
+  <p>В белом плаще с кровавым подбоем, шаркающей кавалерийской походкой...</p>
+</body>
+</html>"#;
+            zip.start_file("OEBPS/chapter2.xhtml", options).unwrap();
+            zip.write_all(ch2_xhtml.as_bytes()).unwrap();
+
+            zip.finish().unwrap();
+        }
+
+        let zip_bytes = zip_buf.into_inner();
+        let doc = document::EpubDocument::from_bytes(&zip_bytes).expect("Должен успешно распарсить EPUB");
+
+        assert_eq!(doc.metadata().title, "Мастер и Маргарита");
+        assert_eq!(doc.metadata().author, "Михаил Булгаков");
+        assert_eq!(doc.chapters().len(), 2);
+        assert_eq!(doc.chapters()[0].paragraphs.len(), 3);
+        assert!(doc.chapters()[0].paragraphs[0].contains("Глава 1"));
+        assert!(doc.chapters()[0].paragraphs[1].contains("Патриарших прудах"));
+        assert_eq!(doc.chapters()[1].paragraphs.len(), 2);
+        assert!(doc.chapters()[1].paragraphs[0].contains("Глава 2"));
+        assert!(doc.chapters()[1].paragraphs[1].contains("белом плаще"));
+
+        // Проверка оглавления NCX
+        assert_eq!(doc.toc().len(), 2);
+        assert_eq!(doc.toc()[0].title, "Глава 1. Никогда не разговаривайте с неизвестными");
+        assert_eq!(doc.toc()[0].chapter_index, 0);
+        assert_eq!(doc.toc()[1].title, "Глава 2. Понтий Пилат");
+        assert_eq!(doc.toc()[1].chapter_index, 1);
+    }
+
+    #[test]
+    fn test_comic_natural_sort_ordering() {
+        use document::comic::natural_cmp;
+        use std::cmp::Ordering;
+
+        assert_eq!(natural_cmp("page1.jpg", "page2.jpg"), Ordering::Less);
+        assert_eq!(natural_cmp("page2.jpg", "page10.jpg"), Ordering::Less);
+        assert_eq!(natural_cmp("page10.jpg", "page2.jpg"), Ordering::Greater);
+        assert_eq!(natural_cmp("ch1_p09.png", "ch1_p10.png"), Ordering::Less);
+        assert_eq!(natural_cmp("page5.webp", "page5.webp"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_comic_cbz_archive_and_metadata_parsing() {
+        use std::io::Write;
+        let test_dir = std::env::temp_dir().join("quietreader_test_comic_cbz");
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).unwrap();
+        let cbz_path = test_dir.join("test_manga.cbz");
+
+        // Создаем тестовое 10x10 PNG изображение
+        let mut sample_png = Vec::new();
+        let img = image::RgbaImage::new(10, 10);
+        img.write_to(&mut std::io::Cursor::new(&mut sample_png), image::ImageFormat::Png).unwrap();
+
+        // Формируем CBZ архив с ComicInfo.xml
+        {
+            let file = std::fs::File::create(&cbz_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+
+            let comic_info_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Title>Ван-Пис: Глава 1</Title>
+  <Series>One Piece</Series>
+  <Number>1</Number>
+  <Writer>Эйитиро Ода</Writer>
+  <Manga>YesAndRightToLeft</Manga>
+</ComicInfo>"#;
+            zip.start_file("ComicInfo.xml", options).unwrap();
+            zip.write_all(comic_info_xml.as_bytes()).unwrap();
+
+            // Добавляем страницы в разном порядке, чтобы проверить естественную сортировку
+            zip.start_file("ch01/page_10.png", options).unwrap();
+            zip.write_all(&sample_png).unwrap();
+
+            zip.start_file("ch01/page_01.png", options).unwrap();
+            zip.write_all(&sample_png).unwrap();
+
+            zip.start_file("ch01/page_02.png", options).unwrap();
+            zip.write_all(&sample_png).unwrap();
+
+            zip.finish().unwrap();
+        }
+
+        // Открываем через общую фабрику open_document
+        let doc = document::open_document(&cbz_path).expect("Должен успешно открыть CBZ архив");
+        assert_eq!(doc.metadata().title, "One Piece #1: Ван-Пис: Глава 1");
+        assert_eq!(doc.metadata().author, "Эйитиро Ода");
+
+        let comic = doc.as_comic().expect("Документ должен реализовать ComicDocumentTrait");
+        assert!(comic.is_manga(), "Должен определиться как манга");
+        assert_eq!(comic.page_count(), 3, "Должно быть 3 страницы");
+
+        // Проверяем естественную сортировку страниц
+        assert_eq!(comic.page_name(0), "page_01.png");
+        assert_eq!(comic.page_name(1), "page_02.png");
+        assert_eq!(comic.page_name(2), "page_10.png");
+
+        // Проверяем загрузку и декодирование изображения
+        let decoded = comic.load_page_image(0).expect("Страница 0 должна успешно декодироваться");
+        assert_eq!(decoded.width, 10);
+        assert_eq!(decoded.height, 10);
+        assert_eq!(decoded.rgba.len(), 10 * 10 * 4);
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_comic_folder_scan() {
+        let test_dir = std::env::temp_dir().join("quietreader_test_comic_folder");
+        let _ = std::fs::remove_dir_all(&test_dir);
+        let folder_path = test_dir.join("MangaFolder");
+        std::fs::create_dir_all(&folder_path).unwrap();
+
+        let mut sample_png = Vec::new();
+        let img = image::RgbaImage::new(4, 4);
+        img.write_to(&mut std::io::Cursor::new(&mut sample_png), image::ImageFormat::Png).unwrap();
+
+        std::fs::write(folder_path.join("2.png"), &sample_png).unwrap();
+        std::fs::write(folder_path.join("1.png"), &sample_png).unwrap();
+        std::fs::write(folder_path.join("10.png"), &sample_png).unwrap();
+
+        let doc = document::open_document(&folder_path).expect("Должен успешно открыть папку с мангой");
+        let comic = doc.as_comic().expect("Папка должна определиться как комикс");
+        assert_eq!(comic.page_count(), 3);
+        assert_eq!(comic.page_name(0), "1.png");
+        assert_eq!(comic.page_name(1), "2.png");
+        assert_eq!(comic.page_name(2), "10.png");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 }
 

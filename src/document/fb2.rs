@@ -386,7 +386,7 @@ fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocIt
             continue;
         }
 
-        let body_has_direct_text = !body.direct_paragraphs.is_empty();
+        let body_has_direct_text = body.direct_paragraphs.iter().any(|p| !p.trim().is_empty());
         let body_has_title = body.title.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
 
         let mut body_start_chapter: Option<usize> = None;
@@ -438,16 +438,49 @@ fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocIt
 }
 
 fn flatten_section(
-    section: SectionNode,
+    mut section: SectionNode,
     ctx: &mut FlattenContext,
 ) -> (Option<usize>, Vec<TocItem>) {
     let has_own_title = section.title.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
-    let has_own_paragraphs = !section.paragraphs.is_empty();
 
+    // If section has title, but no direct paragraphs, check if its leading subsections are untitled leaf sections.
+    // In FB2, chapter intro/preamble is commonly put in an untitled subsection before titled sub-sessions/sections.
+    if has_own_title && section.paragraphs.is_empty() && !section.subsections.is_empty() {
+        while !section.subsections.is_empty() {
+            let is_untitled_leaf = section.subsections[0]
+                .title
+                .as_ref()
+                .map(|t| t.trim().is_empty())
+                .unwrap_or(true)
+                && section.subsections[0].subsections.is_empty();
+
+            if is_untitled_leaf {
+                let first_sub = section.subsections.remove(0);
+                if section.id.is_none() {
+                    section.id = first_sub.id;
+                }
+                section.paragraphs.extend(first_sub.paragraphs);
+            } else {
+                break;
+            }
+        }
+    }
+
+    let has_own_paragraphs = section.paragraphs.iter().any(|p| !p.trim().is_empty());
     let mut own_chapter_idx: Option<usize> = None;
 
-    // Create a chapter for this section if it has paragraphs or title, or if it is a leaf section
-    if has_own_title || has_own_paragraphs || section.subsections.is_empty() {
+    // Create a chapter for this section if it has paragraphs,
+    // or if it is a leaf section with a title.
+    // Container sections without direct paragraphs must NOT create empty chapters.
+    let should_create_chapter = if has_own_paragraphs {
+        true
+    } else if section.subsections.is_empty() {
+        has_own_title
+    } else {
+        false
+    };
+
+    if should_create_chapter {
         let idx = ctx.chapters.len();
         own_chapter_idx = Some(idx);
         ctx.chapters.push(BookChapter {

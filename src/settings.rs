@@ -33,6 +33,52 @@ impl Default for WindowState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AutoScrollSettings {
+    /// Включен ли режим с паузами (true) или плавное непрерывное движение (false)
+    pub pause_mode: bool,
+    /// Скорость непрерывной прокрутки в пикселях в секунду (от 10.0 до 300.0)
+    pub continuous_speed: f32,
+    /// Шаг прокрутки при режиме с паузами в пикселях (от 20.0 до 500.0)
+    pub step_distance: f32,
+    /// Длительность активного движения при шаге в секундах (от 0.2 до 5.0)
+    pub step_duration: f32,
+    /// Длительность паузы между движениями в секундах (от 0.5 до 30.0)
+    pub pause_duration: f32,
+}
+
+impl Default for AutoScrollSettings {
+    fn default() -> Self {
+        Self {
+            pause_mode: true,
+            continuous_speed: 40.0,
+            step_distance: 90.0,
+            step_duration: 0.8,
+            pause_duration: 3.5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ComicSettings {
+    /// Режим чтения: "Manga" (справа-налево), "Comic" (слева-направо), "Webtoon" (вертикальная непрерывная лента)
+    pub reading_mode: String,
+    /// Расположение страниц: "Single" (одиночная), "Double" (разворот)
+    pub page_layout: String,
+    /// Масштабирование: "FitWindow" (по окну), "FitWidth" (по ширине), "FitHeight" (по высоте), "Original" (100%)
+    pub fit_mode: String,
+}
+
+impl Default for ComicSettings {
+    fn default() -> Self {
+        Self {
+            reading_mode: "Manga".to_string(),
+            page_layout: "Single".to_string(),
+            fit_mode: "FitWindow".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppSettings {
     pub window: WindowState,
     pub recent_books: Vec<RecentBook>,
@@ -41,6 +87,12 @@ pub struct AppSettings {
     pub theme: String,
     pub keep_screen_on: bool,
     pub show_toc: bool,
+    #[serde(default)]
+    pub auto_scroll: AutoScrollSettings,
+    #[serde(default)]
+    pub dismiss_association_prompt: bool,
+    #[serde(default)]
+    pub comic: ComicSettings,
 }
 
 impl Default for AppSettings {
@@ -53,6 +105,9 @@ impl Default for AppSettings {
             theme: "Sepia".to_string(),
             keep_screen_on: true,
             show_toc: true,
+            auto_scroll: AutoScrollSettings::default(),
+            dismiss_association_prompt: false,
+            comic: ComicSettings::default(),
         }
     }
 }

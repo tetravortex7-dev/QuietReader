@@ -1,1 +1,41 @@
+# Rust build artifacts
 /target
+**/*.rs.bk
+*.pdb
+
+# Binaries and executables
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test and sample files / books
+*.fb2
+*.epub
+*.cbz
+*.cbr
+*.cb7
+*.zip
+*.rar
+*.7z
+
+# Prompt & temporary notes
+prompt.md
+
+# Operating System specific files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE / Editor artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
