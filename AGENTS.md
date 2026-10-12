@@ -197,3 +197,15 @@ Avoid unnecessary dependencies and disable unused default features (default-feat
 Do not use panic = "abort" solely for size reduction without considering its consequences.
 
 Verify that optimizations preserve functionality and cross-platform compatibility.
+
+Always use the verified release profile settings `opt-level = "s"` and `lto = "thin"`, as this configuration reduces binary size by ~10% (1.56 MB saved) and builds twice as fast compared to `opt-level = 3` with `lto = "fat"`. After building a release, copy the final binary to the project root (`QuietReader.exe`).
+
+10. Workspace Hygiene and Cleanup
+
+If the project folder size exceeds 3 GB (`> 3 GB`), clean up the workspace (e.g., `target/` build artifacts and temporary files), keeping only the source files, project configuration, and the root `QuietReader.exe` binary, and deleting everything unnecessary.
+
+File line count checks must enforce a limit of 1000 lines per file (not 700). If a file exceeds 1000 lines, refactor it, remove redundant comments and duplicate code, and decompose it into separate modules whenever possible.
+
+11. Immutability of AGENTS.md
+
+`AGENTS.md` is strictly inviolable. Editing or modifying `AGENTS.md` is forbidden without direct, explicit permission given personally by the project owner (user).

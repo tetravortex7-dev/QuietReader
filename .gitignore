@@ -12,6 +12,7 @@
 # Test and sample files / books
 *.fb2
 *.epub
+*.pdf
 *.cbz
 *.cbr
 *.cb7

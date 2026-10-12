@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecentBook {
@@ -71,19 +71,29 @@ pub struct ComicSettings {
 impl Default for ComicSettings {
     fn default() -> Self {
         Self {
-            reading_mode: "Manga".to_string(),
+            reading_mode: "Auto".to_string(),
             page_layout: "Single".to_string(),
             fit_mode: "FitWindow".to_string(),
         }
     }
 }
 
+pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
+
+fn default_font_family() -> String {
+    "Georgia".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub schema_version: u32,
     pub window: WindowState,
     pub recent_books: Vec<RecentBook>,
     pub last_opened_book: Option<PathBuf>,
     pub font_size: f32,
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
     pub theme: String,
     pub keep_screen_on: bool,
     pub show_toc: bool,
@@ -98,10 +108,12 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
             window: WindowState::default(),
             recent_books: Vec::new(),
             last_opened_book: None,
             font_size: 19.0,
+            font_family: "Georgia".to_string(),
             theme: "Sepia".to_string(),
             keep_screen_on: true,
             show_toc: true,
@@ -115,32 +127,88 @@ impl Default for AppSettings {
 impl AppSettings {
     pub fn get_settings_path() -> PathBuf {
         // Portable mode: if quietreader_settings.json exists next to exe, use it
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(parent) = exe_path.parent() {
-                let local_settings = parent.join("quietreader_settings.json");
-                if local_settings.exists() {
-                    return local_settings;
-                }
+        if let Ok(exe_path) = std::env::current_exe()
+            && let Some(parent) = exe_path.parent()
+        {
+            let local_settings = parent.join("quietreader_settings.json");
+            if local_settings.exists() {
+                return local_settings;
             }
         }
 
-        // Standard location: %APPDATA%/QuietReader/settings.json
+        // Standard location on Windows: %APPDATA%/QuietReader/settings.json
         if let Some(app_data) = std::env::var_os("APPDATA") {
             let dir = PathBuf::from(app_data).join("QuietReader");
             let _ = std::fs::create_dir_all(&dir);
             return dir.join("settings.json");
         }
 
-        // Fallback: temp or current directory
+        // Standard location on Linux / macOS via XDG_CONFIG_HOME or HOME
+        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+            let dir = PathBuf::from(xdg).join("QuietReader");
+            let _ = std::fs::create_dir_all(&dir);
+            return dir.join("settings.json");
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            let dir = if cfg!(target_os = "macos") {
+                PathBuf::from(home).join("Library/Application Support/QuietReader")
+            } else {
+                PathBuf::from(home).join(".config/QuietReader")
+            };
+            let _ = std::fs::create_dir_all(&dir);
+            return dir.join("settings.json");
+        }
+
+        // Fallback: current directory
         PathBuf::from("quietreader_settings.json")
     }
 
     pub fn load() -> Self {
         let path = Self::get_settings_path();
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(settings) = serde_json::from_str::<AppSettings>(&content) {
+        Self::load_from_path(&path)
+    }
+
+    fn make_backup_path(path: &Path) -> PathBuf {
+        let mut bak_path = path.to_path_buf();
+        let ext = bak_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!("{e}.bak"))
+            .unwrap_or_else(|| "bak".to_string());
+        bak_path.set_extension(ext);
+        bak_path
+    }
+
+    /// Выполняет миграцию настроек со старых версий схемы на актуальную с сохранением резервной копии
+    pub fn migrate_from_file(&mut self, path: &Path) {
+        if self.schema_version < CURRENT_SETTINGS_SCHEMA_VERSION {
+            let bak_path = Self::make_backup_path(path);
+            let _ = std::fs::copy(path, &bak_path);
+
+            if self.font_family.trim().is_empty() {
+                self.font_family = default_font_family();
+            }
+            self.font_size = self.font_size.clamp(10.0, 48.0);
+            self.schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+
+            if let Ok(content) = serde_json::to_string_pretty(self) {
+                let _ = std::fs::write(path, content);
+            }
+        }
+    }
+
+    pub fn load_from_path(path: &Path) -> Self {
+        if path.exists()
+            && let Ok(content) = std::fs::read_to_string(path)
+        {
+            match serde_json::from_str::<AppSettings>(&content) {
+                Ok(mut settings) => {
+                    settings.migrate_from_file(path);
                     return settings;
+                }
+                Err(_) => {
+                    let bak_path = Self::make_backup_path(path);
+                    let _ = std::fs::copy(path, &bak_path);
                 }
             }
         }
@@ -154,8 +222,19 @@ impl AppSettings {
         }
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Ошибка сериализации настроек: {e}"))?;
-        std::fs::write(&path, content)
-            .map_err(|e| format!("Ошибка записи файла настроек {}: {e}", path.display()))?;
+        let mut tmp_path = path.clone();
+        tmp_path.set_extension("json.tmp");
+        std::fs::write(&tmp_path, &content).map_err(|e| {
+            format!(
+                "Ошибка записи временного файла настроек {}: {e}",
+                tmp_path.display()
+            )
+        })?;
+        if std::fs::rename(&tmp_path, &path).is_err() {
+            std::fs::write(&path, &content)
+                .map_err(|e| format!("Ошибка записи файла настроек {}: {e}", path.display()))?;
+            let _ = std::fs::remove_file(&tmp_path);
+        }
         Ok(())
     }
 
@@ -217,11 +296,20 @@ impl AppSettings {
         height: f32,
         maximized: bool,
     ) {
-        self.window.x = x;
-        self.window.y = y;
-        if !maximized && width >= 400.0 && height >= 300.0 {
-            self.window.width = width;
-            self.window.height = height;
+        if !maximized {
+            if let (Some(px), Some(py)) = (x, y)
+                && px.is_finite()
+                && py.is_finite()
+                && px > -15000.0
+                && py > -15000.0
+            {
+                self.window.x = Some(px);
+                self.window.y = Some(py);
+            }
+            if width.is_finite() && height.is_finite() && width >= 400.0 && height >= 300.0 {
+                self.window.width = width;
+                self.window.height = height;
+            }
         }
         self.window.maximized = maximized;
     }

@@ -16,7 +16,7 @@ fn main() {
         };
 
         let status = std::process::Command::new(&windres_cmd)
-            .args(&["resources.rc", "-o", &obj_path])
+            .args(["resources.rc", "-o", &obj_path])
             .status()
             .unwrap_or_else(|e| panic!("Не удалось запустить {windres_cmd}: {e}"));
 

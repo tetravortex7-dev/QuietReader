@@ -1,13 +1,27 @@
-use std::collections::HashMap;
-use std::path::Path;
+use crate::document::{
+    BookChapter, BookMetadata, Document, DocumentError, HasToc, TextContent, TocItem,
+};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
-use crate::document::{BookChapter, BookMetadata, Document, TocItem};
+use std::collections::HashMap;
+use std::path::Path;
 
 pub struct Fb2Document {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+}
+
+impl TextContent for Fb2Document {
+    fn chapters(&self) -> &[BookChapter] {
+        &self.chapters
+    }
+}
+
+impl HasToc for Fb2Document {
+    fn toc(&self) -> &[TocItem] {
+        &self.toc
+    }
 }
 
 impl Document for Fb2Document {
@@ -21,6 +35,14 @@ impl Document for Fb2Document {
 
     fn toc(&self) -> &[TocItem] {
         &self.toc
+    }
+
+    fn text_content(&self) -> Option<&dyn TextContent> {
+        Some(self)
+    }
+
+    fn toc_capability(&self) -> Option<&dyn HasToc> {
+        Some(self)
     }
 }
 
@@ -47,17 +69,38 @@ struct TocLink {
 }
 
 impl Fb2Document {
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("Failed to read file: {e}"))?;
+    pub const MAX_FB2_SIZE: u64 = 150 * 1024 * 1024;
+
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
+        let path_ref = path.as_ref();
+        let meta = std::fs::metadata(path_ref)
+            .map_err(|e| DocumentError::Io(format!("Failed to read file metadata: {e}")))?;
+        if meta.len() > Self::MAX_FB2_SIZE {
+            return Err(DocumentError::LimitExceeded(
+                "Размер файла FB2 превышает максимально допустимый лимит (150 МБ)".to_string(),
+            ));
+        }
+        let bytes = std::fs::read(path_ref)
+            .map_err(|e| DocumentError::Io(format!("Failed to read file: {e}")))?;
         Self::from_bytes(&bytes)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DocumentError> {
+        if bytes.len() as u64 > Self::MAX_FB2_SIZE {
+            return Err(DocumentError::LimitExceeded(
+                "Размер данных FB2 превышает максимально допустимый лимит (150 МБ)".to_string(),
+            ));
+        }
         let text = decode_text(bytes);
         Self::parse_xml(&text)
     }
 
-    fn parse_xml(xml: &str) -> Result<Self, String> {
+    fn parse_xml(xml: &str) -> Result<Self, DocumentError> {
+        if !xml.to_ascii_lowercase().contains("<fictionbook") {
+            return Err(DocumentError::Corrupted(
+                "Отсутствует корневой тег <FictionBook> в FB2 документе".to_string(),
+            ));
+        }
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(false);
 
@@ -162,14 +205,18 @@ impl Fb2Document {
 
                         "a" => {
                             // Link inside body name="toc"
-                            if let Some(ref body) = current_body {
-                                if body.name.as_deref().unwrap_or("").eq_ignore_ascii_case("toc") {
-                                    for attr in e.attributes().flatten() {
-                                        let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
-                                        if key == "href" {
-                                            current_link_href = Some(attr.value.to_string());
-                                            current_link_text.clear();
-                                        }
+                            if let Some(ref body) = current_body
+                                && body
+                                    .name
+                                    .as_deref()
+                                    .unwrap_or("")
+                                    .eq_ignore_ascii_case("toc")
+                            {
+                                for attr in e.attributes().flatten() {
+                                    let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
+                                    if key == "href" {
+                                        current_link_href = Some(attr.value.to_string());
+                                        current_link_text.clear();
                                     }
                                 }
                             }
@@ -194,7 +241,10 @@ impl Fb2Document {
                         "last-name" => in_last_name = false,
 
                         "a" => {
-                            if let (Some(href), false) = (current_link_href.take(), current_link_text.trim().is_empty()) {
+                            if let (Some(href), false) = (
+                                current_link_href.take(),
+                                current_link_text.trim().is_empty(),
+                            ) {
                                 explicit_toc_links.push(TocLink {
                                     href,
                                     title: normalize_whitespace(&current_link_text),
@@ -227,7 +277,8 @@ impl Fb2Document {
                             if in_title {
                                 in_title = false;
                                 if !current_title_paragraph.trim().is_empty() {
-                                    title_paragraphs.push(current_title_paragraph.trim().to_string());
+                                    title_paragraphs
+                                        .push(current_title_paragraph.trim().to_string());
                                     current_title_paragraph.clear();
                                 }
                                 let title_text = title_paragraphs.join(" — ");
@@ -304,7 +355,7 @@ impl Fb2Document {
                 }
 
                 Ok(Event::Eof) => break,
-                Err(e) => return Err(format!("XML parsing error: {e}")),
+                Err(e) => return Err(DocumentError::Corrupted(format!("XML parsing error: {e}"))),
                 _ => {}
             }
             buf.clear();
@@ -382,12 +433,21 @@ fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocIt
 
     for body in bodies {
         // Skip body name="toc" from text rendering
-        if body.name.as_deref().unwrap_or("").eq_ignore_ascii_case("toc") {
+        if body
+            .name
+            .as_deref()
+            .unwrap_or("")
+            .eq_ignore_ascii_case("toc")
+        {
             continue;
         }
 
         let body_has_direct_text = body.direct_paragraphs.iter().any(|p| !p.trim().is_empty());
-        let body_has_title = body.title.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
+        let body_has_title = body
+            .title
+            .as_ref()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
 
         let mut body_start_chapter: Option<usize> = None;
 
@@ -413,7 +473,7 @@ fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocIt
         }
 
         if body_has_title {
-            let title = body.title.unwrap();
+            let title = body.title.unwrap_or_default();
             let chapter_index = body_start_chapter.unwrap_or(0);
             root_toc.push(TocItem {
                 id: None,
@@ -441,7 +501,11 @@ fn flatten_section(
     mut section: SectionNode,
     ctx: &mut FlattenContext,
 ) -> (Option<usize>, Vec<TocItem>) {
-    let has_own_title = section.title.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
+    let has_own_title = section
+        .title
+        .as_ref()
+        .map(|t| !t.trim().is_empty())
+        .unwrap_or(false);
 
     // If section has title, but no direct paragraphs, check if its leading subsections are untitled leaf sections.
     // In FB2, chapter intro/preamble is commonly put in an untitled subsection before titled sub-sessions/sections.
@@ -504,7 +568,7 @@ fn flatten_section(
     let effective_chapter_idx = own_chapter_idx.or(first_child_chapter);
 
     if has_own_title {
-        let title = section.title.unwrap();
+        let title = section.title.unwrap_or_default();
         let chapter_index = effective_chapter_idx.unwrap_or(0);
         let toc_item = TocItem {
             id: section.id,
@@ -538,11 +602,11 @@ fn decode_text(bytes: &[u8]) -> String {
     let probe_len = bytes.len().min(300);
     let probe_str = String::from_utf8_lossy(&bytes[..probe_len]);
 
-    if let Some(enc_label) = find_xml_encoding(&probe_str) {
-        if let Some(encoding) = encoding_rs::Encoding::for_label(enc_label.as_bytes()) {
-            let (decoded, _, _) = encoding.decode(bytes);
-            return decoded.into_owned();
-        }
+    if let Some(enc_label) = find_xml_encoding(&probe_str)
+        && let Some(encoding) = encoding_rs::Encoding::for_label(enc_label.as_bytes())
+    {
+        let (decoded, _, _) = encoding.decode(bytes);
+        return decoded.into_owned();
     }
 
     // Default to UTF-8
@@ -579,4 +643,3 @@ fn normalize_whitespace(s: &str) -> String {
     }
     result.trim().to_string()
 }
-
