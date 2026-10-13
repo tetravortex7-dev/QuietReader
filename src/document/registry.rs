@@ -1,18 +1,14 @@
 use crate::document::{
-    ComicDocument, Document, DocumentError, EpubDocument, Fb2Document, PdfDocument, TxtDocument,
+    ComicDocument, DjvuDocument, Document, DocumentError, EpubDocument, Fb2Document, PdfDocument,
+    TxtDocument,
 };
 use std::path::Path;
 
-/// Интерфейс обработчика конкретного формата документа (принцип OCP)
 pub trait DocumentFormat: Send + Sync {
-    /// Человекочитаемое имя формата
     #[allow(dead_code)]
     fn name(&self) -> &'static str;
-    /// Поддерживаемые расширения файлов (без точки, в нижнем регистре)
     fn extensions(&self) -> &'static [&'static str];
-    /// Проверяет, подходит ли данный формат для указанного пути (по заголовку или структуре)
     fn probe(&self, path: &Path) -> bool;
-    /// Открывает документ
     fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError>;
 }
 
@@ -39,6 +35,33 @@ impl DocumentFormat for PdfFormat {
     }
     fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
         let doc = PdfDocument::from_file(path)?;
+        Ok(Box::new(doc))
+    }
+}
+
+pub struct DjvuFormat;
+impl DocumentFormat for DjvuFormat {
+    fn name(&self) -> &'static str {
+        "DjVu"
+    }
+    fn extensions(&self) -> &'static [&'static str] {
+        &["djvu", "djv"]
+    }
+    fn probe(&self, path: &Path) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let mut buf = [0u8; 64];
+            if let Ok(n) = f.read(&mut buf) {
+                return buf[..n].windows(8).any(|w| w == b"AT&TFORM");
+            }
+        }
+        false
+    }
+    fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = DjvuDocument::from_file(path)?;
         Ok(Box::new(doc))
     }
 }
@@ -162,16 +185,15 @@ impl DocumentFormat for TxtFormat {
     }
 }
 
-/// Центральный реестр форматов документов
 pub static FORMAT_REGISTRY: &[&dyn DocumentFormat] = &[
     &PdfFormat,
+    &DjvuFormat,
     &ComicFormat,
     &EpubFormat,
     &Fb2Format,
     &TxtFormat,
 ];
 
-/// Открывает документ через центральный реестр форматов
 pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentError> {
     if path.is_dir() {
         return ComicFormat.open(path);
@@ -183,7 +205,6 @@ pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentErro
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
-    // 1. Сначала ищем точное совпадение по расширению в реестре
     if !ext.is_empty() {
         for fmt in FORMAT_REGISTRY {
             if fmt.extensions().contains(&ext.as_str()) {
@@ -192,7 +213,6 @@ pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentErro
         }
     }
 
-    // 2. Если расширение архивное или нестандартное — проверяем через probe() и пробуем открыть
     let mut last_err = None;
     for fmt in FORMAT_REGISTRY {
         if fmt.probe(path) {

@@ -209,3 +209,7 @@ File line count checks must enforce a limit of 1000 lines per file (not 700). If
 11. Immutability of AGENTS.md
 
 `AGENTS.md` is strictly inviolable. Editing or modifying `AGENTS.md` is forbidden without direct, explicit permission given personally by the project owner (user).
+
+12. Code Comments Policy
+
+Do not write or leave comments in the code. Writing comments in code is strictly prohibited. If comments are present in the code, they must be removed.

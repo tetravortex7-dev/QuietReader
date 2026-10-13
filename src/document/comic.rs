@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
 use crate::document::{
-    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, HasToc, PageContent,
-    PageInfo, TocItem,
+    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind, HasToc,
+    PageContent, PageInfo, TocItem,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,6 @@ pub enum ComicArchiveKind {
     Folder,
 }
 
-/// Бэкенд для чтения комиксов и манги (CBZ, CBR, CB7, папки с изображениями)
 pub struct ComicDocument {
     metadata: BookMetadata,
     path: PathBuf,
@@ -28,7 +27,6 @@ pub struct ComicDocument {
 }
 
 impl ComicDocument {
-    /// Открывает комикс или мангу по пути к файлу или папке
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
         if !path_ref.exists() {
@@ -159,6 +157,18 @@ impl Document for ComicDocument {
         &self.toc
     }
 
+    fn format_name(&self) -> &'static str {
+        "Comic"
+    }
+
+    fn has_custom_toc(&self) -> bool {
+        self.toc.len() > 1
+    }
+
+    fn view_kind(&self) -> DocumentViewKind {
+        DocumentViewKind::Comic
+    }
+
     fn page_content(&self) -> Option<&dyn PageContent> {
         Some(self)
     }
@@ -260,11 +270,36 @@ impl PageContent for ComicDocument {
     }
 }
 
-/// Декодирует байты изображения (JPEG, PNG, WEBP, GIF и др.) в RGBA буфер
 fn decode_image_bytes(bytes: &[u8]) -> Result<DecodedImage, DocumentError> {
-    let img = image::load_from_memory(bytes).map_err(|e| {
+    let dim_reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| DocumentError::Corrupted(format!("Ошибка формата изображения: {e}")))?;
+    if let Ok((w, h)) = dim_reader.into_dimensions() {
+        if w == 0 || h == 0 {
+            return Err(DocumentError::Corrupted("Изображение имеет нулевой размер".to_string()));
+        }
+        if w > 8192 || h > 16384 || (w as u64) * (h as u64) > 25_000_000 {
+            return Err(DocumentError::LimitExceeded(format!(
+                "Размеры изображения ({w}x{h}) превышают допустимый лимит"
+            )));
+        }
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| DocumentError::Corrupted(format!("Ошибка формата изображения: {e}")))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(16384);
+    limits.max_alloc = Some(150 * 1024 * 1024);
+    reader.limits(limits);
+    let img = reader.decode().map_err(|e| {
         DocumentError::Corrupted(format!("Не удалось декодировать изображение: {e}"))
     })?;
+    let img = if img.width() > 4096 || img.height() > 4096 {
+        img.thumbnail(4096, 4096)
+    } else {
+        img
+    };
     let rgba = img.to_rgba8();
     Ok(DecodedImage {
         width: rgba.width(),
@@ -273,7 +308,6 @@ fn decode_image_bytes(bytes: &[u8]) -> Result<DecodedImage, DocumentError> {
     })
 }
 
-/// Проверяет, является ли файл поддерживаемым форматом изображения
 pub fn is_supported_image(name: &str) -> bool {
     let filename = Path::new(name)
         .file_name()
@@ -323,7 +357,6 @@ fn make_page_info(archive_path: String, path_obj: &Path) -> PageInfo {
     }
 }
 
-/// Сканирует локальную папку с изображениями
 fn scan_folder(folder: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentError> {
     let mut pages = Vec::new();
     let mut comic_info = None;
@@ -362,7 +395,6 @@ fn scan_folder(folder: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), Docume
     Ok((pages, comic_info))
 }
 
-/// Сканирует ZIP-архив (.cbz)
 fn scan_zip(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentError> {
     let file =
         File::open(path).map_err(|e| DocumentError::Io(format!("Не удалось открыть ZIP: {e}")))?;
@@ -421,7 +453,6 @@ fn scan_zip(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentErr
     Ok((pages, comic_info))
 }
 
-/// Сканирует RAR-архив (.cbr)
 fn scan_rar(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentError> {
     let file =
         File::open(path).map_err(|e| DocumentError::Io(format!("Не удалось открыть RAR: {e}")))?;
@@ -471,7 +502,6 @@ fn scan_rar(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentErr
     Ok((pages, comic_info))
 }
 
-/// Сканирует 7z-архив (.cb7)
 fn scan_sevenz(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentError> {
     let mut pages = Vec::new();
     let mut comic_info = None;
@@ -655,7 +685,6 @@ fn consume_number(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> u64 {
     num
 }
 
-/// Естественное сравнение строк (Natural Sort Order)
 pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let mut a_chars = a.chars().peekable();
     let mut b_chars = b.chars().peekable();

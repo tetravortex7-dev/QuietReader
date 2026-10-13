@@ -3,7 +3,6 @@ use crate::document::{Document, TocItem};
 use crate::settings::ComicSettings;
 use eframe::egui::{self, Color32, Panel, RichText, ScrollArea};
 
-/// Панель оглавления книги или списка глав/страниц комикса
 pub struct TocView;
 
 impl TocView {
@@ -57,14 +56,13 @@ impl TocView {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
-                        if let Some(comic) = doc.page_content() {
-                            let page_count = comic.page_count();
+                        if let Some(page_content) = doc.page_content() {
+                            let page_count = page_content.page_count();
                             let toc = doc.toc();
 
-                            // Если в комиксе несколько глав/подпапок (а не 1-к-1 со страницами), отображаем дерево оглавления
-                            if toc.len() > 1 && toc.len() != page_count {
-                                ui.label(RichText::new("Главы / Разделы:").strong());
-                                ui.add_space(4.0);
+                            let has_custom_toc = doc.has_custom_toc();
+
+                            if has_custom_toc {
                                 for item in toc {
                                     render_toc_item(
                                         ui,
@@ -79,60 +77,78 @@ impl TocView {
                                 ui.add_space(4.0);
                             }
 
-                            // Список страниц (с виртуализацией для больших PDF/комиксов)
-                            ui.label(RichText::new(format!("Страницы ({page_count}):")).strong());
-                            ui.add_space(4.0);
-
                             let is_double = comic_settings.page_layout == "Double"
                                 && comic_settings.reading_mode != "Webtoon";
                             let step = if is_double { 2 } else { 1 };
                             let total_rows = page_count.div_ceil(step);
                             let row_height = ui.text_style_height(&egui::TextStyle::Button) + 6.0;
 
-                            let mut new_comic_page = None;
-                            ScrollArea::vertical()
-                                .id_salt("pages_virtual_scroll")
-                                .auto_shrink([false, false])
-                                .show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                    for row_idx in row_range {
-                                        let p = row_idx * step;
-                                        if p >= page_count {
-                                            break;
-                                        }
-                                        let is_current = if is_double {
-                                            *current_page == p
-                                                || (p + 1 < page_count && *current_page == p + 1)
-                                        } else {
-                                            *current_page == p
-                                        };
-
-                                        let page_name = comic.page_name(p);
-                                        let label = if is_double && p + 1 < page_count {
-                                            if page_name.is_empty() {
-                                                format!("Стр. {}-{}", p + 1, p + 2)
-                                            } else {
-                                                format!("Стр. {}-{} ({page_name})", p + 1, p + 2)
+                            let mut render_pages_virtual = |ui: &mut egui::Ui| {
+                                let mut new_page = None;
+                                ScrollArea::vertical()
+                                    .id_salt("pages_virtual_scroll")
+                                    .auto_shrink([false, false])
+                                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                        for row_idx in row_range {
+                                            let p = row_idx * step;
+                                            if p >= page_count {
+                                                break;
                                             }
-                                        } else if page_name.is_empty() {
-                                            format!("Стр. {}", p + 1)
-                                        } else {
-                                            format!("Стр. {} ({page_name})", p + 1)
-                                        };
+                                            let is_current = if is_double {
+                                                *current_page == p
+                                                    || (p + 1 < page_count
+                                                        && *current_page == p + 1)
+                                            } else {
+                                                *current_page == p
+                                            };
 
-                                        let mut rich = RichText::new(label);
-                                        if is_current {
-                                            rich = rich.strong().color(theme.accent_color());
+                                            let page_name = page_content.page_name(p);
+                                            let label = if is_double && p + 1 < page_count {
+                                                if page_name.is_empty() {
+                                                    format!("Стр. {}-{}", p + 1, p + 2)
+                                                } else {
+                                                    format!(
+                                                        "Стр. {}-{} ({page_name})",
+                                                        p + 1,
+                                                        p + 2
+                                                    )
+                                                }
+                                            } else if page_name.is_empty() {
+                                                format!("Стр. {}", p + 1)
+                                            } else {
+                                                format!("Стр. {} ({page_name})", p + 1)
+                                            };
+
+                                            let mut rich = RichText::new(label);
+                                            if is_current {
+                                                rich = rich.strong().color(theme.accent_color());
+                                            }
+
+                                            let btn =
+                                                egui::Button::selectable(is_current, rich).wrap();
+                                            if ui.add(btn).clicked() {
+                                                new_page = Some(p);
+                                            }
                                         }
+                                    });
 
-                                        let btn = egui::Button::selectable(is_current, rich).wrap();
-                                        if ui.add(btn).clicked() {
-                                            new_comic_page = Some(p);
-                                        }
-                                    }
-                                });
+                                if let Some(p) = new_page {
+                                    *current_page = p;
+                                }
+                            };
 
-                            if let Some(p) = new_comic_page {
-                                *current_page = p;
+                            if has_custom_toc {
+                                egui::CollapsingHeader::new(format!("Все страницы ({page_count})"))
+                                    .default_open(false)
+                                    .show(ui, |ui| {
+                                        render_pages_virtual(ui);
+                                    });
+                            } else {
+                                ui.label(
+                                    RichText::new(format!("Страницы ({page_count}):")).strong(),
+                                );
+                                ui.add_space(4.0);
+                                render_pages_virtual(ui);
                             }
                         } else {
                             let toc = doc.toc();
@@ -171,6 +187,27 @@ pub fn render_toc_item(
     selected_chapter: &mut usize,
     accent_color: Color32,
 ) {
+    render_toc_item_bounded(
+        ui,
+        item,
+        current_chapter,
+        selected_chapter,
+        accent_color,
+        0,
+    );
+}
+
+fn render_toc_item_bounded(
+    ui: &mut egui::Ui,
+    item: &TocItem,
+    current_chapter: usize,
+    selected_chapter: &mut usize,
+    accent_color: Color32,
+    depth: usize,
+) {
+    if depth >= 32 {
+        return;
+    }
     let is_selected = current_chapter == item.chapter_index;
     let title = if item.title.trim().is_empty() {
         "—"
@@ -188,7 +225,10 @@ pub fn render_toc_item(
             *selected_chapter = item.chapter_index;
         }
     } else {
-        let header_id = ui.make_persistent_id(format!("toc_{}_{}", item.chapter_index, item.title));
+        let header_id = ui.make_persistent_id(format!(
+            "toc_{}_{}_{}",
+            depth, item.chapter_index, item.title
+        ));
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), header_id, true)
             .show_header(ui, |ui| {
                 let mut rich = RichText::new(title);
@@ -203,7 +243,14 @@ pub fn render_toc_item(
             .body(|ui| {
                 ui.indent(header_id.with("indent"), |ui| {
                     for child in &item.children {
-                        render_toc_item(ui, child, current_chapter, selected_chapter, accent_color);
+                        render_toc_item_bounded(
+                            ui,
+                            child,
+                            current_chapter,
+                            selected_chapter,
+                            accent_color,
+                            depth + 1,
+                        );
                     }
                 });
             });

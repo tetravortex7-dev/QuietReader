@@ -1,6 +1,5 @@
 use eframe::egui::Color32;
 
-/// Цветовые темы оформления читалки
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ReaderTheme {
     Dark,
@@ -16,7 +15,6 @@ impl ReaderTheme {
         matches!(self, ReaderTheme::Dark | ReaderTheme::Oled)
     }
 
-    /// Цвет фона области чтения
     pub fn bg_color(&self) -> Color32 {
         match self {
             ReaderTheme::Dark => Color32::from_rgb(26, 26, 28),
@@ -28,7 +26,6 @@ impl ReaderTheme {
         }
     }
 
-    /// Основной цвет текста
     pub fn text_color(&self) -> Color32 {
         match self {
             ReaderTheme::Dark => Color32::from_rgb(220, 220, 220),
@@ -40,7 +37,10 @@ impl ReaderTheme {
         }
     }
 
-    /// Цвет фона панелей (верхней, нижней, оглавления)
+    pub fn secondary_text_color(&self) -> Color32 {
+        self.text_color().gamma_multiply(0.65)
+    }
+
     pub fn panel_bg_color(&self) -> Color32 {
         match self {
             ReaderTheme::Dark => Color32::from_rgb(35, 35, 38),
@@ -52,7 +52,6 @@ impl ReaderTheme {
         }
     }
 
-    /// Акцентный цвет (кнопки, выделение глав)
     pub fn accent_color(&self) -> Color32 {
         match self {
             ReaderTheme::Dark => Color32::from_rgb(100, 160, 255),
@@ -64,7 +63,6 @@ impl ReaderTheme {
         }
     }
 
-    /// Формирует стиль визуалов egui для данной темы
     pub fn create_visuals(&self) -> eframe::egui::Visuals {
         use eframe::egui;
         let mut visuals = if self.is_dark() {

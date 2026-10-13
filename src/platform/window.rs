@@ -133,6 +133,8 @@ mod windows_fullscreen {
     unsafe extern "system" {
         fn GetActiveWindow() -> isize;
         fn GetForegroundWindow() -> isize;
+        fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> isize;
+        fn GetWindowThreadProcessId(hwnd: isize, lpdw_process_id: *mut u32) -> u32;
         fn IsIconic(hwnd: isize) -> i32;
         fn IsZoomed(hwnd: isize) -> i32;
         fn GetWindowRect(hwnd: isize, lprect: *mut Rect) -> i32;
@@ -152,6 +154,45 @@ mod windows_fullscreen {
             cy: i32,
             u_flags: u32,
         ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcessId() -> u32;
+    }
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn is_own_process_window(hwnd: isize) -> bool {
+        if hwnd == 0 {
+            return false;
+        }
+        let mut proc_id = 0u32;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut proc_id);
+            proc_id != 0 && proc_id == GetCurrentProcessId()
+        }
+    }
+
+    fn get_own_window_hwnd() -> isize {
+        unsafe {
+            let mut hwnd = GetActiveWindow();
+            if is_own_process_window(hwnd) {
+                return hwnd;
+            }
+            hwnd = GetForegroundWindow();
+            if is_own_process_window(hwnd) {
+                return hwnd;
+            }
+            let title = to_wide("QuietReader");
+            hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+            if is_own_process_window(hwnd) {
+                return hwnd;
+            }
+            0
+        }
     }
 
     pub fn sanitize_window_geometry(
@@ -251,12 +292,12 @@ mod windows_fullscreen {
     }
 
     pub fn ensure_window_on_screen() -> bool {
+        let hwnd = get_own_window_hwnd();
+        if hwnd == 0 {
+            return false;
+        }
         unsafe {
-            let mut hwnd = GetActiveWindow();
-            if hwnd == 0 {
-                hwnd = GetForegroundWindow();
-            }
-            if hwnd == 0 || IsIconic(hwnd) != 0 || IsZoomed(hwnd) != 0 {
+            if IsIconic(hwnd) != 0 || IsZoomed(hwnd) != 0 {
                 return false;
             }
 
@@ -337,10 +378,7 @@ mod windows_fullscreen {
     pub fn set_window_fullscreen(fullscreen: bool) -> bool {
         unsafe {
             if fullscreen {
-                let mut hwnd = GetActiveWindow();
-                if hwnd == 0 {
-                    hwnd = GetForegroundWindow();
-                }
+                let hwnd = get_own_window_hwnd();
                 if hwnd == 0 {
                     return false;
                 }

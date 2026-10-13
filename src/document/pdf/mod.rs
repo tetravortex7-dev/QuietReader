@@ -1,14 +1,16 @@
+pub mod outline;
+pub mod text;
+
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::document::{
-    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, HasToc, PageContent,
-    PageInfo, TocItem,
+    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind, HasToc,
+    PageContent, PageInfo, PageTextSpan, TocItem,
 };
 
-/// Документ формата PDF с растеризацией страниц на чистом Rust (без внешних зависимостей)
 pub struct PdfDocument {
     metadata: BookMetadata,
     _path: PathBuf,
@@ -18,12 +20,7 @@ pub struct PdfDocument {
     toc: Vec<TocItem>,
 }
 
-// Реализация Send + Sync безопасна, так как данные защищены Arc
-unsafe impl Send for PdfDocument {}
-unsafe impl Sync for PdfDocument {}
-
 impl PdfDocument {
-    /// Открывает PDF документ из файла
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
         let mut file = File::open(path_ref).map_err(|e| {
@@ -33,7 +30,6 @@ impl PdfDocument {
             ))
         })?;
 
-        // Проверка лимита размера файла (макс. 300 МБ для безопасности памяти)
         let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
         const MAX_PDF_SIZE: u64 = 300 * 1024 * 1024;
         if file_len > MAX_PDF_SIZE {
@@ -49,10 +45,8 @@ impl PdfDocument {
         Self::from_bytes(bytes, path_ref)
     }
 
-    /// Создает PDF документ из байтового буфера
     pub fn from_bytes(bytes: Vec<u8>, path: &Path) -> Result<Self, DocumentError> {
         if bytes.len() < 4 || !bytes.starts_with(b"%PDF") {
-            // Некоторые PDF начинаются с небольшого мусора/BOM перед %PDF
             if let Some(pos) = bytes[..bytes.len().min(1024)]
                 .windows(4)
                 .position(|w| w == b"%PDF")
@@ -89,31 +83,29 @@ impl PdfDocument {
         let title = meta
             .title
             .as_ref()
-            .and_then(|t| decode_pdf_string(t))
+            .map(|t| outline::decode_pdf_string(t))
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default_title);
 
         let author = meta
             .author
             .as_ref()
-            .and_then(|a| decode_pdf_string(a))
+            .map(|a| outline::decode_pdf_string(a))
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "Неизвестный автор".to_string());
 
-        let mut chapters = Vec::with_capacity(page_count);
-        let mut toc = Vec::with_capacity(page_count);
-        for i in 0..page_count {
-            let ch_title = format!("Страница {}", i + 1);
+        let toc = outline::extract_pdf_toc(&pdf, page_count);
+
+        let mut chapters = Vec::with_capacity(toc.len());
+        for (i, item) in toc.iter().enumerate() {
             chapters.push(BookChapter {
-                id: Some(format!("page_{}", i + 1)),
-                title: ch_title.clone(),
-                paragraphs: vec![format!("Страница {} из {}", i + 1, page_count)],
-            });
-            toc.push(TocItem {
-                id: Some(format!("page_{}", i + 1)),
-                title: ch_title,
-                chapter_index: i,
-                children: Vec::new(),
+                id: item.id.clone(),
+                title: item.title.clone(),
+                paragraphs: vec![format!(
+                    "Раздел {} (страница {})",
+                    i + 1,
+                    item.chapter_index + 1
+                )],
             });
         }
 
@@ -147,6 +139,18 @@ impl Document for PdfDocument {
         &self.toc
     }
 
+    fn format_name(&self) -> &'static str {
+        "PDF"
+    }
+
+    fn has_custom_toc(&self) -> bool {
+        !self.toc.is_empty()
+    }
+
+    fn view_kind(&self) -> DocumentViewKind {
+        DocumentViewKind::Pdf
+    }
+
     fn page_content(&self) -> Option<&dyn PageContent> {
         Some(self)
     }
@@ -161,8 +165,7 @@ impl PageContent for PdfDocument {
         self.page_count
     }
 
-    fn page_name(&self, index: usize) -> &str {
-        let _ = index;
+    fn page_name(&self, _index: usize) -> &str {
         ""
     }
 
@@ -171,6 +174,14 @@ impl PageContent for PdfDocument {
     }
 
     fn load_page_image(&self, index: usize) -> Result<DecodedImage, DocumentError> {
+        self.load_page_image_scaled(index, 2.5)
+    }
+
+    fn load_page_image_scaled(
+        &self,
+        index: usize,
+        scale: f32,
+    ) -> Result<DecodedImage, DocumentError> {
         if index >= self.page_count {
             return Err(DocumentError::Corrupted(format!(
                 "Страница {} выходит за пределы документа",
@@ -178,7 +189,6 @@ impl PageContent for PdfDocument {
             )));
         }
 
-        // Парсим структуру документа
         let pdf = hayro::hayro_syntax::Pdf::new(self.data.clone())
             .map_err(|e| DocumentError::Corrupted(format!("Ошибка парсинга PDF: {e:?}")))?;
 
@@ -187,14 +197,29 @@ impl PageContent for PdfDocument {
             DocumentError::Corrupted(format!("Страница {} не найдена", index + 1))
         })?;
 
-        // Настройки интерпретатора и растеризатора
         let interp_settings = hayro::hayro_interpret::InterpreterSettings::default();
         let render_settings = hayro::RenderSettings::default();
 
-        // Масштабируем страницу с четким разрешением для комфортного чтения (1.5x)
+        let (page_w, page_h) = page.render_dimensions();
+        let page_w = page_w.max(1.0);
+        let page_h = page_h.max(1.0);
+
+        let mut render_scale = scale.clamp(0.5, 4.0);
+        if page_w * render_scale > 4096.0 {
+            render_scale = render_scale.min(4096.0 / page_w);
+        }
+        if page_h * render_scale > 4096.0 {
+            render_scale = render_scale.min(4096.0 / page_h);
+        }
+        let total_pixels = (page_w * render_scale) * (page_h * render_scale);
+        if total_pixels > 25_000_000.0 {
+            render_scale = render_scale.min((25_000_000.0 / (page_w * page_h)).sqrt());
+        }
+        let render_scale = render_scale.max(0.1);
+
         let pixmap_settings = hayro::PixmapSettings {
-            x_scale: 1.5,
-            y_scale: 1.5,
+            x_scale: render_scale,
+            y_scale: render_scale,
             bg_color: hayro::vello_cpu::color::palette::css::WHITE,
         };
 
@@ -218,31 +243,25 @@ impl PageContent for PdfDocument {
             )));
         }
 
-        // Конвертируем PremulRgba8 в стандартный прямой RGBA буфер
         let raw_pixels = pixmap.data();
-        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        let total_bytes = (width * height * 4) as usize;
+        let mut rgba = vec![0u8; total_bytes];
 
-        for p in raw_pixels {
-            if p.a == 0 {
-                rgba.push(0);
-                rgba.push(0);
-                rgba.push(0);
-                rgba.push(0);
-            } else if p.a == 255 {
-                rgba.push(p.r);
-                rgba.push(p.g);
-                rgba.push(p.b);
-                rgba.push(255);
+        for (i, p) in raw_pixels.iter().enumerate() {
+            let offset = i * 4;
+            if p.a == 255 {
+                rgba[offset] = p.r;
+                rgba[offset + 1] = p.g;
+                rgba[offset + 2] = p.b;
+                rgba[offset + 3] = 255;
+            } else if p.a == 0 {
+                continue;
             } else {
-                // Unpremultiply alpha: c_unpremul = (c_premul * 255) / a
-                let a_f = p.a as f32;
-                let r = ((p.r as f32 / a_f) * 255.0).clamp(0.0, 255.0) as u8;
-                let g = ((p.g as f32 / a_f) * 255.0).clamp(0.0, 255.0) as u8;
-                let b = ((p.b as f32 / a_f) * 255.0).clamp(0.0, 255.0) as u8;
-                rgba.push(r);
-                rgba.push(g);
-                rgba.push(b);
-                rgba.push(p.a);
+                let inv_a = 255.0 / p.a as f32;
+                rgba[offset] = (p.r as f32 * inv_a).min(255.0) as u8;
+                rgba[offset + 1] = (p.g as f32 * inv_a).min(255.0) as u8;
+                rgba[offset + 2] = (p.b as f32 * inv_a).min(255.0) as u8;
+                rgba[offset + 3] = p.a;
             }
         }
 
@@ -253,38 +272,31 @@ impl PageContent for PdfDocument {
         })
     }
 
+    fn extract_page_text(&self, index: usize) -> Option<String> {
+        if index >= self.page_count {
+            return None;
+        }
+
+        let pdf = hayro::hayro_syntax::Pdf::new(self.data.clone()).ok()?;
+        let pages = pdf.pages();
+        let page = pages.get(index)?;
+
+        text::extract_page_text(page)
+    }
+
+    fn extract_page_text_spans(&self, index: usize) -> Option<Vec<PageTextSpan>> {
+        if index >= self.page_count {
+            return None;
+        }
+
+        let pdf = hayro::hayro_syntax::Pdf::new(self.data.clone()).ok()?;
+        let pages = pdf.pages();
+        let page = pages.get(index)?;
+
+        text::extract_page_spans(page)
+    }
+
     fn is_manga(&self) -> bool {
         false
     }
-}
-
-/// Декодирует строковые значения метаданных PDF (ASCII, UTF-8 или UTF-16BE с BOM)
-fn decode_pdf_string(bytes: &[u8]) -> Option<String> {
-    if bytes.is_empty() {
-        return None;
-    }
-
-    // UTF-16BE BOM: FE FF
-    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
-        let u16_chars: Vec<u16> = bytes[2..]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
-            .collect();
-        return String::from_utf16(&u16_chars).ok();
-    }
-
-    // UTF-8
-    if let Ok(s) = std::str::from_utf8(bytes) {
-        return Some(s.to_string());
-    }
-
-    // PDFDocEncoding / Windows-1251 / ISO-8859-1 fallback
-    let decoded: String = bytes
-        .iter()
-        .map(|&b| if b < 128 { b as char } else { '?' })
-        .collect();
-
-    Some(decoded)
 }

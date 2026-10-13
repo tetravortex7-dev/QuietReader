@@ -1,6 +1,5 @@
 use eframe::egui;
 
-/// Применяет выбранный системный шрифт к контексту egui через платформенный сервис
 pub fn apply_font_family(ctx: &egui::Context, font_name: &str) {
     let mut fonts = egui::FontDefinitions::default();
 
@@ -19,7 +18,6 @@ pub fn apply_font_family(ctx: &egui::Context, font_name: &str) {
     ctx.set_fonts(fonts);
 }
 
-/// 5 стилистически подобранных гарнитур для настроек
 pub struct FontOptionInfo {
     pub id: &'static str,
     pub name: &'static str,

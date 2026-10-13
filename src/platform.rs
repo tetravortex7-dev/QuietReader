@@ -235,7 +235,6 @@ mod windows_registry {
             Err(_) => return AssociationStatus::NotRegistered,
         };
 
-        // 1. Check if QuietReader.fb2 command is registered for the current exe
         let is_our_progid_registered = reg_open_key(
             HKEY_CURRENT_USER,
             r"Software\Classes\QuietReader.fb2\shell\open\command",
@@ -249,7 +248,6 @@ mod windows_registry {
             return AssociationStatus::NotRegistered;
         }
 
-        // 2. Check Windows 10/11 UserChoice
         if let Some(user_choice_key) = reg_open_key(
             HKEY_CURRENT_USER,
             r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.fb2\UserChoice",
@@ -263,7 +261,6 @@ mod windows_registry {
             return AssociationStatus::Registered;
         }
 
-        // 3. If UserChoice is absent, check HKCU\Software\Classes\.fb2 (Default)
         if let Some(dot_fb2_key) =
             reg_open_key(HKEY_CURRENT_USER, r"Software\Classes\.fb2", KEY_READ)
             && let Some(progid) = reg_get_string(&dot_fb2_key, None)
@@ -283,7 +280,6 @@ mod windows_registry {
         let doc_icon_cmd = format!("\"{exe_str}\",1");
         let app_icon_cmd = format!("\"{exe_str}\",0");
 
-        // 1. HKCU\Software\Classes\.fb2
         let dot_fb2 = reg_create_key(HKEY_CURRENT_USER, r"Software\Classes\.fb2")?;
         let _ = reg_set_string(&dot_fb2, None, "QuietReader.fb2");
         let _ = reg_set_string(
@@ -296,7 +292,6 @@ mod windows_registry {
             reg_create_key(HKEY_CURRENT_USER, r"Software\Classes\.fb2\OpenWithProgids")?;
         let _ = reg_set_string(&open_with, Some("QuietReader.fb2"), "");
 
-        // 2. HKCU\Software\Classes\QuietReader.fb2
         let progid_key = reg_create_key(HKEY_CURRENT_USER, r"Software\Classes\QuietReader.fb2")?;
         let _ = reg_set_string(&progid_key, None, "Книга FictionBook (FB2)");
         let _ = reg_set_string(
@@ -317,7 +312,6 @@ mod windows_registry {
         )?;
         let _ = reg_set_string(&cmd_key, None, &open_cmd);
 
-        // 3. HKCU\Software\Classes\Applications\QuietReader.exe
         let app_key = reg_create_key(
             HKEY_CURRENT_USER,
             r"Software\Classes\Applications\QuietReader.exe",
@@ -342,7 +336,6 @@ mod windows_registry {
         )?;
         let _ = reg_set_string(&app_cmd, None, &open_cmd);
 
-        // 4. HKCU\Software\QuietReader\Capabilities
         let caps = reg_create_key(HKEY_CURRENT_USER, r"Software\QuietReader\Capabilities")?;
         let _ = reg_set_string(&caps, Some("ApplicationName"), "QuietReader");
         let _ = reg_set_string(
@@ -357,7 +350,6 @@ mod windows_registry {
         )?;
         let _ = reg_set_string(&file_assoc, Some(".fb2"), "QuietReader.fb2");
 
-        // 5. HKCU\Software\RegisteredApplications
         let reg_apps = reg_create_key(HKEY_CURRENT_USER, r"Software\RegisteredApplications")?;
         let _ = reg_set_string(
             &reg_apps,
@@ -440,7 +432,6 @@ pub fn is_association_prompt_dismissed() -> bool {
 #[cfg(not(windows))]
 pub fn set_association_prompt_dismissed(_dismissed: bool) {}
 
-/// Общий платформенный интерфейс загрузки байтов системного шрифта по имени гарнитуры
 pub fn load_system_font_bytes(font_name: &str) -> Option<Vec<u8>> {
     platform_fonts::load_font(font_name)
 }

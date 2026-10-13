@@ -4,8 +4,6 @@ use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea, Vec2};
 use std::path::PathBuf;
 
-/// Отрисовка центральной текстовой области книги (главы, абзацы, контекстное меню копирования)
-/// и стартового приветственного экрана.
 pub struct TextView;
 
 impl TextView {
@@ -42,7 +40,6 @@ impl TextView {
             }
 
             let scroll_output = scroll_area.show(ui, |ui| {
-                // Центрированная колонка фиксированной читаемой ширины (макс 760px)
                 ui.vertical_centered(|ui| {
                     ui.set_max_width(760.0);
 
@@ -56,12 +53,11 @@ impl TextView {
                             let resp =
                                 ui.add(egui::Label::new(title_heading).selectable(allow_select));
                             resp.context_menu(|ui| {
-                                if ui.button("📋 Копировать").clicked() {
+                                if ui.button("📋 Скопировать").clicked() {
                                     ui.ctx().copy_text(ch.title.clone());
                                     ui.close();
                                 }
-                                if ui.button("🔲 Выбрать всё (копировать раздел)").clicked()
-                                {
+                                if ui.button("🔲 Выбрать всё (копировать раздел)").clicked() {
                                     if let Some(full) =
                                         crate::core::ReaderCore::extract_chapter_text(
                                             doc.as_ref(),
@@ -76,10 +72,30 @@ impl TextView {
                             ui.add_space(24.0);
                         }
 
-                        // Рендеринг абзацев текста
+                        let clip_rect = ui.clip_rect();
+                        let margin = 400.0;
+                        let view_top = clip_rect.min.y - margin;
+                        let view_bot = clip_rect.max.y + margin;
+
+                        let line_height = font_size * 1.45;
+                        let para_spacing = font_size * 0.4;
+                        let chars_per_line = (760.0 / (font_size * 0.52)).max(10.0);
+
                         for paragraph in &ch.paragraphs {
                             if paragraph.is_empty() {
                                 ui.add_space(font_size * 0.7);
+                                continue;
+                            }
+
+                            let char_count = paragraph.chars().count();
+                            let num_lines = (char_count as f32 / chars_per_line).ceil().max(1.0);
+                            let est_height = num_lines * line_height + para_spacing;
+
+                            let top_y = ui.cursor().min.y;
+                            let bot_y = top_y + est_height;
+
+                            if bot_y < view_top || top_y > view_bot {
+                                ui.add_space(est_height);
                             } else {
                                 let text_content = format!("    {paragraph}");
                                 let text = RichText::new(&text_content)
@@ -88,12 +104,11 @@ impl TextView {
                                 let resp =
                                     ui.add(egui::Label::new(text).wrap().selectable(allow_select));
                                 resp.context_menu(|ui| {
-                                    if ui.button("📋 Копировать").clicked() {
+                                    if ui.button("📋 Скопировать").clicked() {
                                         ui.ctx().copy_text(paragraph.clone());
                                         ui.close();
                                     }
-                                    if ui.button("🔲 Выбрать всё (копировать раздел)").clicked()
-                                    {
+                                    if ui.button("🔲 Выбрать всё (копировать раздел)").clicked() {
                                         if let Some(full) =
                                             crate::core::ReaderCore::extract_chapter_text(
                                                 doc.as_ref(),
@@ -105,13 +120,12 @@ impl TextView {
                                         ui.close();
                                     }
                                 });
-                                ui.add_space(font_size * 0.4);
+                                ui.add_space(para_spacing);
                             }
                         }
 
                         ui.add_space(40.0);
 
-                        // Навигационные кнопки перехода между разделами внизу страницы
                         ui.horizontal(|ui| {
                             let prev_chapter_idx = (0..*current_chapter).rev().find(|&idx| {
                                 doc.chapters()
@@ -133,6 +147,7 @@ impl TextView {
                             {
                                 *current_chapter = prev_idx;
                                 *pending_scroll_y = Some(0.0);
+                                *current_scroll_y = 0.0;
                                 *last_rendered_chapter = *current_chapter;
                             }
 
@@ -144,6 +159,7 @@ impl TextView {
                                     {
                                         *current_chapter = next_idx;
                                         *pending_scroll_y = Some(0.0);
+                                        *current_scroll_y = 0.0;
                                         *last_rendered_chapter = *current_chapter;
                                     }
                                 },
@@ -160,7 +176,6 @@ impl TextView {
             *max_scroll_y =
                 (scroll_output.content_size.y - scroll_output.inner_rect.height()).max(0.0);
 
-            // Сохранение прогресса чтения в память
             if let Some(path) = current_file_path {
                 let meta = doc.metadata();
                 settings.record_book_progress(
@@ -172,7 +187,6 @@ impl TextView {
                 );
             }
         } else {
-            // Приветственный экран при отсутствии открытой книги
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
                 ui.heading(

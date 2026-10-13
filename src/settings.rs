@@ -1,7 +1,20 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+static LAST_SAVE_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct BookProgress {
+    pub chapter: usize,
+    pub scroll_y: f32,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
 pub struct RecentBook {
     pub path: PathBuf,
     pub title: String,
@@ -12,6 +25,7 @@ pub struct RecentBook {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct WindowState {
     pub x: Option<f32>,
     pub y: Option<f32>,
@@ -33,16 +47,12 @@ impl Default for WindowState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct AutoScrollSettings {
-    /// Включен ли режим с паузами (true) или плавное непрерывное движение (false)
     pub pause_mode: bool,
-    /// Скорость непрерывной прокрутки в пикселях в секунду (от 10.0 до 300.0)
     pub continuous_speed: f32,
-    /// Шаг прокрутки при режиме с паузами в пикселях (от 20.0 до 500.0)
     pub step_distance: f32,
-    /// Длительность активного движения при шаге в секундах (от 0.2 до 5.0)
     pub step_duration: f32,
-    /// Длительность паузы между движениями в секундах (от 0.5 до 30.0)
     pub pause_duration: f32,
 }
 
@@ -58,14 +68,17 @@ impl Default for AutoScrollSettings {
     }
 }
 
+fn default_comic_zoom() -> f32 {
+    100.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct ComicSettings {
-    /// Режим чтения: "Manga" (справа-налево), "Comic" (слева-направо), "Webtoon" (вертикальная непрерывная лента)
     pub reading_mode: String,
-    /// Расположение страниц: "Single" (одиночная), "Double" (разворот)
     pub page_layout: String,
-    /// Масштабирование: "FitWindow" (по окну), "FitWidth" (по ширине), "FitHeight" (по высоте), "Original" (100%)
     pub fit_mode: String,
+    pub zoom_percent: f32,
 }
 
 impl Default for ComicSettings {
@@ -74,39 +87,61 @@ impl Default for ComicSettings {
             reading_mode: "Auto".to_string(),
             page_layout: "Single".to_string(),
             fit_mode: "FitWindow".to_string(),
+            zoom_percent: 100.0,
         }
     }
 }
 
-pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PdfSettings {
+    pub layout: String,
+    pub fit_mode: String,
+    pub zoom_percent: f32,
+    pub rotation: i32,
+}
+
+impl Default for PdfSettings {
+    fn default() -> Self {
+        Self {
+            layout: "Single".to_string(),
+            fit_mode: "FitWindow".to_string(),
+            zoom_percent: 100.0,
+            rotation: 0,
+        }
+    }
+}
+
+pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+
+fn default_schema_version() -> u32 {
+    0
+}
 
 fn default_font_family() -> String {
     "Georgia".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct AppSettings {
-    #[serde(default)]
+    #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     pub window: WindowState,
     pub recent_books: Vec<RecentBook>,
+    pub reading_progress: HashMap<PathBuf, BookProgress>,
     pub last_opened_book: Option<PathBuf>,
-    #[serde(default)]
     pub open_tabs: Vec<PathBuf>,
-    #[serde(default)]
     pub active_tab_index: usize,
     pub font_size: f32,
-    #[serde(default = "default_font_family")]
     pub font_family: String,
     pub theme: String,
     pub keep_screen_on: bool,
     pub show_toc: bool,
-    #[serde(default)]
     pub auto_scroll: AutoScrollSettings,
-    #[serde(default)]
     pub dismiss_association_prompt: bool,
-    #[serde(default)]
     pub comic: ComicSettings,
+    pub pdf: PdfSettings,
 }
 
 impl Default for AppSettings {
@@ -115,24 +150,35 @@ impl Default for AppSettings {
             schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
             window: WindowState::default(),
             recent_books: Vec::new(),
+            reading_progress: HashMap::new(),
             last_opened_book: None,
             open_tabs: Vec::new(),
             active_tab_index: 0,
             font_size: 19.0,
-            font_family: "Georgia".to_string(),
+            font_family: default_font_family(),
             theme: "Sepia".to_string(),
             keep_screen_on: true,
             show_toc: true,
             auto_scroll: AutoScrollSettings::default(),
             dismiss_association_prompt: false,
             comic: ComicSettings::default(),
+            pdf: PdfSettings::default(),
         }
     }
 }
 
 impl AppSettings {
+    pub fn last_save_error() -> Option<String> {
+        LAST_SAVE_ERROR.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    pub fn clear_save_error() {
+        if let Ok(mut guard) = LAST_SAVE_ERROR.lock() {
+            *guard = None;
+        }
+    }
+
     pub fn get_settings_path() -> PathBuf {
-        // Portable mode: if quietreader_settings.json exists next to exe, use it
         if let Ok(exe_path) = std::env::current_exe()
             && let Some(parent) = exe_path.parent()
         {
@@ -142,14 +188,12 @@ impl AppSettings {
             }
         }
 
-        // Standard location on Windows: %APPDATA%/QuietReader/settings.json
         if let Some(app_data) = std::env::var_os("APPDATA") {
             let dir = PathBuf::from(app_data).join("QuietReader");
             let _ = std::fs::create_dir_all(&dir);
             return dir.join("settings.json");
         }
 
-        // Standard location on Linux / macOS via XDG_CONFIG_HOME or HOME
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
             let dir = PathBuf::from(xdg).join("QuietReader");
             let _ = std::fs::create_dir_all(&dir);
@@ -165,7 +209,6 @@ impl AppSettings {
             return dir.join("settings.json");
         }
 
-        // Fallback: current directory
         PathBuf::from("quietreader_settings.json")
     }
 
@@ -185,11 +228,22 @@ impl AppSettings {
         bak_path
     }
 
-    /// Выполняет миграцию настроек со старых версий схемы на актуальную с сохранением резервной копии
     pub fn migrate_from_file(&mut self, path: &Path) {
         if self.schema_version < CURRENT_SETTINGS_SCHEMA_VERSION {
             let bak_path = Self::make_backup_path(path);
-            let _ = std::fs::copy(path, &bak_path);
+            if path.exists() {
+                let _ = std::fs::copy(path, &bak_path);
+            }
+
+            for book in &self.recent_books {
+                self.reading_progress
+                    .entry(book.path.clone())
+                    .or_insert(BookProgress {
+                        chapter: book.chapter,
+                        scroll_y: book.scroll_y,
+                        timestamp: book.timestamp,
+                    });
+            }
 
             if self.font_family.trim().is_empty() {
                 self.font_family = default_font_family();
@@ -197,49 +251,124 @@ impl AppSettings {
             self.font_size = self.font_size.clamp(10.0, 48.0);
             self.schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
 
-            if let Ok(content) = serde_json::to_string_pretty(self) {
-                let _ = std::fs::write(path, content);
+            let _ = self.save_to_path(path);
+        } else {
+            let mut need_save = false;
+            if self.reading_progress.is_empty() && !self.recent_books.is_empty() {
+                for book in &self.recent_books {
+                    self.reading_progress
+                        .entry(book.path.clone())
+                        .or_insert(BookProgress {
+                            chapter: book.chapter,
+                            scroll_y: book.scroll_y,
+                            timestamp: book.timestamp,
+                        });
+                }
+                need_save = true;
+            }
+            if need_save {
+                let _ = self.save_to_path(path);
             }
         }
     }
 
     pub fn load_from_path(path: &Path) -> Self {
-        if path.exists()
-            && let Ok(content) = std::fs::read_to_string(path)
-        {
-            match serde_json::from_str::<AppSettings>(&content) {
-                Ok(mut settings) => {
-                    settings.migrate_from_file(path);
-                    return settings;
+        let bak_path = Self::make_backup_path(path);
+
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                match serde_json::from_str::<AppSettings>(&content) {
+                    Ok(mut settings) => {
+                        settings.migrate_from_file(path);
+                        return settings;
+                    }
+                    Err(_) => {
+                        if !bak_path.exists() {
+                            let _ = std::fs::copy(path, &bak_path);
+                        }
+                        let corrupted_path = path.with_extension("corrupted");
+                        let _ = std::fs::copy(path, &corrupted_path);
+                    }
                 }
-                Err(_) => {
-                    let bak_path = Self::make_backup_path(path);
-                    let _ = std::fs::copy(path, &bak_path);
-                }
+            } else {
+                let corrupted_path = path.with_extension("corrupted");
+                let _ = std::fs::copy(path, &corrupted_path);
             }
         }
+
+        if bak_path.exists()
+            && let Ok(bak_content) = std::fs::read_to_string(&bak_path)
+            && let Ok(mut bak_settings) = serde_json::from_str::<AppSettings>(&bak_content)
+        {
+            bak_settings.migrate_from_file(path);
+            let _ = bak_settings.save_to_path(path);
+            return bak_settings;
+        }
+
         Self::default()
     }
 
     pub fn save(&self) -> Result<(), String> {
         let path = Self::get_settings_path();
+        self.save_to_path(&path)
+    }
+
+    pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let content = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Ошибка сериализации настроек: {e}"))?;
-        let mut tmp_path = path.clone();
-        tmp_path.set_extension("json.tmp");
-        std::fs::write(&tmp_path, &content).map_err(|e| {
-            format!(
-                "Ошибка записи временного файла настроек {}: {e}",
-                tmp_path.display()
-            )
+        let content = serde_json::to_string_pretty(self).map_err(|e| {
+            let err = format!("Ошибка сериализации настроек: {e}");
+            if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
+                *lock = Some(err.clone());
+            }
+            err
         })?;
-        if std::fs::rename(&tmp_path, &path).is_err() {
-            std::fs::write(&path, &content)
-                .map_err(|e| format!("Ошибка записи файла настроек {}: {e}", path.display()))?;
+
+        let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+
+        let write_res = (|| -> std::io::Result<()> {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&tmp_path)?;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_res {
             let _ = std::fs::remove_file(&tmp_path);
+            let err = format!("Ошибка записи временного файла настроек: {e}");
+            if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
+                *lock = Some(err.clone());
+            }
+            return Err(err);
+        }
+
+        let mut rename_err = None;
+        for _ in 0..5 {
+            match std::fs::rename(&tmp_path, path) {
+                Ok(()) => {
+                    rename_err = None;
+                    break;
+                }
+                Err(e) => {
+                    rename_err = Some(e);
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+            }
+        }
+
+        if let Some(e) = rename_err {
+            let _ = std::fs::remove_file(&tmp_path);
+            let err = format!("Ошибка сохранения настроек {}: {e}", path.display());
+            if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
+                *lock = Some(err.clone());
+            }
+            return Err(err);
+        }
+
+        if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
+            *lock = None;
         }
         Ok(())
     }
@@ -257,10 +386,28 @@ impl AppSettings {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        // Remove existing entry for this file path if any
-        self.recent_books.retain(|b| b.path != path);
+        self.reading_progress.insert(
+            path.to_path_buf(),
+            BookProgress {
+                chapter,
+                scroll_y,
+                timestamp: now,
+            },
+        );
 
-        // Insert at beginning of list
+        if self.reading_progress.len() > 10_000 {
+            let mut entries: Vec<_> = self
+                .reading_progress
+                .iter()
+                .map(|(p, b)| (p.clone(), b.timestamp))
+                .collect();
+            entries.sort_by_key(|&(_, t)| t);
+            for (old_path, _) in entries.into_iter().take(2_000) {
+                self.reading_progress.remove(&old_path);
+            }
+        }
+
+        self.recent_books.retain(|b| b.path != path);
         self.recent_books.insert(
             0,
             RecentBook {
@@ -279,7 +426,6 @@ impl AppSettings {
             },
         );
 
-        // Keep maximum 25 recent books
         if self.recent_books.len() > 25 {
             self.recent_books.truncate(25);
         }
@@ -288,9 +434,18 @@ impl AppSettings {
     }
 
     pub fn get_book_progress(&self, path: &Path) -> Option<(usize, f32)> {
+        if let Some(prog) = self.reading_progress.get(path) {
+            return Some((prog.chapter, prog.scroll_y));
+        }
+        let path_str = path.to_string_lossy();
+        for (p, prog) in &self.reading_progress {
+            if p.to_string_lossy().eq_ignore_ascii_case(&path_str) {
+                return Some((prog.chapter, prog.scroll_y));
+            }
+        }
         self.recent_books
             .iter()
-            .find(|b| b.path == path)
+            .find(|b| b.path == path || b.path.to_string_lossy().eq_ignore_ascii_case(&path_str))
             .map(|b| (b.chapter, b.scroll_y))
     }
 

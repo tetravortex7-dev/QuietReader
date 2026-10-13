@@ -37,6 +37,14 @@ impl Document for Fb2Document {
         &self.toc
     }
 
+    fn format_name(&self) -> &'static str {
+        "FB2"
+    }
+
+    fn has_custom_toc(&self) -> bool {
+        !self.toc.is_empty()
+    }
+
     fn text_content(&self) -> Option<&dyn TextContent> {
         Some(self)
     }
@@ -101,15 +109,16 @@ impl Fb2Document {
                 "Отсутствует корневой тег <FictionBook> в FB2 документе".to_string(),
             ));
         }
-        let mut reader = Reader::from_str(xml);
+        let sanitized = crate::document::epub::sanitize_xml_entities(xml);
+        let mut reader = Reader::from_str(&sanitized);
         reader.config_mut().trim_text(false);
+        reader.config_mut().check_end_names = false;
 
         let mut book_title = String::new();
         let mut author_first = String::new();
         let mut author_middle = String::new();
         let mut author_last = String::new();
 
-        // Metadata flags
         let mut in_title_info = false;
         let mut in_author = false;
         let mut in_book_title = false;
@@ -117,17 +126,14 @@ impl Fb2Document {
         let mut in_middle_name = false;
         let mut in_last_name = false;
 
-        // Content tree building
         let mut bodies: Vec<BodyNode> = Vec::new();
         let mut current_body: Option<BodyNode> = None;
         let mut section_stack: Vec<SectionNode> = Vec::new();
 
-        // Explicit TOC links from <body name="toc">
         let mut explicit_toc_links: Vec<TocLink> = Vec::new();
         let mut current_link_href: Option<String> = None;
         let mut current_link_text = String::new();
 
-        // Tag tracking
         let mut tag_stack: Vec<String> = Vec::new();
         let mut in_title = false;
         let mut title_paragraphs: Vec<String> = Vec::new();
@@ -135,8 +141,8 @@ impl Fb2Document {
 
         let mut in_paragraph = false;
         let mut current_paragraph = String::new();
-
         let mut buf = Vec::new();
+        let mut had_error = false;
 
         loop {
             match reader.read_event_into(&mut buf) {
@@ -169,23 +175,24 @@ impl Fb2Document {
                         }
 
                         "section" if current_body.is_some() => {
-                            let mut sec_id = None;
-                            for attr in e.attributes().flatten() {
-                                let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
-                                if key == "id" {
-                                    sec_id = Some(attr.value.to_string());
+                            if section_stack.len() < 32 {
+                                let mut sec_id = None;
+                                for attr in e.attributes().flatten() {
+                                    let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
+                                    if key == "id" {
+                                        sec_id = Some(attr.value.to_string());
+                                    }
                                 }
+                                section_stack.push(SectionNode {
+                                    id: sec_id,
+                                    title: None,
+                                    paragraphs: Vec::new(),
+                                    subsections: Vec::new(),
+                                });
                             }
-                            section_stack.push(SectionNode {
-                                id: sec_id,
-                                title: None,
-                                paragraphs: Vec::new(),
-                                subsections: Vec::new(),
-                            });
                         }
 
                         "title" => {
-                            // Only consider title if direct child of section or body, not inside poem/cite/epigraph
                             let parent_tag = tag_stack.last().map(|s| s.as_str()).unwrap_or("");
                             if parent_tag == "section" || parent_tag == "body" {
                                 in_title = true;
@@ -204,7 +211,6 @@ impl Fb2Document {
                         }
 
                         "a" => {
-                            // Link inside body name="toc"
                             if let Some(ref body) = current_body
                                 && body
                                     .name
@@ -225,7 +231,9 @@ impl Fb2Document {
                         _ => {}
                     }
 
-                    tag_stack.push(tag_name);
+                    if tag_stack.len() < 64 {
+                        tag_stack.push(tag_name);
+                    }
                 }
 
                 Ok(Event::End(ref e)) => {
@@ -303,7 +311,6 @@ impl Fb2Document {
                         }
 
                         "body" => {
-                            // If any sections were unclosed, pop them
                             while let Some(sec) = section_stack.pop() {
                                 if let Some(parent_sec) = section_stack.last_mut() {
                                     parent_sec.subsections.push(sec);
@@ -354,14 +361,42 @@ impl Fb2Document {
                     }
                 }
 
+                Ok(Event::GeneralRef(ref e)) => {
+                    let repl = match e.as_ref() {
+                        "amp" => "&",
+                        "lt" => "<",
+                        "gt" => ">",
+                        "quot" => "\"",
+                        "apos" => "'",
+                        _ => "",
+                    };
+                    if !repl.is_empty() {
+                        if in_first_name {
+                            author_first.push_str(repl);
+                        } else if in_middle_name {
+                            author_middle.push_str(repl);
+                        } else if in_last_name {
+                            author_last.push_str(repl);
+                        } else if in_title {
+                            current_title_paragraph.push_str(repl);
+                        } else if current_link_href.is_some() {
+                            current_link_text.push_str(repl);
+                        } else if in_paragraph {
+                            current_paragraph.push_str(repl);
+                        }
+                    }
+                }
+
                 Ok(Event::Eof) => break,
-                Err(e) => return Err(DocumentError::Corrupted(format!("XML parsing error: {e}"))),
+                Err(_) => {
+                    had_error = true;
+                    break;
+                }
                 _ => {}
             }
             buf.clear();
         }
 
-        // Close any remaining body if XML didn't have </body
         if let Some(body) = current_body.take() {
             bodies.push(body);
         }
@@ -376,40 +411,68 @@ impl Fb2Document {
         if !author_last.trim().is_empty() {
             author_parts.push(author_last.trim());
         }
-        let author = if author_parts.is_empty() {
+        let mut author = if author_parts.is_empty() {
             "Неизвестный автор".to_string()
         } else {
             author_parts.join(" ")
         };
 
-        let title = if book_title.trim().is_empty() {
+        let mut title = if book_title.trim().is_empty() {
             "Без названия".to_string()
         } else {
             book_title.trim().to_string()
         };
 
-        // Flatten document bodies and sections into chapters and TOC tree
-        let (chapters, mut toc) = build_chapters_and_toc(bodies);
+        let (mut chapters, mut toc, section_id_to_chapter) = build_chapters_and_toc(bodies);
 
-        // If auto-generated TOC is empty, but we have explicit TOC links from <body name="toc">:
-        if toc.is_empty() && !explicit_toc_links.is_empty() {
-            let mut id_map: HashMap<String, usize> = HashMap::new();
-            for (idx, ch) in chapters.iter().enumerate() {
-                if let Some(ref id) = ch.id {
-                    id_map.insert(id.clone(), idx);
+        if chapters.is_empty() || chapters.iter().all(|c| c.is_empty()) {
+            let (fb_title, fb_author, fb_chapters) = extract_fb2_lenient(xml);
+            if !fb_chapters.is_empty() && fb_chapters.iter().any(|c| !c.is_empty()) {
+                if title == "Без названия" && !fb_title.is_empty() {
+                    title = fb_title;
                 }
+                if author == "Неизвестный автор" && !fb_author.is_empty() {
+                    author = fb_author;
+                }
+                chapters = fb_chapters;
+                toc = chapters
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| TocItem {
+                        id: c.id.clone(),
+                        title: if c.title.is_empty() { format!("Раздел {}", i + 1) } else { c.title.clone() },
+                        chapter_index: i,
+                        children: Vec::new(),
+                    })
+                    .collect();
+            } else {
+                return Err(DocumentError::Corrupted(
+                    "Не удалось извлечь содержимое из повреждённого FB2 документа".to_string(),
+                ));
             }
+        }
 
+        if !explicit_toc_links.is_empty() {
+            let mut custom_toc = Vec::new();
             for link in explicit_toc_links {
                 let target_id = link.href.strip_prefix('#').unwrap_or(&link.href);
-                if let Some(&chapter_idx) = id_map.get(target_id) {
-                    toc.push(TocItem {
+                let decoded_id = crate::document::epub::percent_decode_str(target_id);
+                let chapter_idx = section_id_to_chapter
+                    .get(target_id)
+                    .or_else(|| section_id_to_chapter.get(&decoded_id))
+                    .copied();
+
+                if let Some(ch_idx) = chapter_idx {
+                    custom_toc.push(TocItem {
                         id: Some(target_id.to_string()),
                         title: link.title,
-                        chapter_index: chapter_idx,
+                        chapter_index: ch_idx,
                         children: Vec::new(),
                     });
                 }
+            }
+            if !custom_toc.is_empty() {
+                toc = custom_toc;
             }
         }
 
@@ -423,16 +486,17 @@ impl Fb2Document {
 
 struct FlattenContext {
     chapters: Vec<BookChapter>,
+    section_id_to_chapter: HashMap<String, usize>,
 }
 
-fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocItem>) {
+fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocItem>, HashMap<String, usize>) {
     let mut ctx = FlattenContext {
         chapters: Vec::new(),
+        section_id_to_chapter: HashMap::new(),
     };
     let mut root_toc: Vec<TocItem> = Vec::new();
 
     for body in bodies {
-        // Skip body name="toc" from text rendering
         if body
             .name
             .as_deref()
@@ -451,7 +515,6 @@ fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocIt
 
         let mut body_start_chapter: Option<usize> = None;
 
-        // If body has direct text, create a preamble chapter for it
         if body_has_direct_text || (body.sections.is_empty() && body_has_title) {
             let idx = ctx.chapters.len();
             body_start_chapter = Some(idx);
@@ -465,7 +528,7 @@ fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocIt
         let mut body_sections_toc: Vec<TocItem> = Vec::new();
 
         for section in body.sections {
-            let (sec_first_ch, sec_tocs) = flatten_section(section, &mut ctx);
+            let (sec_first_ch, sec_tocs) = flatten_section(section, &mut ctx, 0);
             if body_start_chapter.is_none() {
                 body_start_chapter = sec_first_ch;
             }
@@ -486,20 +549,13 @@ fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocIt
         }
     }
 
-    if ctx.chapters.is_empty() {
-        ctx.chapters.push(BookChapter {
-            id: None,
-            title: String::new(),
-            paragraphs: vec!["[Документ не содержит текста]".to_string()],
-        });
-    }
-
-    (ctx.chapters, root_toc)
+    (ctx.chapters, root_toc, ctx.section_id_to_chapter)
 }
 
 fn flatten_section(
     mut section: SectionNode,
     ctx: &mut FlattenContext,
+    depth: usize,
 ) -> (Option<usize>, Vec<TocItem>) {
     let has_own_title = section
         .title
@@ -507,8 +563,6 @@ fn flatten_section(
         .map(|t| !t.trim().is_empty())
         .unwrap_or(false);
 
-    // If section has title, but no direct paragraphs, check if its leading subsections are untitled leaf sections.
-    // In FB2, chapter intro/preamble is commonly put in an untitled subsection before titled sub-sessions/sections.
     if has_own_title && section.paragraphs.is_empty() && !section.subsections.is_empty() {
         while !section.subsections.is_empty() {
             let is_untitled_leaf = section.subsections[0]
@@ -530,12 +584,20 @@ fn flatten_section(
         }
     }
 
+    if depth >= 32 {
+        let mut overflow_paragraphs = Vec::new();
+        for sub in section.subsections.drain(..) {
+            overflow_paragraphs.extend(sub.paragraphs);
+            for s in sub.subsections {
+                overflow_paragraphs.extend(s.paragraphs);
+            }
+        }
+        section.paragraphs.extend(overflow_paragraphs);
+    }
+
     let has_own_paragraphs = section.paragraphs.iter().any(|p| !p.trim().is_empty());
     let mut own_chapter_idx: Option<usize> = None;
 
-    // Create a chapter for this section if it has paragraphs,
-    // or if it is a leaf section with a title.
-    // Container sections without direct paragraphs must NOT create empty chapters.
     let should_create_chapter = if has_own_paragraphs {
         true
     } else if section.subsections.is_empty() {
@@ -558,7 +620,7 @@ fn flatten_section(
     let mut first_child_chapter: Option<usize> = None;
 
     for sub in section.subsections {
-        let (sub_first_ch, sub_tocs) = flatten_section(sub, ctx);
+        let (sub_first_ch, sub_tocs) = flatten_section(sub, ctx, depth + 1);
         if first_child_chapter.is_none() {
             first_child_chapter = sub_first_ch;
         }
@@ -566,6 +628,13 @@ fn flatten_section(
     }
 
     let effective_chapter_idx = own_chapter_idx.or(first_child_chapter);
+
+    if let (Some(id), Some(ch_idx)) = (&section.id, effective_chapter_idx) {
+        ctx.section_id_to_chapter.entry(id.clone()).or_insert(ch_idx);
+        ctx.section_id_to_chapter
+            .entry(crate::document::epub::percent_decode_str(id))
+            .or_insert(ch_idx);
+    }
 
     if has_own_title {
         let title = section.title.unwrap_or_default();
@@ -578,10 +647,110 @@ fn flatten_section(
         };
         (effective_chapter_idx, vec![toc_item])
     } else {
-        // Section has NO title: do not create an empty TOC item,
-        // but promote child TOC items to the parent level!
         (effective_chapter_idx, child_tocs)
     }
+}
+
+pub fn extract_fb2_lenient(xml: &str) -> (String, String, Vec<BookChapter>) {
+    let mut title = String::new();
+    let mut author = String::new();
+    let mut chapters = Vec::new();
+    let mut current_paragraphs = Vec::new();
+    let mut current_title = String::new();
+    let mut in_title = false;
+    let mut in_p = false;
+    let mut current_p = String::new();
+
+    let mut i = 0;
+    let bytes = xml.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            let rest = &xml[i + 1..];
+            if let Some(end_bracket) = rest.find('>') {
+                let tag_raw = rest[..end_bracket].trim();
+                let is_closing = tag_raw.starts_with('/');
+                let tag_name = tag_raw
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_start_matches('/')
+                    .to_ascii_lowercase();
+
+                match tag_name.as_str() {
+                    "book-title" => {
+                        if is_closing && title.is_empty() {
+                            title = current_p.trim().to_string();
+                            current_p.clear();
+                        }
+                    }
+                    "author" => {
+                        if is_closing && author.is_empty() {
+                            author = current_p.trim().to_string();
+                            current_p.clear();
+                        }
+                    }
+                    "title" => {
+                        in_title = !is_closing;
+                        if is_closing {
+                            current_title = current_p.trim().to_string();
+                            current_p.clear();
+                        }
+                    }
+                    "section" if is_closing => {
+                        if !current_paragraphs.is_empty() || !current_title.is_empty() {
+                            chapters.push(BookChapter {
+                                id: None,
+                                title: std::mem::take(&mut current_title),
+                                paragraphs: std::mem::take(&mut current_paragraphs),
+                            });
+                        }
+                    }
+                    "p" | "v" | "subtitle" => {
+                        in_p = !is_closing;
+                        if is_closing {
+                            let p_clean = normalize_whitespace(&current_p);
+                            if !p_clean.is_empty() {
+                                if in_title {
+                                    current_title = p_clean;
+                                } else {
+                                    current_paragraphs.push(p_clean);
+                                }
+                            }
+                            current_p.clear();
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1 + end_bracket + 1;
+                continue;
+            }
+        }
+
+        if in_p || title.is_empty() || author.is_empty() {
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'<' {
+                i += 1;
+            }
+            if let Ok(text_slice) = std::str::from_utf8(&bytes[start..i]) {
+                let unescaped = quick_xml::escape::unescape(text_slice)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| text_slice.to_string());
+                current_p.push_str(&unescaped);
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    if !current_paragraphs.is_empty() || !current_title.is_empty() {
+        chapters.push(BookChapter {
+            id: None,
+            title: current_title,
+            paragraphs: current_paragraphs,
+        });
+    }
+
+    (title, author, chapters)
 }
 
 fn local_name(name: &str) -> &str {
@@ -593,12 +762,10 @@ fn local_name(name: &str) -> &str {
 }
 
 fn decode_text(bytes: &[u8]) -> String {
-    // Check BOM first
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8_lossy(&bytes[3..]).into_owned();
     }
 
-    // Inspect first 300 bytes for <?xml ... encoding="..."?>
     let probe_len = bytes.len().min(300);
     let probe_str = String::from_utf8_lossy(&bytes[..probe_len]);
 
@@ -609,7 +776,6 @@ fn decode_text(bytes: &[u8]) -> String {
         return decoded.into_owned();
     }
 
-    // Default to UTF-8
     let (decoded, _, _) = encoding_rs::UTF_8.decode(bytes);
     decoded.into_owned()
 }

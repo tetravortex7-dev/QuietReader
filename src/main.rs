@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 mod app;
@@ -58,3 +58,5 @@ fn main() -> eframe::Result<()> {
 mod test_suite;
 #[cfg(test)]
 mod tests_comic_pdf;
+#[cfg(test)]
+mod tests_critical;

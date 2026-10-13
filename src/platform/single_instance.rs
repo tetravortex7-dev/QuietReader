@@ -44,7 +44,7 @@ impl Drop for SingleInstanceGuard {
 
 #[cfg(windows)]
 mod win32_ipc {
-    use super::{SingleInstanceGuard, get_hwnd_file_path, get_ipc_request_path};
+    use super::{get_hwnd_file_path, get_ipc_request_path, SingleInstanceGuard};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -64,6 +64,7 @@ mod win32_ipc {
             lp_name: *const u16,
         ) -> isize;
         fn GetLastError() -> u32;
+        fn GetCurrentProcessId() -> u32;
         pub fn CloseHandle(h_object: isize) -> i32;
     }
 
@@ -79,10 +80,22 @@ mod win32_ipc {
         fn BringWindowToTop(hwnd: isize) -> i32;
         fn AllowSetForegroundWindow(dw_process_id: u32) -> i32;
         fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
+        fn GetWindowThreadProcessId(hwnd: isize, lpdw_process_id: *mut u32) -> u32;
     }
 
     fn to_wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    pub fn is_own_process_window(hwnd: isize) -> bool {
+        if hwnd == 0 {
+            return false;
+        }
+        let mut proc_id = 0u32;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut proc_id);
+            proc_id != 0 && proc_id == GetCurrentProcessId()
+        }
     }
 
     fn find_primary_hwnd() -> isize {
@@ -94,7 +107,12 @@ mod win32_ipc {
             return val;
         }
         let title = to_wide("QuietReader");
-        unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) }
+        let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+        if is_own_process_window(hwnd) {
+            hwnd
+        } else {
+            0
+        }
     }
 
     pub fn focus_hwnd(hwnd: isize) {
@@ -126,9 +144,11 @@ mod win32_ipc {
 
                 let mut payload = String::from("ACTIVATE\n");
                 if let Some(path) = initial_file {
-                    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-                    payload.push_str(&abs.to_string_lossy());
-                    payload.push('\n');
+                    if path.is_file() {
+                        let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                        payload.push_str(&abs.to_string_lossy());
+                        payload.push('\n');
+                    }
                 }
                 let _ = std::fs::write(get_ipc_request_path(), payload);
 
@@ -152,10 +172,14 @@ mod win32_ipc {
         }
         unsafe {
             let mut hwnd = GetActiveWindow();
-            if hwnd == 0 {
+            if !is_own_process_window(hwnd) {
                 hwnd = GetForegroundWindow();
             }
-            if hwnd != 0 {
+            if !is_own_process_window(hwnd) {
+                let title = to_wide("QuietReader");
+                hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+            }
+            if is_own_process_window(hwnd) {
                 REGISTERED_HWND.store(hwnd, Ordering::Relaxed);
                 let _ = std::fs::write(get_hwnd_file_path(), hwnd.to_string());
             }
@@ -183,13 +207,20 @@ pub fn acquire_single_instance(initial_file: &Option<PathBuf>) -> Option<SingleI
             && let Ok(pid_str) = std::fs::read_to_string(&lock_file)
             && let Ok(pid) = pid_str.trim().parse::<u32>()
         {
-            let proc_alive = std::path::Path::new(&format!("/proc/{pid}")).exists();
+            let proc_alive = std::path::Path::new(&format!("/proc/{pid}")).exists()
+                || std::process::Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
             if proc_alive {
                 let mut payload = String::from("ACTIVATE\n");
                 if let Some(path) = initial_file {
-                    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-                    payload.push_str(&abs.to_string_lossy());
-                    payload.push('\n');
+                    if path.is_file() {
+                        let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                        payload.push_str(&abs.to_string_lossy());
+                        payload.push('\n');
+                    }
                 }
                 let _ = std::fs::write(get_ipc_request_path(), payload);
                 return None;
@@ -232,7 +263,7 @@ pub fn poll_single_instance_requests() -> (bool, Vec<PathBuf>) {
         let trimmed = line.trim();
         if !trimmed.is_empty() && trimmed != "ACTIVATE" {
             let p = PathBuf::from(trimmed);
-            if p.exists() {
+            if p.is_file() {
                 files.push(p);
             }
         }

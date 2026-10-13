@@ -13,11 +13,39 @@ pub enum SettingsTab {
     System,
 }
 
-/// Управление модальными диалогами: недавние книги, ассоциации файлов FB2
 pub struct Dialogs;
 
 impl Dialogs {
-    /// Окно ассоциации файлов FB2 в Windows
+    pub fn pick_document_files() -> Option<Vec<PathBuf>> {
+        rfd::FileDialog::new()
+            .add_filter(
+                "Все поддерживаемые документы",
+                &[
+                    "pdf", "djvu", "djv", "fb2", "epub", "txt", "md", "markdown", "log", "cbz",
+                    "cbr", "cb7", "zip", "rar", "7z", "xml",
+                ],
+            )
+            .add_filter("Документы PDF (*.pdf)", &["pdf"])
+            .add_filter("Документы DjVu (*.djvu, *.djv)", &["djvu", "djv"])
+            .add_filter(
+                "Комиксы и манга (*.cbz, *.cbr, *.cb7, *.zip)",
+                &["cbz", "cbr", "cb7", "zip", "rar", "7z"],
+            )
+            .add_filter("Книги EPUB (*.epub)", &["epub"])
+            .add_filter("Книги FB2 (*.fb2)", &["fb2", "xml"])
+            .add_filter(
+                "Текстовые файлы (*.txt, *.md, *.log)",
+                &["txt", "md", "markdown", "log"],
+            )
+            .pick_files()
+    }
+
+    pub fn pick_comic_folder() -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("Выберите папку с изображениями комикса или манги")
+            .pick_folder()
+    }
+
     pub fn render_association_dialog(
         ctx: &egui::Context,
         show_dialog: &mut bool,
@@ -25,6 +53,7 @@ impl Dialogs {
         settings: &mut AppSettings,
         theme: &ReaderTheme,
         on_register_association: &mut bool,
+        on_save_settings: &mut bool,
     ) {
         if !*show_dialog {
             return;
@@ -63,7 +92,7 @@ impl Dialogs {
                         crate::platform::set_association_prompt_dismissed(true);
                         if *dont_show_again {
                             settings.dismiss_association_prompt = true;
-                            let _ = settings.save();
+                            *on_save_settings = true;
                         }
                         *show_dialog = false;
                     }
@@ -71,7 +100,7 @@ impl Dialogs {
                         if *dont_show_again {
                             crate::platform::set_association_prompt_dismissed(true);
                             settings.dismiss_association_prompt = true;
-                            let _ = settings.save();
+                            *on_save_settings = true;
                         }
                         *show_dialog = false;
                     }
@@ -80,7 +109,6 @@ impl Dialogs {
             });
     }
 
-    /// Окно истории недавних книг
     pub fn render_recent_dialog(
         ctx: &egui::Context,
         show_dialog: &mut bool,
@@ -88,6 +116,7 @@ impl Dialogs {
         settings: &mut AppSettings,
         theme: &ReaderTheme,
         on_open_file: &mut Option<PathBuf>,
+        on_save_settings: &mut bool,
     ) {
         if !*show_dialog {
             return;
@@ -200,7 +229,7 @@ impl Dialogs {
         if clear_recent {
             settings.recent_books.clear();
             settings.last_opened_book = None;
-            let _ = settings.save();
+            *on_save_settings = true;
         }
 
         if let Some(path) = book_to_open {

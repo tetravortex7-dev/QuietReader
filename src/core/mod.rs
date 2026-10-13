@@ -1,10 +1,9 @@
 use crate::document::Document;
 use crate::settings::{AppSettings, ComicSettings};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Команды ядра приложения (полностью независимы от GUI-фреймворка)
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     NextPage,
@@ -17,11 +16,8 @@ pub enum Command {
     PrevChapter,
     Home,
     End,
-    #[allow(dead_code)]
     ScrollBy(f32),
-    #[allow(dead_code)]
     GoToChapter(usize),
-    #[allow(dead_code)]
     GoToPage(usize),
     ToggleFullscreen,
     ExitFullscreen,
@@ -32,7 +28,6 @@ pub enum Command {
     ResetZoom,
 }
 
-/// Закладка пользователя в книге
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Bookmark {
     pub book_path: PathBuf,
@@ -42,15 +37,71 @@ pub struct Bookmark {
     pub timestamp: u64,
 }
 
-/// Чистое ядро чтения (без зависимостей от egui)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    pub chapter_index: usize,
+    pub paragraph_index: Option<usize>,
+    pub snippet: String,
+}
+
 #[derive(Default)]
 pub struct ReaderCore {
-    #[allow(dead_code)]
     pub bookmarks: Vec<Bookmark>,
 }
 
 impl ReaderCore {
-    /// Находит индекс следующего непустого раздела
+    pub fn add_bookmark(&mut self, bookmark: Bookmark) {
+        if !self.bookmarks.iter().any(|b| {
+            b.book_path == bookmark.book_path
+                && b.chapter == bookmark.chapter
+                && (b.scroll_y - bookmark.scroll_y).abs() < 1.0
+        }) {
+            self.bookmarks.push(bookmark);
+        }
+    }
+
+    pub fn remove_bookmark(&mut self, book_path: &Path, chapter: usize) {
+        self.bookmarks
+            .retain(|b| !(b.book_path == book_path && b.chapter == chapter));
+    }
+
+    pub fn bookmarks_for_path<'a>(
+        &'a self,
+        book_path: &'a Path,
+    ) -> impl Iterator<Item = &'a Bookmark> {
+        self.bookmarks.iter().filter(move |b| b.book_path == book_path)
+    }
+
+    pub fn clear_bookmarks_for_path(&mut self, book_path: &Path) {
+        self.bookmarks.retain(|b| b.book_path != book_path);
+    }
+
+    pub fn search_in_document(doc: &dyn Document, query: &str) -> Vec<SearchHit> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let mut hits = Vec::new();
+        for (ch_idx, chapter) in doc.chapters().iter().enumerate() {
+            for (p_idx, para) in chapter.paragraphs.iter().enumerate() {
+                if let Some(pos) = para.to_lowercase().find(&q) {
+                    let start = pos.saturating_sub(30);
+                    let end = (pos + q.len() + 30).min(para.len());
+                    let snippet = para[start..end].trim().to_string();
+                    hits.push(SearchHit {
+                        chapter_index: ch_idx,
+                        paragraph_index: Some(p_idx),
+                        snippet,
+                    });
+                    if hits.len() >= 100 {
+                        return hits;
+                    }
+                }
+            }
+        }
+        hits
+    }
+
     pub fn find_next_non_empty_chapter(
         doc: &dyn Document,
         current_chapter: usize,
@@ -64,7 +115,6 @@ impl ReaderCore {
         })
     }
 
-    /// Находит индекс предыдущего непустого раздела
     pub fn find_prev_non_empty_chapter(
         doc: &dyn Document,
         current_chapter: usize,
@@ -77,8 +127,12 @@ impl ReaderCore {
         })
     }
 
-    /// Собирает полный текст текущего раздела для копирования
     pub fn extract_chapter_text(doc: &dyn Document, current_chapter: usize) -> Option<String> {
+        if let Some(page_content) = doc.page_content()
+            && let Some(text) = page_content.extract_page_text(current_chapter)
+        {
+            return Some(text);
+        }
         let ch = doc.chapters().get(current_chapter)?;
         let mut s = String::new();
         if !ch.title.is_empty() {
@@ -94,7 +148,6 @@ impl ReaderCore {
         Some(s)
     }
 
-    /// Обрабатывает навигационную команду для потокового текстового документа
     pub fn apply_text_command(
         cmd: &Command,
         doc: &dyn Document,
@@ -184,7 +237,6 @@ impl ReaderCore {
         false
     }
 
-    /// Обрабатывает навигационную команду для постраничного документа (комикс / манга / PDF)
     pub fn apply_paged_command(
         cmd: &Command,
         doc: &Option<Arc<dyn Document>>,
@@ -265,7 +317,6 @@ impl ReaderCore {
         }
     }
 
-    /// Синхронизирует прогресс чтения в настройки
     pub fn record_progress(
         settings: &mut AppSettings,
         document: &Option<Arc<dyn Document>>,

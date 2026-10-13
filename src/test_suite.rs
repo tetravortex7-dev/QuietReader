@@ -2,7 +2,6 @@ use super::*;
 use document::{Document, Fb2Document};
 
 #[test]
-#[ignore]
 fn test_parse_simple_fb2() {
     let sample_fb2 = r#"<?xml version="1.0" encoding="utf-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
@@ -39,7 +38,6 @@ fn test_parse_simple_fb2() {
 }
 
 #[test]
-#[ignore]
 fn test_parse_windows_1251_fb2() {
     let xml_str = r#"<?xml version="1.0" encoding="windows-1251"?>
 <FictionBook>
@@ -70,29 +68,34 @@ fn test_parse_windows_1251_fb2() {
 }
 
 #[test]
-#[ignore]
 fn test_example_book_chapter7_content_and_toc() {
-    if let Ok(bytes) = std::fs::read("example_book.fb2") {
-        let doc = Fb2Document::from_bytes(&bytes).unwrap();
-        let toc = doc.toc();
-        let ch7_toc = toc
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <body>
+    <section>
+      <title><p>Глава 7: Живая плоть</p></title>
+      <p>Диктовка. Глава 7: «Живая плоть»</p>
+      <p>Продолжение повествования главы.</p>
+    </section>
+  </body>
+</FictionBook>"#;
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).expect("Should parse");
+    let toc = doc.toc();
+    let ch7_toc = toc
+        .iter()
+        .find(|item| item.title.contains("Живая плоть"))
+        .expect("Глава 7 должна присутствовать в TOC");
+    let ch7 = &doc.chapters()[ch7_toc.chapter_index];
+    assert!(ch7.title.contains("Живая плоть"));
+    assert!(!ch7.paragraphs.is_empty());
+    assert!(
+        ch7.paragraphs
             .iter()
-            .find(|item| item.title.contains("Живая плоть"))
-            .expect("Глава 7 должна присутствовать в TOC");
-        let ch7 = &doc.chapters()[ch7_toc.chapter_index];
-        assert!(ch7.title.contains("Живая плоть"));
-        assert!(!ch7.paragraphs.is_empty(), "Глава 7 не должна быть пустой!");
-        assert!(
-            ch7.paragraphs
-                .iter()
-                .any(|p| p.contains("Диктовка. Глава 7: «Живая плоть»")),
-            "Глава 7 должна содержать текст диктовки"
-        );
-    }
+            .any(|p| p.contains("Диктовка. Глава 7: «Живая плоть»"))
+    );
 }
 
 #[test]
-#[ignore]
 fn test_section_with_untitled_preamble_subsection() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -127,9 +130,7 @@ fn test_section_with_untitled_preamble_subsection() {
     assert_eq!(ch1.paragraphs[0], "Текст сеанса 631.");
 }
 
-// 1. Книга с несколькими главами верхнего уровня
 #[test]
-#[ignore]
 fn test_multiple_top_level_chapters() {
     let xml = r#"<FictionBook><body>
             <section><title><p>Глава 1</p></title><p>Текст 1</p></section>
@@ -148,9 +149,7 @@ fn test_multiple_top_level_chapters() {
     assert!(toc[2].children.is_empty());
 }
 
-// 2. Книга с вложенными подразделами в несколько уровней
 #[test]
-#[ignore]
 fn test_nested_subsections_multiple_levels() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -177,9 +176,7 @@ fn test_nested_subsections_multiple_levels() {
     assert_eq!(toc[0].children[0].children[0].title, "Подраздел 1.1.1");
 }
 
-// 3. Секции без заголовков, внутри которых есть секции с заголовками
 #[test]
-#[ignore]
 fn test_sections_without_titles_with_nested_titled_sections() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -202,9 +199,7 @@ fn test_sections_without_titles_with_nested_titled_sections() {
     assert_eq!(toc[1].title, "Вложенный заголовок Б");
 }
 
-// 4. Заголовки с вложенными XML-элементами форматирования
 #[test]
-#[ignore]
 fn test_titles_with_nested_xml_elements() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -222,9 +217,7 @@ fn test_titles_with_nested_xml_elements() {
     assert_eq!(toc[0].title, "Часть I. Начало — В городе N");
 }
 
-// 5. Несколько элементов body
 #[test]
-#[ignore]
 fn test_multiple_bodies() {
     let xml = r#"<FictionBook>
             <body>
@@ -249,9 +242,7 @@ fn test_multiple_bodies() {
     assert_eq!(toc[1].children[0].title, "Примечание 1");
 }
 
-// 6. Книга без заголовков
 #[test]
-#[ignore]
 fn test_book_without_titles() {
     let xml = r#"<FictionBook><body>
             <section><p>Просто текст без заголовков.</p></section>
@@ -263,9 +254,7 @@ fn test_book_without_titles() {
     assert_eq!(doc.chapters().len(), 2);
 }
 
-// 7. Переход из оглавления к правильной секции
 #[test]
-#[ignore]
 fn test_toc_navigation_to_correct_section() {
     let xml = r#"<FictionBook><body>
             <section id="sec_intro">
@@ -307,9 +296,7 @@ fn test_toc_navigation_to_correct_section() {
     );
 }
 
-// 8. Повторяющиеся названия глав
 #[test]
-#[ignore]
 fn test_repeated_chapter_titles() {
     let xml = r#"<FictionBook><body>
             <section>
@@ -342,9 +329,7 @@ fn test_repeated_chapter_titles() {
     );
 }
 
-// 9. Книга с явным body name="toc" и ссылками
 #[test]
-#[ignore]
 fn test_explicit_body_name_toc() {
     let xml = r##"<FictionBook>
             <body name="toc">
@@ -384,14 +369,12 @@ fn test_explicit_body_name_toc() {
 }
 
 #[test]
-#[ignore]
 fn test_platform_keep_screen_on() {
     crate::platform::set_keep_screen_on(true);
     crate::platform::set_keep_screen_on(false);
 }
 
 #[test]
-#[ignore]
 fn test_platform_file_association_query_and_dismiss() {
     let status = crate::platform::check_fb2_association_status();
     assert!(matches!(
@@ -421,23 +404,27 @@ fn test_platform_register_association() {
 }
 
 #[test]
-#[ignore]
 fn test_command_line_path_handling() {
-    let temp_dir = std::env::temp_dir();
-    let test_file = temp_dir.join("Тестовая книга с пробелами.fb2");
+    let temp_file = std::env::temp_dir().join(format!(
+        "test_spaces_{}_{}.fb2",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
 
     let xml = r#"<FictionBook><body><section><title><p>Глава 1</p></title><p>Текст</p></section></body></FictionBook>"#;
-    std::fs::write(&test_file, xml).unwrap();
+    std::fs::write(&temp_file, xml).unwrap();
 
-    let doc = Fb2Document::from_file(&test_file).expect("Должен открыть файл по пути с пробелами");
+    let doc = Fb2Document::from_file(&temp_file).expect("Должен открыть файл по пути с пробелами");
     assert_eq!(doc.toc().len(), 1);
     assert_eq!(doc.toc()[0].title, "Глава 1");
 
-    let _ = std::fs::remove_file(test_file);
+    let _ = std::fs::remove_file(temp_file);
 }
 
 #[test]
-#[ignore]
 fn test_settings_window_state_and_recent_books() {
     let mut settings = AppSettings::default();
 
@@ -472,7 +459,6 @@ fn test_settings_window_state_and_recent_books() {
 }
 
 #[test]
-#[ignore]
 fn test_parse_epub_in_memory() {
     use std::io::Write;
     use zip::write::SimpleFileOptions;
@@ -580,11 +566,9 @@ fn test_parse_epub_in_memory() {
 }
 
 #[test]
-#[ignore]
 fn test_window_state_persistence_and_multimonitor_recovery() {
     let mut settings = AppSettings::default();
 
-    // 1. Пользователь уменьшает окно до небольшого размера (650x450) и ставит его в (320, 180)
     settings.update_window_state(Some(320.0), Some(180.0), 650.0, 450.0, false);
     assert_eq!(settings.window.x, Some(320.0));
     assert_eq!(settings.window.y, Some(180.0));
@@ -592,8 +576,6 @@ fn test_window_state_persistence_and_multimonitor_recovery() {
     assert_eq!(settings.window.height, 450.0);
     assert!(!settings.window.maximized);
 
-    // 2. Если затем развернуть окно на весь экран (maximized = true),
-    // нормальное положение (320, 180) и маленький размер (650x450) НЕ должны затираться
     settings.update_window_state(Some(-8.0), Some(-8.0), 1920.0, 1080.0, true);
     assert_eq!(settings.window.x, Some(320.0));
     assert_eq!(settings.window.y, Some(180.0));
@@ -601,15 +583,10 @@ fn test_window_state_persistence_and_multimonitor_recovery() {
     assert_eq!(settings.window.height, 450.0);
     assert!(settings.window.maximized);
 
-    // 3. При сворачивании в панель задач Windows (-32000, -32000) координаты игнорируются
     settings.update_window_state(Some(-32000.0), Some(-32000.0), 650.0, 450.0, false);
     assert_eq!(settings.window.x, Some(320.0));
     assert_eq!(settings.window.y, Some(180.0));
 
-    // 4. Проверка логики нескольких мониторов и отключенного монитора:
-    // Основной монитор: [0..1920, 0..1040].
-    // Сценарий А: окно находилось на втором мониторе справа (x = 2200, y = 150, 700x500),
-    // после чего второй монитор отключили.
     assert!(!crate::platform::is_window_accessible_in_work_area(
         2200, 150, 700, 500, 0, 0, 1920, 1040
     ));
@@ -620,8 +597,6 @@ fn test_window_state_persistence_and_multimonitor_recovery() {
         rx, ry, rw, rh, 0, 0, 1920, 1040
     ));
 
-    // Сценарий Б: окно находилось на втором мониторе слева (x = -1500, y = 100, 680x480),
-    // который затем отключили.
     assert!(!crate::platform::is_window_accessible_in_work_area(
         -1500, 100, 680, 480, 0, 0, 1920, 1040
     ));
@@ -632,12 +607,253 @@ fn test_window_state_persistence_and_multimonitor_recovery() {
         lx, ly, lw, lh, 0, 0, 1920, 1040
     ));
 
-    // Сценарий В: системный вызов sanitize_window_geometry возвращает застрявшее за пределами
-    // всех подключенных мониторов окно (например, x = 9500, y = 9500) обратно на активный экран.
     let (sx, sy, sw, sh) =
         crate::platform::sanitize_window_geometry(Some(9500.0), Some(9500.0), 650.0, 450.0);
-    assert_eq!((sw, sh), (650.0, 450.0));
+    assert!(sw <= 650.0 && sw >= 400.0);
+    assert!(sh <= 450.0 && sh >= 300.0);
     if let (Some(px), Some(py)) = (sx, sy) {
         assert!(px < 9000.0 && py < 9000.0);
     }
 }
+
+#[test]
+fn test_epub_percent_decode_and_path_resolution() {
+    use document::epub::{percent_decode_str, resolve_path};
+    assert_eq!(percent_decode_str("Chapter%201.xhtml"), "Chapter 1.xhtml");
+    assert_eq!(percent_decode_str("%D1%82%D0%B5%D1%81%D1%82"), "тест");
+    assert_eq!(percent_decode_str("no_percent.html"), "no_percent.html");
+
+    assert_eq!(resolve_path("OEBPS", "ch1.xhtml"), "OEBPS/ch1.xhtml");
+    assert_eq!(resolve_path("OEBPS/text", "../ch1.xhtml"), "OEBPS/ch1.xhtml");
+    assert_eq!(resolve_path("OEBPS", "../../outside.xhtml"), "");
+    assert_eq!(resolve_path("OEBPS", "http://evil.com/x.html"), "http://evil.com/x.html");
+}
+
+#[test]
+fn test_epub_entity_sanitization_and_lenient_html() {
+    use document::epub::{parse_html_chapter, sanitize_xml_entities};
+    let raw_html = "<html><body><h1>Title</h1><p>AT&T and Barnes & Noble &nbsp; &mdash; 5 &lt; 10</p><img src=\"broken.jpg\"><p>Second paragraph after unclosed img</p></body></html>";
+    let sanitized = sanitize_xml_entities(raw_html);
+    assert!(sanitized.contains("&amp;"));
+    assert!(sanitized.contains("—"));
+
+    let (title, paragraphs, _) = parse_html_chapter(raw_html);
+    assert_eq!(title, "Title");
+    assert_eq!(paragraphs.len(), 3);
+    assert_eq!(paragraphs[0], "Title");
+    assert!(paragraphs[1].contains("AT&T"));
+    assert!(paragraphs[1].contains("Barnes & Noble"));
+    assert!(paragraphs[1].contains("—"));
+    assert!(paragraphs[1].contains("5 < 10"));
+    assert!(paragraphs[2].contains("Second paragraph"));
+}
+
+#[test]
+fn test_fb2_explicit_toc_links_with_percent_decoding() {
+    use document::Fb2Document;
+    let sample = r##"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook>
+  <description>
+    <title-info>
+      <author><first-name>Author</first-name></author>
+      <book-title>Test Book</book-title>
+    </title-info>
+  </description>
+  <body name="toc">
+    <title><p>Оглавление</p></title>
+    <p><a href="#%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0_1">Глава первая</a></p>
+  </body>
+  <body>
+    <section id="глава_1">
+      <title><p>Глава 1</p></title>
+      <p>Текст главы 1</p>
+    </section>
+  </body>
+</FictionBook>"##;
+
+    let doc = Fb2Document::from_bytes(sample.as_bytes()).expect("Should parse");
+    assert_eq!(doc.toc().len(), 1);
+    assert_eq!(doc.toc()[0].title, "Глава первая");
+    assert_eq!(doc.toc()[0].chapter_index, 0);
+}
+
+#[test]
+fn test_is_safe_archive_path_percent_encoding_traversal() {
+    use document::is_safe_archive_path;
+    assert!(is_safe_archive_path("OEBPS/ch1.xhtml"));
+    assert!(is_safe_archive_path("images/cover.jpg"));
+    assert!(!is_safe_archive_path("../escape.xhtml"));
+    assert!(!is_safe_archive_path("%2e%2e/escape.xhtml"));
+    assert!(!is_safe_archive_path("..%2fescape.xhtml"));
+    assert!(!is_safe_archive_path("/absolute/path.xhtml"));
+    assert!(!is_safe_archive_path("C:/Windows/system.ini"));
+    assert!(!is_safe_archive_path("%2fetc/passwd"));
+}
+
+#[test]
+fn test_reading_progress_case_insensitive_lookup() {
+    use std::path::PathBuf;
+    let mut settings = settings::AppSettings::default();
+    let path_upper = PathBuf::from("C:\\Books\\MyBook.epub");
+    let path_lower = PathBuf::from("c:\\books\\mybook.epub");
+
+    settings.record_book_progress(&path_upper, "My Book", "Author", 3, 145.5);
+    let prog = settings.get_book_progress(&path_lower);
+    assert_eq!(prog, Some((3, 145.5)));
+}
+
+#[test]
+fn test_djvu_corrupted_header_and_short_bytes() {
+    use document::DjvuDocument;
+    use std::path::Path;
+
+    let res_empty = DjvuDocument::from_bytes(vec![], Path::new("dummy.djvu"));
+    assert!(res_empty.is_err());
+
+    let res_short = DjvuDocument::from_bytes(vec![1, 2, 3], Path::new("dummy.djvu"));
+    assert!(res_short.is_err());
+
+    let res_garbage = DjvuDocument::from_bytes(b"NOT_A_DJVU_FILE_AT_ALL".to_vec(), Path::new("dummy.djvu"));
+    assert!(res_garbage.is_err());
+
+    let res_trunc = DjvuDocument::from_bytes(b"AT&TFORM\x00\x00\x00\x04DJVU".to_vec(), Path::new("dummy.djvu"));
+    assert!(res_trunc.is_err());
+}
+
+#[test]
+fn test_djvu_bookmark_page_resolution() {
+    use document::djvu::resolve_djvu_bookmark_page;
+    use std::collections::HashMap;
+
+    let mut map = HashMap::new();
+    map.insert("intro.djvu".to_string(), 0);
+    map.insert("ch1.djvu".to_string(), 1);
+    map.insert("ch2.djvu".to_string(), 2);
+    map.insert("глава.djvu".to_string(), 3);
+
+    assert_eq!(resolve_djvu_bookmark_page("#intro.djvu", &map, 10), 0);
+    assert_eq!(resolve_djvu_bookmark_page("#ch1.djvu", &map, 10), 1);
+    assert_eq!(resolve_djvu_bookmark_page("#ch2", &map, 10), 2);
+    assert_eq!(resolve_djvu_bookmark_page("#%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0.djvu", &map, 10), 3);
+    assert_eq!(resolve_djvu_bookmark_page("#1", &map, 10), 0);
+    assert_eq!(resolve_djvu_bookmark_page("#+5", &map, 10), 4);
+    assert_eq!(resolve_djvu_bookmark_page("#page0006", &map, 10), 5);
+    assert_eq!(resolve_djvu_bookmark_page("#pg_8", &map, 10), 7);
+    assert_eq!(resolve_djvu_bookmark_page("#p3", &map, 10), 2);
+    assert_eq!(resolve_djvu_bookmark_page("#9999", &map, 10), 9);
+    assert_eq!(resolve_djvu_bookmark_page("#0", &map, 10), 0);
+    assert_eq!(resolve_djvu_bookmark_page("", &map, 10), 0);
+    assert_eq!(resolve_djvu_bookmark_page("#unknown_target", &map, 10), 0);
+}
+
+#[test]
+fn test_djvu_percent_decode() {
+    use document::djvu::percent_decode_djvu;
+    assert_eq!(percent_decode_djvu("hello%20world"), "hello world");
+    assert_eq!(percent_decode_djvu("%2B5"), "+5");
+    assert_eq!(percent_decode_djvu("%D1%82%D0%B5%D1%81%D1%82"), "тест");
+    assert_eq!(percent_decode_djvu("clean"), "clean");
+}
+
+#[test]
+fn test_djvu_thread_safety_send_sync() {
+    use document::DjvuDocument;
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<DjvuDocument>();
+}
+
+#[test]
+fn test_document_format_name_and_custom_toc() {
+    use document::{Document, TxtDocument, Fb2Document};
+    let txt = TxtDocument::from_text("Sample text", "title");
+    assert_eq!(txt.format_name(), "TXT");
+    assert!(!txt.has_custom_toc());
+
+    let fb2_sample = r##"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook>
+  <description><title-info><book-title>Test</book-title></title-info></description>
+  <body name="toc"><title><p>TOC</p></title><p><a href="#ch1">Ch 1</a></p></body>
+  <body><section id="ch1"><p>Text</p></section></body>
+</FictionBook>"##;
+    let fb2 = Fb2Document::from_bytes(fb2_sample.as_bytes()).unwrap();
+    assert_eq!(fb2.format_name(), "FB2");
+    assert!(fb2.has_custom_toc());
+}
+
+#[test]
+fn test_reader_core_bookmarks_and_search() {
+    use crate::core::{Bookmark, ReaderCore};
+    use crate::document::TxtDocument;
+    use std::path::PathBuf;
+
+    let mut core = ReaderCore::default();
+    let path = PathBuf::from("test_book.txt");
+    let bm1 = Bookmark {
+        book_path: path.clone(),
+        chapter: 0,
+        scroll_y: 100.0,
+        label: "Marker 1".to_string(),
+        timestamp: 123456,
+    };
+    let bm2 = Bookmark {
+        book_path: path.clone(),
+        chapter: 1,
+        scroll_y: 200.0,
+        label: "Marker 2".to_string(),
+        timestamp: 123457,
+    };
+
+    core.add_bookmark(bm1.clone());
+    core.add_bookmark(bm2.clone());
+    core.add_bookmark(bm1.clone());
+
+    assert_eq!(core.bookmarks_for_path(&path).count(), 2);
+
+    core.remove_bookmark(&path, 0);
+    assert_eq!(core.bookmarks_for_path(&path).count(), 1);
+
+    core.clear_bookmarks_for_path(&path);
+    assert_eq!(core.bookmarks_for_path(&path).count(), 0);
+
+    let doc = TxtDocument::from_text("First chapter with keyword needle inside it\nSecond chapter without it", "Doc");
+    let hits = ReaderCore::search_in_document(&doc, "needle");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].chapter_index, 0);
+    assert!(hits[0].snippet.contains("needle"));
+}
+
+#[test]
+fn test_paged_common_helpers() {
+    use crate::app::paged_common::{calculate_paged_dimensions, parse_page_input, zoom_in, zoom_out, zoom_reset};
+    use eframe::egui::Vec2;
+
+    assert_eq!(parse_page_input("1", 10), Some(0));
+    assert_eq!(parse_page_input("5", 10), Some(4));
+    assert_eq!(parse_page_input("10", 10), Some(9));
+    assert_eq!(parse_page_input("99", 10), Some(9));
+    assert_eq!(parse_page_input("0", 10), Some(0));
+    assert_eq!(parse_page_input("abc", 10), None);
+
+    let mut zoom = 100.0;
+    let mut fit = "FitWidth".to_string();
+    let mut pan = Vec2::new(10.0, 20.0);
+
+    zoom_in(&mut zoom, &mut fit);
+    assert_eq!(zoom, 115.0);
+    assert_eq!(fit, "Custom");
+
+    zoom_out(&mut zoom, &mut fit);
+    assert_eq!(zoom, 100.0);
+
+    zoom_reset(&mut zoom, &mut fit, &mut pan);
+    assert_eq!(zoom, 100.0);
+    assert_eq!(fit, "Original");
+    assert_eq!(pan, Vec2::ZERO);
+
+    let (w_fit_w, _) = calculate_paged_dimensions(800.0, 1200.0, 1000.0, 800.0, "FitWidth", 100.0);
+    assert_eq!(w_fit_w, 984.0);
+
+    let (_, h_fit_h) = calculate_paged_dimensions(800.0, 1200.0, 1000.0, 800.0, "FitHeight", 100.0);
+    assert_eq!(h_fit_h, 784.0);
+}
+

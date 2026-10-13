@@ -4,13 +4,15 @@ use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Состояние одной открытой вкладки с книгой, документом или комиксом
 #[derive(Clone)]
 pub struct BookTab {
     pub file_path: PathBuf,
     pub title: String,
     pub format_badge: String,
-    pub document: Arc<dyn Document>,
+    pub document: Option<Arc<dyn Document>>,
+    pub is_loading: bool,
+    pub load_error: Option<String>,
+    pub request_id: u64,
     pub current_chapter: usize,
     pub last_rendered_chapter: usize,
     pub current_scroll_y: f32,
@@ -20,6 +22,30 @@ pub struct BookTab {
 }
 
 impl BookTab {
+    pub fn new_loading(file_path: PathBuf, request_id: u64) -> Self {
+        let format_badge = Self::detect_format_badge(&file_path);
+        let title = file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Документ".to_string());
+
+        Self {
+            file_path,
+            title,
+            format_badge,
+            document: None,
+            is_loading: true,
+            load_error: None,
+            request_id,
+            current_chapter: 0,
+            last_rendered_chapter: 0,
+            current_scroll_y: 0.0,
+            viewport_height: 600.0,
+            max_scroll_y: 0.0,
+            comic_page: 0,
+        }
+    }
+
     pub fn new(
         file_path: PathBuf,
         document: Arc<dyn Document>,
@@ -36,13 +62,16 @@ impl BookTab {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Документ".to_string())
         };
-        let format_badge = Self::detect_format_badge(&file_path);
+        let format_badge = document.format_name().to_string();
 
         Self {
             file_path,
             title,
             format_badge,
-            document,
+            document: Some(document),
+            is_loading: false,
+            load_error: None,
+            request_id: 0,
             current_chapter,
             last_rendered_chapter: current_chapter,
             current_scroll_y,
@@ -50,6 +79,27 @@ impl BookTab {
             max_scroll_y: 0.0,
             comic_page,
         }
+    }
+
+    pub fn update_loaded(
+        &mut self,
+        document: Arc<dyn Document>,
+        chapter: usize,
+        scroll_y: f32,
+        comic_page: usize,
+    ) {
+        let meta_title = document.metadata().title.trim().to_string();
+        if !meta_title.is_empty() {
+            self.title = meta_title;
+        }
+        self.format_badge = document.format_name().to_string();
+        self.document = Some(document);
+        self.is_loading = false;
+        self.load_error = None;
+        self.current_chapter = chapter;
+        self.last_rendered_chapter = chapter;
+        self.current_scroll_y = scroll_y;
+        self.comic_page = comic_page;
     }
 
     pub fn detect_format_badge(path: &Path) -> String {
@@ -70,6 +120,7 @@ impl BookTab {
             .as_deref()
         {
             Some("pdf") => "PDF".to_string(),
+            Some("djvu") | Some("djv") => "DJVU".to_string(),
             Some("fb2") | Some("xml") => "FB2".to_string(),
             Some("epub") => "EPUB".to_string(),
             Some("txt") => "TXT".to_string(),
@@ -98,7 +149,6 @@ impl BookTab {
     }
 }
 
-/// Действие пользователя на панели вкладок
 pub enum TabBarAction {
     None,
     Activate(usize),
@@ -106,7 +156,6 @@ pub enum TabBarAction {
     OpenNewFile,
 }
 
-/// Отрисовка горизонтальной панели вкладок открытых книг
 pub struct TabsBar;
 
 impl TabsBar {
@@ -157,7 +206,13 @@ impl TabsBar {
                                     .color(theme.accent_color());
                                 ui.label(badge_text);
 
-                                let label_str = tab.short_title(26);
+                                let label_str = if tab.is_loading {
+                                    format!("⏳ {}", tab.short_title(22))
+                                } else if tab.load_error.is_some() {
+                                    format!("⚠️ {}", tab.short_title(22))
+                                } else {
+                                    tab.short_title(26)
+                                };
                                 let title_rich = if is_active {
                                     RichText::new(label_str)
                                         .size(13.0)

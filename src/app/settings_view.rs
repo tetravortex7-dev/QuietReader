@@ -4,7 +4,6 @@ use super::theme::ReaderTheme;
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea, Vec2};
 
-/// Полноэкранный аккуратный режим настроек читалки (вместо плавающего диалога)
 pub struct SettingsView;
 
 impl SettingsView {
@@ -27,12 +26,10 @@ impl SettingsView {
         let card_bg = theme.panel_bg_color();
         let card_stroke = egui::Stroke::new(1.0, accent_color.gamma_multiply(0.35));
 
-        // Контейнер на 760px по центру страницы
         ui.vertical_centered(|ui| {
             ui.set_max_width(760.0);
             ui.add_space(8.0);
 
-            // Шапка настроек
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("⚙ Настройки QuietReader")
@@ -51,10 +48,17 @@ impl SettingsView {
             });
 
             ui.add_space(4.0);
+            if let Some(err) = AppSettings::last_save_error() {
+                ui.label(
+                    RichText::new(format!("⚠ Ошибка сохранения настроек: {err}"))
+                        .color(Color32::RED)
+                        .strong(),
+                );
+                ui.add_space(4.0);
+            }
             ui.separator();
             ui.add_space(8.0);
 
-            // Горизонтальные стильные вкладки
             ui.horizontal_wrapped(|ui| {
                 let tabs = [
                     (SettingsTab::Fonts, "🔤 Шрифты и текст"),
@@ -80,7 +84,6 @@ impl SettingsView {
 
             ui.add_space(10.0);
 
-            // Карточка с содержимым активного раздела
             egui::Frame::new()
                 .fill(card_bg)
                 .stroke(card_stroke)
@@ -113,9 +116,10 @@ impl SettingsView {
                                 is_autoscrolling,
                                 on_toggle_autoscroll,
                                 theme,
+                                on_save_settings,
                             ),
                             SettingsTab::ComicsAndManga => {
-                                Self::render_comics_tab(ui, settings, theme)
+                                Self::render_comics_tab(ui, settings, theme, on_save_settings)
                             }
                             SettingsTab::Hotkeys => Self::render_hotkeys_tab(ui, theme),
                             SettingsTab::System => Self::render_system_tab(
@@ -186,7 +190,7 @@ impl SettingsView {
                         {
                             settings.font_family = font_info.id.to_string();
                             apply_font_family(ctx, font_info.id);
-                            let _ = settings.save();
+                            *on_save_settings = true;
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
@@ -348,7 +352,7 @@ impl SettingsView {
         if ui.checkbox(keep_screen_on, label).changed() {
             crate::platform::set_keep_screen_on(*keep_screen_on);
             settings.keep_screen_on = *keep_screen_on;
-            let _ = settings.save();
+            *on_save_settings = true;
         }
         ui.label(
             RichText::new("Пока окно QuietReader активно, дисплей не гаснет автоматически.")
@@ -363,6 +367,7 @@ impl SettingsView {
         is_autoscrolling: &mut bool,
         on_toggle_autoscroll: &mut bool,
         theme: &ReaderTheme,
+        on_save_settings: &mut bool,
     ) {
         let text_color = theme.text_color();
 
@@ -402,7 +407,7 @@ impl SettingsView {
                 )
                 .clicked()
             {
-                let _ = settings.save();
+                *on_save_settings = true;
             }
             if ui
                 .radio_value(
@@ -412,7 +417,7 @@ impl SettingsView {
                 )
                 .clicked()
             {
-                let _ = settings.save();
+                *on_save_settings = true;
             }
         });
 
@@ -425,7 +430,7 @@ impl SettingsView {
                         .suffix(" сек"),
                 );
                 if resp.drag_stopped() || resp.lost_focus() {
-                    let _ = settings.save();
+                    *on_save_settings = true;
                 }
             });
             ui.horizontal(|ui| {
@@ -435,7 +440,7 @@ impl SettingsView {
                         .suffix(" px"),
                 );
                 if resp.drag_stopped() || resp.lost_focus() {
-                    let _ = settings.save();
+                    *on_save_settings = true;
                 }
             });
         } else {
@@ -446,13 +451,18 @@ impl SettingsView {
                         .suffix(" px/сек"),
                 );
                 if resp.drag_stopped() || resp.lost_focus() {
-                    let _ = settings.save();
+                    *on_save_settings = true;
                 }
             });
         }
     }
 
-    fn render_comics_tab(ui: &mut egui::Ui, settings: &mut AppSettings, theme: &ReaderTheme) {
+    fn render_comics_tab(
+        ui: &mut egui::Ui,
+        settings: &mut AppSettings,
+        theme: &ReaderTheme,
+        on_save_settings: &mut bool,
+    ) {
         let text_color = theme.text_color();
         ui.label(
             RichText::new("Параметры комиксов, манги и PDF")
@@ -508,7 +518,7 @@ impl SettingsView {
                         .clicked()
                     {
                         settings.comic.reading_mode = mode_key.to_string();
-                        let _ = settings.save();
+                        *on_save_settings = true;
                     }
                     ui.label(
                         RichText::new(desc)
@@ -539,7 +549,7 @@ impl SettingsView {
                 "Разворот (2)",
             );
             if s1.clicked() || s2.clicked() {
-                let _ = settings.save();
+                *on_save_settings = true;
             }
         });
         ui.horizontal_wrapped(|ui| {
@@ -553,7 +563,7 @@ impl SettingsView {
                     .radio_value(&mut settings.comic.fit_mode, val.to_string(), label)
                     .clicked()
                 {
-                    let _ = settings.save();
+                    *on_save_settings = true;
                 }
             }
         });
@@ -666,7 +676,7 @@ impl SettingsView {
 
                     ui.add_space(8.0);
                     if ui.checkbox(&mut settings.dismiss_association_prompt, "Не показывать диалог ассоциации при старте программы").changed() {
-                        let _ = settings.save();
+                        *on_save_settings = true;
                     }
                 });
             ui.add_space(8.0);

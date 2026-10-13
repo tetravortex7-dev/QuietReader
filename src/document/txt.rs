@@ -3,7 +3,6 @@ use crate::document::{
 };
 use std::path::Path;
 
-/// Бэкенд для потоковых текстовых форматов: TXT, Markdown (MD), LOG
 pub struct TxtDocument {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
@@ -35,6 +34,14 @@ impl Document for TxtDocument {
         &self.toc
     }
 
+    fn format_name(&self) -> &'static str {
+        "TXT"
+    }
+
+    fn has_custom_toc(&self) -> bool {
+        self.toc.iter().any(|item| item.id.as_deref().unwrap_or("").starts_with("md_")) && self.toc.len() > 1
+    }
+
     fn text_content(&self) -> Option<&dyn TextContent> {
         Some(self)
     }
@@ -46,6 +53,17 @@ impl Document for TxtDocument {
 
 impl TxtDocument {
     pub const MAX_TXT_SIZE: u64 = 100 * 1024 * 1024;
+
+    pub fn from_text(text: &str, default_title: &str) -> Self {
+        Self::from_bytes(text.as_bytes(), default_title, "txt").unwrap_or_else(|_| Self {
+            metadata: BookMetadata {
+                title: default_title.to_string(),
+                author: String::new(),
+            },
+            chapters: Vec::new(),
+            toc: Vec::new(),
+        })
+    }
 
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
@@ -85,7 +103,6 @@ impl TxtDocument {
             ));
         }
 
-        // Проверка на бинарный мусор (нулевые байты в первых 4 КБ, если это не UTF-16)
         let sample = &bytes[..bytes.len().min(4096)];
         let is_utf16 = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
         if !is_utf16 && sample.contains(&0) {
