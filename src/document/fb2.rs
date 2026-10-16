@@ -142,7 +142,6 @@ impl Fb2Document {
         let mut in_paragraph = false;
         let mut current_paragraph = String::new();
         let mut buf = Vec::new();
-        let mut had_error = false;
 
         loop {
             match reader.read_event_into(&mut buf) {
@@ -388,10 +387,7 @@ impl Fb2Document {
                 }
 
                 Ok(Event::Eof) => break,
-                Err(_) => {
-                    had_error = true;
-                    break;
-                }
+                Err(_) => break,
                 _ => {}
             }
             buf.clear();

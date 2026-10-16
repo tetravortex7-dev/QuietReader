@@ -1,0 +1,135 @@
+# =============================================================================
+# Rust & Cargo Build Artifacts
+# =============================================================================
+/target/
+target/
+**/*.rs.bk
+*.pdb
+*.d
+*.rlib
+*.rmeta
+*.o
+*.obj
+*.lib
+*.a
+*.exp
+*.ilk
+*.res
+
+# Dependency lockfile (large auto-generated file that pollutes code search)
+Cargo.lock
+
+# =============================================================================
+# Compiled Binaries & Packages (Windows, Linux, macOS)
+# =============================================================================
+/QuietReader.exe
+/QuietReader
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.msi
+*.deb
+*.rpm
+*.AppImage
+*.dmg
+
+# =============================================================================
+# Project Dumps, Prompts & Temporary Scratch Files
+# =============================================================================
+/project_dump.txt
+/prompt.md
+*.tmp
+*.temp
+*.bak
+*.orig
+*.swp
+*.swo
+*~
+*.log
+*.corrupted
+*.json.bak
+
+# =============================================================================
+# Test & Sample Documents / Books / Comics / Archives
+# =============================================================================
+*.fb2
+*.fb2.zip
+*.epub
+*.pdf
+*.djvu
+*.djv
+*.doc
+*.docx
+*.dot
+*.rtf
+*.odt
+*.cbz
+*.cbr
+*.cb7
+*.cbt
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.bz2
+*.xz
+
+# =============================================================================
+# Binary Assets, Icons & Fonts
+# =============================================================================
+*.ico
+*.icns
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.tiff
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# =============================================================================
+# Profiling, Coverage & Crash Dumps
+# =============================================================================
+*.profraw
+*.profdata
+lcov.info
+/coverage/
+*.dmp
+*.mdmp
+core
+core.*
+
+# =============================================================================
+# Version Control, IDEs & OS Metadata
+# =============================================================================
+.git/
+.idea/
+.vscode/
+.vs/
+*.suo
+*.user
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# =============================================================================
+# Explicitly Un-ignore Critical Project Files
+# =============================================================================
+!Cargo.toml
+!build.rs
+!AGENTS.md
+!README.md
+!.cargo/config.toml
+!.github/**

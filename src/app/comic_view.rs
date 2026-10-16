@@ -49,7 +49,7 @@ fn spawn_comic_worker() -> (Sender<LoadRequest>, Receiver<LoadResponse>) {
                         page_content.load_page_image(page_idx)
                     } else {
                         Err(DocumentError::Unsupported(
-                            "Р”РѕРєСѓРјРµРЅС‚ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚ РїРѕСЃС‚СЂР°РЅРёС‡РЅС‹Р№ СЂРµР¶РёРј".to_string(),
+                            "Документ не поддерживает постраничный режим".to_string(),
                         ))
                     }
                 }));
@@ -182,7 +182,7 @@ impl ComicViewState {
                         Err(e) => {
                             let msg = format_document_error(&e);
                             *status_message = Some(format!(
-                                "РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё СЃС‚СЂР°РЅРёС†С‹ {}: {msg}",
+                                "Ошибка загрузки страницы {}: {msg}",
                                 resp.page_idx + 1
                             ));
                             self.failed_pages.insert(resp.page_idx, msg);
@@ -192,10 +192,10 @@ impl ComicViewState {
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     for page_idx in self.pending_pages.drain() {
-                        let msg = "РџРѕС‚РѕРє РґРµРєРѕРґРёСЂРѕРІР°РЅРёСЏ Р°РІР°СЂРёР№РЅРѕ Р·Р°РІРµСЂС€РёР»СЃСЏ".to_string();
+                        let msg = "Поток декодирования аварийно завершился".to_string();
                         self.failed_pages.insert(page_idx, msg.clone());
                         *status_message = Some(format!(
-                            "РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё СЃС‚СЂР°РЅРёС†С‹ {}: {msg}",
+                            "Ошибка загрузки страницы {}: {msg}",
                             page_idx + 1
                         ));
                     }
@@ -250,8 +250,8 @@ impl ComicViewState {
 
             let prev_enabled = self.current_page > 0;
             if ui
-                .add_enabled(prev_enabled, egui::Button::new("в—Ђ"))
-                .on_hover_text("РџСЂРµРґС‹РґСѓС‰Р°СЏ СЃС‚СЂР°РЅРёС†Р°")
+                .add_enabled(prev_enabled, egui::Button::new("◀"))
+                .on_hover_text("Предыдущая страница")
                 .clicked()
             {
                 self.prev_page(settings);
@@ -261,7 +261,7 @@ impl ComicViewState {
                 self.page_input = (self.current_page + 1).to_string();
             }
             let cur_display = self.current_page + 1;
-            ui.label(RichText::new("РЎС‚СЂ.").size(13.0));
+            ui.label(RichText::new("Стр.").size(13.0));
             let text_edit = ui.add(
                 egui::TextEdit::singleline(&mut self.page_input)
                     .desired_width(38.0)
@@ -277,12 +277,12 @@ impl ComicViewState {
                 self.page_input = cur_display.to_string();
             }
 
-            ui.label(RichText::new(format!("РёР· {page_count}")).size(13.0));
+            ui.label(RichText::new(format!("из {page_count}")).size(13.0));
 
             let next_enabled = self.current_page + 1 < page_count;
             if ui
-                .add_enabled(next_enabled, egui::Button::new("в–¶"))
-                .on_hover_text("РЎР»РµРґСѓСЋС‰Р°СЏ СЃС‚СЂР°РЅРёС†Р°")
+                .add_enabled(next_enabled, egui::Button::new("▶"))
+                .on_hover_text("Следующая страница")
                 .clicked()
             {
                 self.next_page(page_count, settings);
@@ -292,8 +292,8 @@ impl ComicViewState {
 
             let is_manga_active = settings.reading_mode == "Manga";
             if ui
-                .selectable_label(is_manga_active, "рџЋЊ РњР°РЅРіР° (RTL)")
-                .on_hover_text("Р РµР¶РёРј С‡С‚РµРЅРёСЏ СЃРїСЂР°РІР°-РЅР°Р»РµРІРѕ (СЏРїРѕРЅСЃРєР°СЏ РјР°РЅРіР°)")
+                .selectable_label(is_manga_active, "🍙 Манга (RTL)")
+                .on_hover_text("Режим чтения справа-налево (японская манга)")
                 .clicked()
             {
                 settings.reading_mode = "Manga".to_string();
@@ -301,8 +301,8 @@ impl ComicViewState {
 
             let is_comic_active = settings.reading_mode == "Comic";
             if ui
-                .selectable_label(is_comic_active, "рџ“– РљРѕРјРёРєСЃ (LTR)")
-                .on_hover_text("Р РµР¶РёРј С‡С‚РµРЅРёСЏ СЃР»РµРІР°-РЅР°РїСЂР°РІРѕ (РµРІСЂРѕРїРµР№СЃРєРёРµ Рё Р°РјРµСЂРёРєР°РЅСЃРєРёРµ РєРѕРјРёРєСЃС‹)")
+                .selectable_label(is_comic_active, "📖 Комикс (LTR)")
+                .on_hover_text("Режим чтения слева-направо (европейские и американские комиксы)")
                 .clicked()
             {
                 settings.reading_mode = "Comic".to_string();
@@ -312,8 +312,8 @@ impl ComicViewState {
 
             let is_single = settings.page_layout == "Single" && settings.reading_mode != "Webtoon";
             if ui
-                .selectable_label(is_single, "1 СЃС‚СЂ.")
-                .on_hover_text("РћРґРёРЅРѕС‡РЅР°СЏ СЃС‚СЂР°РЅРёС†Р°")
+                .selectable_label(is_single, "1 стр.")
+                .on_hover_text("Одиночная страница")
                 .clicked()
             {
                 settings.page_layout = "Single".to_string();
@@ -325,8 +325,8 @@ impl ComicViewState {
 
             let is_double = settings.page_layout == "Double" && settings.reading_mode != "Webtoon";
             if ui
-                .selectable_label(is_double, "2 СЃС‚СЂ.")
-                .on_hover_text("Р”РІСѓС…СЃС‚СЂР°РЅРёС‡РЅС‹Р№ СЂР°Р·РІРѕСЂРѕС‚")
+                .selectable_label(is_double, "2 стр.")
+                .on_hover_text("Двухстраничный разворот")
                 .clicked()
             {
                 settings.page_layout = "Double".to_string();
@@ -338,8 +338,8 @@ impl ComicViewState {
 
             let is_webtoon = settings.reading_mode == "Webtoon";
             if ui
-                .selectable_label(is_webtoon, "РЎРІРёС‚РѕРє")
-                .on_hover_text("РќРµРїСЂРµСЂС‹РІРЅР°СЏ РІРµСЂС‚РёРєР°Р»СЊРЅР°СЏ Р»РµРЅС‚Р° (Webtoon / РјР°РЅС…РІР°)")
+                .selectable_label(is_webtoon, "Свиток")
+                .on_hover_text("Непрерывная вертикальная лента (Webtoon / манхва)")
                 .clicked()
             {
                 settings.reading_mode = "Webtoon".to_string();
@@ -379,8 +379,8 @@ impl ComicViewState {
 
             let fit_win_active = settings.fit_mode == "FitWindow";
             if ui
-                .selectable_label(fit_win_active, "РџРѕ РѕРєРЅСѓ")
-                .on_hover_text("Р’РјРµСЃС‚РёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ С†РµР»РёРєРѕРј РІ РѕРєРЅРѕ")
+                .selectable_label(fit_win_active, "По окну")
+                .on_hover_text("Вместить изображение целиком в окно")
                 .clicked()
             {
                 settings.fit_mode = "FitWindow".to_string();
@@ -389,8 +389,8 @@ impl ComicViewState {
 
             let fit_w_active = settings.fit_mode == "FitWidth";
             if ui
-                .selectable_label(fit_w_active, "РџРѕ С€РёСЂРёРЅРµ")
-                .on_hover_text("Р Р°СЃС‚СЏРЅСѓС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РїРѕ С€РёСЂРёРЅРµ РѕРєРЅР°")
+                .selectable_label(fit_w_active, "По ширине")
+                .on_hover_text("Растянуть изображение по ширине окна")
                 .clicked()
             {
                 settings.fit_mode = "FitWidth".to_string();
@@ -399,8 +399,8 @@ impl ComicViewState {
 
             let fit_h_active = settings.fit_mode == "FitHeight";
             if ui
-                .selectable_label(fit_h_active, "РџРѕ РІС‹СЃРѕС‚Рµ")
-                .on_hover_text("Р Р°СЃС‚СЏРЅСѓС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РїРѕ РІС‹СЃРѕС‚Рµ РѕРєРЅР°")
+                .selectable_label(fit_h_active, "По высоте")
+                .on_hover_text("Растянуть изображение по высоте окна")
                 .clicked()
             {
                 settings.fit_mode = "FitHeight".to_string();
@@ -409,9 +409,9 @@ impl ComicViewState {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let badge_txt = if is_manga {
-                    "рџЋЊ РњР°РЅРіР°"
+                    "🍙 Манга"
                 } else {
-                    "рџЋЁ РљРѕРјРёРєСЃ"
+                    "🎨 Комикс"
                 };
                 ui.label(
                     RichText::new(badge_txt)
@@ -441,7 +441,7 @@ impl ComicViewState {
         let page_count = self.page_count(document);
         if page_count == 0 {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("Р’ СЌС‚РѕРј РґРѕРєСѓРјРµРЅС‚Рµ РЅРµС‚ СЃС‚СЂР°РЅРёС†").color(theme.text_color()));
+                ui.label(RichText::new("В этом документе нет страниц").color(theme.text_color()));
             });
             return;
         }
@@ -484,18 +484,18 @@ impl ComicViewState {
                                 let tex_size = tex.size_vec2();
                                 let h = target_w * (tex_size.y / tex_size.x);
                                 let img_widget = egui::Image::from_texture(&tex)
-                                    .fit_to_exact_size(Vec2::new(target_w, h));
+                                     .fit_to_exact_size(Vec2::new(target_w, h));
                                 ui.add(img_widget);
                                 ui.add_space(8.0);
                             } else if let Some(err) = self.failed_pages.get(&p) {
                                 ui.label(
-                                    RichText::new(format!("РћС€РёР±РєР° СЃС‚СЂР°РЅРёС†С‹ {}: {err}", p + 1))
+                                    RichText::new(format!("Ошибка страницы {}: {err}", p + 1))
                                         .color(theme.accent_color()),
                                 );
                             } else {
                                 ui.add_space(24.0);
                                 ui.label(
-                                    RichText::new(format!("вЏі Р—Р°РіСЂСѓР·РєР° СЃС‚СЂР°РЅРёС†С‹ {}...", p + 1))
+                                    RichText::new(format!("⏳ Загрузка страницы {}...", p + 1))
                                         .color(theme.text_color()),
                                 );
                                 ui.add_space(24.0);
@@ -528,13 +528,34 @@ impl ComicViewState {
                 vec![self.current_page]
             };
 
-            let max_pan_x = (avail_size.x * 2.0).max(400.0);
-            let max_pan_y = (avail_size.y * 2.0).max(400.0);
-            super::paged_common::handle_paged_pan(ctx, &mut self.pan_offset, max_pan_x, max_pan_y);
+            for &p in &pages_to_show {
+                let _ = self.request_page_texture(ctx, document, p);
+            }
 
-            let num_pages = pages_to_show.len() as f32;
-            let target_w_per_page = (avail_size.x - 24.0) / num_pages;
-            let zoom_factor = (settings.zoom_percent / 100.0).clamp(0.3, 4.0);
+            let tex_sizes: Vec<Vec2> = pages_to_show
+                .iter()
+                .map(|&p| {
+                    self.textures
+                        .get(&p)
+                        .map(|t| t.0.size_vec2())
+                        .unwrap_or(Vec2::new(600.0, 800.0))
+                })
+                .collect();
+
+            let geom = super::paged_common::compute_paged_geometry(
+                avail_size,
+                &settings.fit_mode,
+                settings.zoom_percent,
+                0,
+                &tex_sizes,
+            );
+
+            super::paged_common::handle_paged_pan(
+                ctx,
+                &mut self.pan_offset,
+                geom.max_pan.x,
+                geom.max_pan.y,
+            );
 
             let mut prev_clicked = false;
             let mut next_clicked = false;
@@ -550,38 +571,14 @@ impl ComicViewState {
             child_ui.set_clip_rect(container_rect);
 
             child_ui.horizontal_centered(|ui| {
-                ui.add_space(8.0);
+                ui.add_space(geom.pad_x);
 
-                for &p in &pages_to_show {
-                    if let Some(tex) = self.request_page_texture(ctx, document, p) {
-                        let tex_size = tex.size_vec2();
-                        let (display_w, display_h) = match settings.fit_mode.as_str() {
-                            "FitHeight" => {
-                                let h = (avail_size.y - 20.0).max(100.0);
-                                let w = h * (tex_size.x / tex_size.y);
-                                (w, h)
-                            }
-                            "FitWidth" => {
-                                let w = (target_w_per_page - 12.0).max(100.0);
-                                let h = w * (tex_size.y / tex_size.x);
-                                (w, h)
-                            }
-                            "Original" => (tex_size.x, tex_size.y),
-                            "Custom" => {
-                                let w = (target_w_per_page - 12.0) * zoom_factor;
-                                let h = w * (tex_size.y / tex_size.x);
-                                (w, h)
-                            }
-                            _ => {
-                                let max_w = (target_w_per_page - 12.0).max(100.0);
-                                let max_h = (avail_size.y - 20.0).max(100.0);
-                                let scale = (max_w / tex_size.x).min(max_h / tex_size.y);
-                                (tex_size.x * scale, tex_size.y * scale)
-                            }
-                        };
-
+                for (idx, &p) in pages_to_show.iter().enumerate() {
+                    let display_size = geom.page_sizes[idx];
+                    if let Some(entry) = self.textures.get(&p) {
+                        let tex = entry.0.clone();
                         let img_widget = egui::Image::from_texture(&tex)
-                            .fit_to_exact_size(Vec2::new(display_w, display_h))
+                            .fit_to_exact_size(display_size)
                             .sense(egui::Sense::click());
                         let img_resp = ui.add(img_widget);
 
@@ -599,7 +596,7 @@ impl ComicViewState {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.4);
                             ui.label(
-                                RichText::new(format!("вќЊ РћС€РёР±РєР° СЃС‚СЂР°РЅРёС†С‹ {}: {err}", p + 1))
+                                RichText::new(format!("❌ Ошибка страницы {}: {err}", p + 1))
                                     .size(16.0)
                                     .color(theme.accent_color()),
                             );
@@ -608,7 +605,7 @@ impl ComicViewState {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.45);
                             ui.label(
-                                RichText::new(format!("вЏі Р—Р°РіСЂСѓР·РєР° СЃС‚СЂР°РЅРёС†С‹ {}...", p + 1))
+                                RichText::new(format!("⏳ Загрузка страницы {}...", p + 1))
                                     .size(18.0)
                                     .color(theme.text_color()),
                             );

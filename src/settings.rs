@@ -122,6 +122,10 @@ fn default_font_family() -> String {
     "Georgia".to_string()
 }
 
+fn default_associated_extensions() -> Vec<String> {
+    vec!["fb2".to_string(), "epub".to_string()]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppSettings {
@@ -140,6 +144,8 @@ pub struct AppSettings {
     pub show_toc: bool,
     pub auto_scroll: AutoScrollSettings,
     pub dismiss_association_prompt: bool,
+    #[serde(default = "default_associated_extensions")]
+    pub associated_extensions: Vec<String>,
     pub comic: ComicSettings,
     pub pdf: PdfSettings,
 }
@@ -161,6 +167,7 @@ impl Default for AppSettings {
             show_toc: true,
             auto_scroll: AutoScrollSettings::default(),
             dismiss_association_prompt: false,
+            associated_extensions: default_associated_extensions(),
             comic: ComicSettings::default(),
             pdf: PdfSettings::default(),
         }

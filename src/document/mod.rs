@@ -1,18 +1,24 @@
 pub mod comic;
 pub mod djvu;
+pub mod doc;
+pub mod docx;
 pub mod epub;
 pub mod fb2;
 pub mod pdf;
 pub mod registry;
+pub mod rtf;
 pub mod txt;
 
 pub use comic::ComicDocument;
 pub use djvu::DjvuDocument;
+pub use doc::DocDocument;
+pub use docx::DocxDocument;
 pub use epub::EpubDocument;
 pub use fb2::Fb2Document;
 pub use pdf::PdfDocument;
 #[allow(unused_imports)]
 pub use registry::{DocumentFormat, FORMAT_REGISTRY};
+pub use rtf::RtfDocument;
 pub use txt::TxtDocument;
 
 use std::path::Path;

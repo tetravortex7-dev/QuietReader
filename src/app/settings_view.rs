@@ -654,23 +654,77 @@ impl SettingsView {
                 .corner_radius(6.0)
                 .inner_margin(egui::Margin::symmetric(12, 10))
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Ассоциация файлов FB2 в Windows:").strong().color(text_color));
+                    ui.label(RichText::new("Ассоциация форматов с QuietReader:").strong().color(text_color));
                     ui.add_space(4.0);
-
-                    match crate::platform::check_fb2_association_status() {
-                        crate::platform::AssociationStatus::Default => {
-                            ui.label(RichText::new("✔ QuietReader назначен читалкой по умолчанию для файлов .fb2").color(Color32::from_rgb(46, 139, 87)));
-                        }
-                        crate::platform::AssociationStatus::Registered => {
-                            ui.label("QuietReader зарегистрирован в системе, но выбор по умолчанию можно настроить в параметрах Windows.");
-                        }
-                        _ => {
-                            ui.label("QuietReader еще не ассоциирован с файлами .fb2.");
-                        }
-                    }
-
+                    ui.label("Отметьте форматы, которые вы хотите открывать в QuietReader:");
                     ui.add_space(6.0);
-                    if ui.button(RichText::new("📌 Зарегистрировать и открыть параметры Windows").strong()).clicked() {
+
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Выбрать все").clicked() {
+                            settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS_INFO
+                                .iter()
+                                .map(|(ext, _)| ext.to_string())
+                                .collect();
+                            *on_save_settings = true;
+                        }
+                        if ui.small_button("Снять все").clicked() {
+                            settings.associated_extensions.clear();
+                            *on_save_settings = true;
+                        }
+                        if ui.small_button("Только книги (FB2, EPUB)").clicked() {
+                            settings.associated_extensions = vec!["fb2".to_string(), "epub".to_string()];
+                            *on_save_settings = true;
+                        }
+                    });
+                    ui.add_space(6.0);
+
+                    egui::Grid::new("settings_associations_grid")
+                        .num_columns(2)
+                        .spacing([16.0, 4.0])
+                        .show(ui, |ui| {
+                            for &(ext, label) in crate::platform::SUPPORTED_EXTENSIONS_INFO {
+                                let mut is_checked = settings
+                                    .associated_extensions
+                                    .iter()
+                                    .any(|e| e.eq_ignore_ascii_case(ext));
+                                if ui.checkbox(&mut is_checked, label).changed() {
+                                    if is_checked {
+                                        if !settings
+                                            .associated_extensions
+                                            .iter()
+                                            .any(|e| e.eq_ignore_ascii_case(ext))
+                                        {
+                                            settings.associated_extensions.push(ext.to_string());
+                                        }
+                                    } else {
+                                        settings
+                                            .associated_extensions
+                                            .retain(|e| !e.eq_ignore_ascii_case(ext));
+                                    }
+                                    *on_save_settings = true;
+                                }
+
+                                match crate::platform::check_extension_association_status(ext) {
+                                    crate::platform::AssociationStatus::Default => {
+                                        ui.label(RichText::new("✔ по умолчанию").size(11.0).color(Color32::from_rgb(46, 139, 87)));
+                                    }
+                                    crate::platform::AssociationStatus::Registered => {
+                                        ui.label(RichText::new("зарегистрирован").size(11.0).color(Color32::GRAY));
+                                    }
+                                    _ => {
+                                        ui.label("");
+                                    }
+                                }
+                                ui.end_row();
+                            }
+                        });
+
+                    ui.add_space(8.0);
+                    let has_selected = !settings.associated_extensions.is_empty();
+                    if ui.add_enabled(
+                        has_selected,
+                        egui::Button::new(RichText::new("📌 Зарегистрировать выбранные и открыть параметры Windows").strong()),
+                    ).clicked() {
                         *on_register_association = true;
                     }
 

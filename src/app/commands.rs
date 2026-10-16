@@ -77,10 +77,15 @@ impl QuietReaderApp {
                                 if self.settings.pdf.layout == "Continuous" {
                                     let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
                                     self.pending_scroll_y = Some((cur + 60.0).clamp(0.0, self.max_scroll_y));
-                                } else if self.settings.pdf.fit_mode != "FitWindow" && self.pdf_view.pan_offset.y > -400.0 {
-                                    self.pdf_view.pan_offset.y -= 60.0;
                                 } else {
-                                    self.pdf_view.next_page(total_pages, &self.settings.pdf);
+                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if max_pan_y > 1.0 && self.pdf_view.pan_offset.y > -max_pan_y + 1.0 {
+                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y - 60.0).max(-max_pan_y);
+                                    } else {
+                                        self.pdf_view.next_page(total_pages, &self.settings.pdf);
+                                        let next_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        self.pdf_view.pan_offset.y = next_max_y;
+                                    }
                                 }
                                 self.mark_settings_dirty();
                             }
@@ -88,10 +93,15 @@ impl QuietReaderApp {
                                 if self.settings.pdf.layout == "Continuous" {
                                     let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
                                     self.pending_scroll_y = Some((cur - 60.0).clamp(0.0, self.max_scroll_y));
-                                } else if self.settings.pdf.fit_mode != "FitWindow" && self.pdf_view.pan_offset.y < 400.0 {
-                                    self.pdf_view.pan_offset.y += 60.0;
                                 } else {
-                                    self.pdf_view.prev_page(&self.settings.pdf);
+                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if max_pan_y > 1.0 && self.pdf_view.pan_offset.y < max_pan_y - 1.0 {
+                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y + 60.0).min(max_pan_y);
+                                    } else {
+                                        self.pdf_view.prev_page(&self.settings.pdf);
+                                        let prev_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        self.pdf_view.pan_offset.y = -prev_max_y;
+                                    }
                                 }
                                 self.mark_settings_dirty();
                             }
@@ -100,7 +110,14 @@ impl QuietReaderApp {
                                     let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
                                     self.pending_scroll_y = Some((cur + self.viewport_height * 0.85).clamp(0.0, self.max_scroll_y));
                                 } else {
-                                    self.pdf_view.next_page(total_pages, &self.settings.pdf);
+                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if *nav_cmd == Command::PageDown && max_pan_y > 1.0 && self.pdf_view.pan_offset.y > -max_pan_y + 1.0 {
+                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y - self.viewport_height * 0.85).max(-max_pan_y);
+                                    } else {
+                                        self.pdf_view.next_page(total_pages, &self.settings.pdf);
+                                        let next_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        self.pdf_view.pan_offset.y = next_max_y;
+                                    }
                                 }
                                 self.mark_settings_dirty();
                             }
@@ -109,7 +126,14 @@ impl QuietReaderApp {
                                     let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
                                     self.pending_scroll_y = Some((cur - self.viewport_height * 0.85).clamp(0.0, self.max_scroll_y));
                                 } else {
-                                    self.pdf_view.prev_page(&self.settings.pdf);
+                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if *nav_cmd == Command::PageUp && max_pan_y > 1.0 && self.pdf_view.pan_offset.y < max_pan_y - 1.0 {
+                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y + self.viewport_height * 0.85).min(max_pan_y);
+                                    } else {
+                                        self.pdf_view.prev_page(&self.settings.pdf);
+                                        let prev_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        self.pdf_view.pan_offset.y = -prev_max_y;
+                                    }
                                 }
                                 self.mark_settings_dirty();
                             }

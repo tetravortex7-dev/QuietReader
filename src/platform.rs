@@ -9,6 +9,21 @@ pub fn supports_file_association() -> bool {
     cfg!(windows)
 }
 
+pub const SUPPORTED_EXTENSIONS_INFO: &[(&str, &str)] = &[
+    ("fb2", "FB2 (.fb2) — Книги FictionBook"),
+    ("epub", "EPUB (.epub) — Электронные книги"),
+    ("txt", "TXT (.txt) — Текстовые документы"),
+    ("doc", "DOC (.doc) — Документы Word 97-2004"),
+    ("docx", "DOCX (.docx) — Документы Word"),
+    ("rtf", "RTF (.rtf) — Форматированный текст"),
+    ("pdf", "PDF (.pdf) — Документы PDF"),
+    ("djvu", "DJVU (.djvu, .djv) — Документы DjVu"),
+    ("cbz", "CBZ (.cbz) — Комиксы CBZ (ZIP)"),
+    ("cbr", "CBR (.cbr) — Комиксы CBR (RAR)"),
+    ("cb7", "CB7 (.cb7) — Комиксы CB7 (7-Zip)"),
+    ("md", "MD (.md) — Документы Markdown"),
+];
+
 #[cfg(windows)]
 pub fn set_keep_screen_on(keep_on: bool) {
     const ES_CONTINUOUS: u32 = 0x80000000;
@@ -229,15 +244,20 @@ mod windows_registry {
         }
     }
 
-    pub fn check_fb2_association_status() -> AssociationStatus {
+    pub fn check_extension_association_status(ext: &str) -> AssociationStatus {
+        let ext_clean = ext.trim_start_matches('.').to_lowercase();
+        let ext_dot = format!(".{ext_clean}");
+        let progid_expected = format!("QuietReader.{ext_clean}");
+
         let current_exe = match std::env::current_exe() {
             Ok(p) => p.to_string_lossy().to_lowercase(),
             Err(_) => return AssociationStatus::NotRegistered,
         };
 
+        let cmd_key_path = format!(r"Software\Classes\{progid_expected}\shell\open\command");
         let is_our_progid_registered = reg_open_key(
             HKEY_CURRENT_USER,
-            r"Software\Classes\QuietReader.fb2\shell\open\command",
+            &cmd_key_path,
             KEY_READ,
         )
         .and_then(|k| reg_get_string(&k, None))
@@ -248,23 +268,25 @@ mod windows_registry {
             return AssociationStatus::NotRegistered;
         }
 
+        let user_choice_path = format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\UserChoice");
         if let Some(user_choice_key) = reg_open_key(
             HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.fb2\UserChoice",
+            &user_choice_path,
             KEY_READ,
         ) {
             if let Some(progid) = reg_get_string(&user_choice_key, Some("ProgId"))
-                && progid.eq_ignore_ascii_case("QuietReader.fb2")
+                && progid.eq_ignore_ascii_case(&progid_expected)
             {
                 return AssociationStatus::Default;
             }
             return AssociationStatus::Registered;
         }
 
-        if let Some(dot_fb2_key) =
-            reg_open_key(HKEY_CURRENT_USER, r"Software\Classes\.fb2", KEY_READ)
-            && let Some(progid) = reg_get_string(&dot_fb2_key, None)
-            && progid.eq_ignore_ascii_case("QuietReader.fb2")
+        let dot_key_path = format!(r"Software\Classes\{ext_dot}");
+        if let Some(dot_key) =
+            reg_open_key(HKEY_CURRENT_USER, &dot_key_path, KEY_READ)
+            && let Some(progid) = reg_get_string(&dot_key, None)
+            && progid.eq_ignore_ascii_case(&progid_expected)
         {
             return AssociationStatus::Default;
         }
@@ -272,45 +294,17 @@ mod windows_registry {
         AssociationStatus::Registered
     }
 
-    pub fn register_fb2_association() -> Result<String, String> {
+    pub fn check_fb2_association_status() -> AssociationStatus {
+        check_extension_association_status("fb2")
+    }
+
+    pub fn register_file_associations(extensions: &[&str]) -> Result<String, String> {
         let exe_path = std::env::current_exe()
             .map_err(|e| format!("Не удалось определить путь к исполнимому файлу: {e}"))?;
         let exe_str = exe_path.to_string_lossy();
         let open_cmd = format!("\"{exe_str}\" \"%1\"");
         let doc_icon_cmd = format!("\"{exe_str}\",1");
         let app_icon_cmd = format!("\"{exe_str}\",0");
-
-        let dot_fb2 = reg_create_key(HKEY_CURRENT_USER, r"Software\Classes\.fb2")?;
-        let _ = reg_set_string(&dot_fb2, None, "QuietReader.fb2");
-        let _ = reg_set_string(
-            &dot_fb2,
-            Some("Content Type"),
-            "application/x-fictionbook+xml",
-        );
-
-        let open_with =
-            reg_create_key(HKEY_CURRENT_USER, r"Software\Classes\.fb2\OpenWithProgids")?;
-        let _ = reg_set_string(&open_with, Some("QuietReader.fb2"), "");
-
-        let progid_key = reg_create_key(HKEY_CURRENT_USER, r"Software\Classes\QuietReader.fb2")?;
-        let _ = reg_set_string(&progid_key, None, "Книга FictionBook (FB2)");
-        let _ = reg_set_string(
-            &progid_key,
-            Some("FriendlyTypeName"),
-            "Книга FictionBook (FB2)",
-        );
-
-        let icon_key = reg_create_key(
-            HKEY_CURRENT_USER,
-            r"Software\Classes\QuietReader.fb2\DefaultIcon",
-        )?;
-        let _ = reg_set_string(&icon_key, None, &doc_icon_cmd);
-
-        let cmd_key = reg_create_key(
-            HKEY_CURRENT_USER,
-            r"Software\Classes\QuietReader.fb2\shell\open\command",
-        )?;
-        let _ = reg_set_string(&cmd_key, None, &open_cmd);
 
         let app_key = reg_create_key(
             HKEY_CURRENT_USER,
@@ -324,31 +318,29 @@ mod windows_registry {
         )?;
         let _ = reg_set_string(&app_icon_key, None, &app_icon_cmd);
 
-        let supported = reg_create_key(
-            HKEY_CURRENT_USER,
-            r"Software\Classes\Applications\QuietReader.exe\SupportedTypes",
-        )?;
-        let _ = reg_set_string(&supported, Some(".fb2"), "");
-
         let app_cmd = reg_create_key(
             HKEY_CURRENT_USER,
             r"Software\Classes\Applications\QuietReader.exe\shell\open\command",
         )?;
         let _ = reg_set_string(&app_cmd, None, &open_cmd);
 
+        let supported = reg_create_key(
+            HKEY_CURRENT_USER,
+            r"Software\Classes\Applications\QuietReader.exe\SupportedTypes",
+        )?;
+
         let caps = reg_create_key(HKEY_CURRENT_USER, r"Software\QuietReader\Capabilities")?;
         let _ = reg_set_string(&caps, Some("ApplicationName"), "QuietReader");
         let _ = reg_set_string(
             &caps,
             Some("ApplicationDescription"),
-            "Минималистичная читалка книг FB2",
+            "Модульная читалка электронных книг",
         );
 
         let file_assoc = reg_create_key(
             HKEY_CURRENT_USER,
             r"Software\QuietReader\Capabilities\FileAssociations",
         )?;
-        let _ = reg_set_string(&file_assoc, Some(".fb2"), "QuietReader.fb2");
 
         let reg_apps = reg_create_key(HKEY_CURRENT_USER, r"Software\RegisteredApplications")?;
         let _ = reg_set_string(
@@ -357,12 +349,68 @@ mod windows_registry {
             r"Software\QuietReader\Capabilities",
         );
 
+        let mut count = 0;
+        for &raw_ext in extensions {
+            let ext = raw_ext.trim_start_matches('.').to_lowercase();
+            if ext.is_empty() {
+                continue;
+            }
+            let ext_dot = format!(".{ext}");
+            let progid = format!("QuietReader.{ext}");
+            let (friendly_name, content_type) = match ext.as_str() {
+                "fb2" => ("Книга FictionBook (FB2)", "application/x-fictionbook+xml"),
+                "epub" => ("Книга EPUB", "application/epub+zip"),
+                "txt" => ("Текстовый документ", "text/plain"),
+                "md" => ("Документ Markdown", "text/markdown"),
+                "log" => ("Журнал логов", "text/plain"),
+                "pdf" => ("Документ PDF", "application/pdf"),
+                "djvu" | "djv" => ("Документ DjVu", "image/vnd.djvu"),
+                "cbz" => ("Комикс CBZ", "application/vnd.comicbook+zip"),
+                "cbr" => ("Комикс CBR", "application/vnd.comicbook-rar"),
+                "cb7" => ("Комикс CB7", "application/x-cb7"),
+                "docx" => ("Документ Microsoft Word (DOCX)", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+                "doc" => ("Документ Microsoft Word (DOC)", "application/msword"),
+                "rtf" => ("Документ RTF", "application/rtf"),
+                _ => ("Документ", "application/octet-stream"),
+            };
+
+            if let Ok(dot_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{ext_dot}")) {
+                let _ = reg_set_string(&dot_key, None, &progid);
+                let _ = reg_set_string(&dot_key, Some("Content Type"), content_type);
+            }
+
+            if let Ok(open_with) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{ext_dot}\OpenWithProgids")) {
+                let _ = reg_set_string(&open_with, Some(&progid), "");
+            }
+
+            if let Ok(progid_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{progid}")) {
+                let _ = reg_set_string(&progid_key, None, friendly_name);
+                let _ = reg_set_string(&progid_key, Some("FriendlyTypeName"), friendly_name);
+            }
+
+            if let Ok(icon_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{progid}\DefaultIcon")) {
+                let _ = reg_set_string(&icon_key, None, &doc_icon_cmd);
+            }
+
+            if let Ok(cmd_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{progid}\shell\open\command")) {
+                let _ = reg_set_string(&cmd_key, None, &open_cmd);
+            }
+
+            let _ = reg_set_string(&supported, Some(&ext_dot), "");
+            let _ = reg_set_string(&file_assoc, Some(&ext_dot), &progid);
+            count += 1;
+        }
+
         notify_shell_assoc_changed();
 
-        Ok(
-            "QuietReader успешно зарегистрирован в реестре Windows (HKCU) для формата .fb2."
-                .to_string(),
-        )
+        Ok(format!(
+            "QuietReader успешно зарегистрирован в реестре Windows (HKCU) для {count} формат(ов)."
+        ))
+    }
+
+    #[allow(dead_code)]
+    pub fn register_fb2_association() -> Result<String, String> {
+        register_file_associations(&["fb2"])
     }
 
     pub fn is_association_prompt_dismissed() -> bool {
@@ -385,11 +433,22 @@ mod windows_registry {
 }
 
 #[cfg(windows)]
+pub fn check_extension_association_status(ext: &str) -> AssociationStatus {
+    windows_registry::check_extension_association_status(ext)
+}
+
+#[cfg(windows)]
 pub fn check_fb2_association_status() -> AssociationStatus {
     windows_registry::check_fb2_association_status()
 }
 
 #[cfg(windows)]
+pub fn register_file_associations(extensions: &[&str]) -> Result<String, String> {
+    windows_registry::register_file_associations(extensions)
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
 pub fn register_fb2_association() -> Result<String, String> {
     windows_registry::register_fb2_association()
 }
@@ -412,8 +471,18 @@ pub fn set_association_prompt_dismissed(dismissed: bool) {
 }
 
 #[cfg(not(windows))]
+pub fn check_extension_association_status(_ext: &str) -> AssociationStatus {
+    AssociationStatus::NotRegistered
+}
+
+#[cfg(not(windows))]
 pub fn check_fb2_association_status() -> AssociationStatus {
     AssociationStatus::NotRegistered
+}
+
+#[cfg(not(windows))]
+pub fn register_file_associations(_extensions: &[&str]) -> Result<String, String> {
+    Ok("Регистрация ассоциаций поддерживается только в Windows.".to_string())
 }
 
 #[cfg(not(windows))]

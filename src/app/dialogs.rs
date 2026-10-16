@@ -21,10 +21,12 @@ impl Dialogs {
             .add_filter(
                 "Все поддерживаемые документы",
                 &[
-                    "pdf", "djvu", "djv", "fb2", "epub", "txt", "md", "markdown", "log", "cbz",
-                    "cbr", "cb7", "zip", "rar", "7z", "xml",
+                    "pdf", "djvu", "djv", "fb2", "epub", "docx", "doc", "rtf", "txt", "md",
+                    "markdown", "log", "cbz", "cbr", "cb7", "zip", "rar", "7z", "xml",
                 ],
             )
+            .add_filter("Документы Word (*.docx, *.doc)", &["docx", "doc", "dot"])
+            .add_filter("Документы RTF (*.rtf)", &["rtf"])
             .add_filter("Документы PDF (*.pdf)", &["pdf"])
             .add_filter("Документы DjVu (*.djvu, *.djv)", &["djvu", "djv"])
             .add_filter(
@@ -67,33 +69,93 @@ impl Dialogs {
             ))
             .inner_margin(egui::Margin::symmetric(14, 12));
 
-        egui::Window::new("📌 Ассоциация файлов FB2")
+        egui::Window::new("📌 Привязка форматов к QuietReader")
             .collapsible(false)
             .resizable(false)
             .frame(window_frame)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.set_max_width(420.0);
+                ui.set_max_width(460.0);
                 ui.label(
-                    RichText::new("Сделать QuietReader основной читалкой для файлов .fb2?")
+                    RichText::new("Выберите форматы файлов для привязки к читалке:")
                         .size(15.0)
                         .strong(),
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.label(
-                    "QuietReader зарегистрируется в Windows для открытия файлов .fb2 по двойному щелчку и добавится в меню «Открыть с помощью». Также откроются параметры Windows для подтверждения выбора по умолчанию.",
+                    "Отметьте нужные форматы галочками. Выбранные файлы будут открываться в QuietReader по двойному щелчку и появятся в контекстном меню «Открыть с помощью».",
                 );
                 ui.add_space(8.0);
-                ui.checkbox(dont_show_again, "Не показывать снова");
+
+                ui.horizontal(|ui| {
+                    if ui.small_button("Выбрать все").clicked() {
+                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS_INFO
+                            .iter()
+                            .map(|(ext, _)| ext.to_string())
+                            .collect();
+                        *on_save_settings = true;
+                    }
+                    if ui.small_button("Снять все").clicked() {
+                        settings.associated_extensions.clear();
+                        *on_save_settings = true;
+                    }
+                    if ui.small_button("Только книги (FB2, EPUB)").clicked() {
+                        settings.associated_extensions = vec!["fb2".to_string(), "epub".to_string()];
+                        *on_save_settings = true;
+                    }
+                });
+                ui.add_space(6.0);
+
+                egui::Frame::new()
+                    .fill(theme.bg_color())
+                    .stroke(egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.2)))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(210.0)
+                            .show(ui, |ui| {
+                                for &(ext, label) in crate::platform::SUPPORTED_EXTENSIONS_INFO {
+                                    let mut is_checked = settings
+                                        .associated_extensions
+                                        .iter()
+                                        .any(|e| e.eq_ignore_ascii_case(ext));
+                                    if ui.checkbox(&mut is_checked, label).changed() {
+                                        if is_checked {
+                                            if !settings
+                                                .associated_extensions
+                                                .iter()
+                                                .any(|e| e.eq_ignore_ascii_case(ext))
+                                            {
+                                                settings.associated_extensions.push(ext.to_string());
+                                            }
+                                        } else {
+                                            settings
+                                                .associated_extensions
+                                                .retain(|e| !e.eq_ignore_ascii_case(ext));
+                                        }
+                                        *on_save_settings = true;
+                                    }
+                                }
+                            });
+                    });
+
+                ui.add_space(8.0);
+                ui.checkbox(dont_show_again, "Больше не предлагать при запуске");
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✔ Сделать по умолчанию").strong()).clicked() {
+                    let has_selected = !settings.associated_extensions.is_empty();
+                    let btn = ui.add_enabled(
+                        has_selected,
+                        egui::Button::new(RichText::new("✔ Привязать выбранные").strong()),
+                    );
+                    if btn.clicked() {
                         *on_register_association = true;
                         crate::platform::set_association_prompt_dismissed(true);
                         if *dont_show_again {
                             settings.dismiss_association_prompt = true;
-                            *on_save_settings = true;
                         }
+                        *on_save_settings = true;
                         *show_dialog = false;
                     }
                     if ui.button("✖ Не сейчас").clicked() {

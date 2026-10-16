@@ -226,3 +226,199 @@ fn test_resource_limits_constants() {
     assert!(MAX_TOTAL_UNPACK_BYTES >= 50 * 1024 * 1024);
     assert!(MAX_TOTAL_UNPACK_BYTES > MAX_SINGLE_ENTRY_BYTES);
 }
+
+#[test]
+fn test_paged_geometry_bounded_and_centered() {
+    use crate::app::paged_common::compute_paged_geometry;
+    use eframe::egui::Vec2;
+
+    let avail_size = Vec2::new(1200.0, 800.0);
+    let page_tex = Vec2::new(600.0, 900.0);
+
+    let geom_fit_window = compute_paged_geometry(
+        avail_size,
+        "FitWindow",
+        100.0,
+        0,
+        &[page_tex],
+    );
+    assert_eq!(geom_fit_window.max_pan, Vec2::ZERO);
+    assert!(geom_fit_window.pad_x > 200.0);
+    assert!(geom_fit_window.page_sizes[0].y <= avail_size.y);
+    assert!(geom_fit_window.page_sizes[0].x <= avail_size.x);
+
+    let geom_fit_width = compute_paged_geometry(
+        avail_size,
+        "FitWidth",
+        100.0,
+        0,
+        &[page_tex],
+    );
+    assert_eq!(geom_fit_width.max_pan.x, 0.0);
+    assert!(geom_fit_width.max_pan.y > 0.0);
+    assert_eq!(
+        geom_fit_width.max_pan.y,
+        (geom_fit_width.page_sizes[0].y - avail_size.y) / 2.0
+    );
+
+    let geom_double = compute_paged_geometry(
+        avail_size,
+        "FitWindow",
+        100.0,
+        0,
+        &[page_tex, page_tex],
+    );
+    assert_eq!(geom_double.max_pan, Vec2::ZERO);
+    assert_eq!(geom_double.page_sizes.len(), 2);
+    assert!(geom_double.pad_x >= 8.0);
+}
+
+#[test]
+fn test_rtf_document_parsing() {
+    use crate::document::Document;
+
+    let rtf_data = b"{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0 Arial;}}{\\info{\\title Test Book}{\\author John Doe}}\\viewkind4\\uc1\\pard\\b Chapter 1\\b0\\par First paragraph of the story.\\par Second paragraph.\\par}";
+    let doc = crate::document::RtfDocument::from_bytes(rtf_data, "Fallback").expect("rtf parse failed");
+    assert_eq!(doc.metadata().title, "Test Book");
+    assert_eq!(doc.metadata().author, "John Doe");
+    assert_eq!(doc.chapters().len(), 1);
+    let text = &doc.chapters()[0].paragraphs;
+    assert!(text.iter().any(|p| p.contains("Chapter 1")));
+    assert!(text.iter().any(|p| p.contains("First paragraph of the story.")));
+    assert!(text.iter().any(|p| p.contains("Second paragraph.")));
+    assert_eq!(doc.toc().len(), 0);
+}
+
+#[test]
+fn test_rtf_corrupted_resilience() {
+    let broken1 = b"{\\rtf1\\ansi broken without closing";
+    let doc1 = crate::document::RtfDocument::from_bytes(broken1, "Broken");
+    assert!(doc1.is_ok());
+
+    let empty = b"";
+    let doc2 = crate::document::RtfDocument::from_bytes(empty, "Empty");
+    assert!(doc2.is_err());
+}
+
+#[test]
+fn test_docx_document_parsing() {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use crate::document::Document;
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let options = SimpleFileOptions::default();
+
+        zip.start_file("docProps/core.xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Docx Title</dc:title>
+    <dc:creator>Docx Author</dc:creator>
+</cp:coreProperties>"#).unwrap();
+
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        <w:p>
+            <w:pPr><w:pStyle w:val="Heading1"/></w:pPr>
+            <w:r><w:t>Heading One</w:t></w:r>
+        </w:p>
+        <w:p><w:r><w:t>Paragraph under first heading.</w:t></w:r></w:p>
+        <w:p>
+            <w:pPr><w:pStyle w:val="Heading1"/></w:pPr>
+            <w:r><w:t>Heading Two</w:t></w:r>
+        </w:p>
+        <w:p><w:r><w:t>Paragraph under second heading.</w:t></w:r></w:p>
+    </w:body>
+</w:document>"#).unwrap();
+
+        zip.finish().unwrap();
+    }
+
+    let bytes = buf.into_inner();
+    let doc = crate::document::DocxDocument::from_bytes(&bytes, "Fallback").expect("docx parse failed");
+    assert_eq!(doc.metadata().title, "Docx Title");
+    assert_eq!(doc.metadata().author, "Docx Author");
+    assert_eq!(doc.chapters().len(), 2);
+    assert_eq!(doc.chapters()[0].title, "Heading One");
+    assert!(doc.chapters()[0].paragraphs.iter().any(|p| p.contains("Paragraph under first heading.")));
+    assert_eq!(doc.chapters()[1].title, "Heading Two");
+    assert!(doc.chapters()[1].paragraphs.iter().any(|p| p.contains("Paragraph under second heading.")));
+
+    let toc = doc.toc();
+    assert_eq!(toc.len(), 2);
+    assert_eq!(toc[0].title, "Heading One");
+    assert_eq!(toc[1].title, "Heading Two");
+}
+
+#[test]
+fn test_doc_document_resilience_and_parsing() {
+    let empty = b"";
+    assert!(crate::document::DocDocument::from_bytes(empty, "Empty").is_err());
+
+    let garbage = vec![0x12u8; 1024];
+    assert!(crate::document::DocDocument::from_bytes(&garbage, "Garbage").is_err());
+
+    let mut ole_header = vec![0u8; 512];
+    ole_header[0..8].copy_from_slice(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
+    let res = crate::document::DocDocument::from_bytes(&ole_header, "TruncatedOLE");
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_registry_docx_rtf_doc_support() {
+    use crate::document::FORMAT_REGISTRY;
+
+    let has_docx = FORMAT_REGISTRY.iter().any(|f| f.extensions().contains(&"docx"));
+    let has_rtf = FORMAT_REGISTRY.iter().any(|f| f.extensions().contains(&"rtf"));
+    let has_doc = FORMAT_REGISTRY.iter().any(|f| f.extensions().contains(&"doc"));
+
+    assert!(has_docx);
+    assert!(has_rtf);
+    assert!(has_doc);
+
+    let test_dir = unique_test_dir("reg_probe");
+    let docx_path = test_dir.join("book.docx");
+    let rtf_path = test_dir.join("note.rtf");
+    let doc_path = test_dir.join("old.doc");
+
+    std::fs::write(&docx_path, b"PK\x03\x04dummy").unwrap();
+    std::fs::write(&rtf_path, b"{\\rtf1dummy}").unwrap();
+    std::fs::write(&doc_path, &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00]).unwrap();
+
+    assert!(FORMAT_REGISTRY.iter().any(|f| f.probe(&docx_path)));
+    assert!(FORMAT_REGISTRY.iter().any(|f| f.probe(&rtf_path)));
+    assert!(FORMAT_REGISTRY.iter().any(|f| f.probe(&doc_path)));
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_platform_multi_extension_selection() {
+    use crate::platform::SUPPORTED_EXTENSIONS_INFO;
+
+    let exts: Vec<&str> = SUPPORTED_EXTENSIONS_INFO.iter().map(|(e, _)| *e).collect();
+    assert!(exts.contains(&"fb2"));
+    assert!(exts.contains(&"txt"));
+    assert!(exts.contains(&"doc"));
+    assert!(exts.contains(&"docx"));
+    assert!(exts.contains(&"epub"));
+    assert!(exts.contains(&"rtf"));
+    assert!(exts.contains(&"pdf"));
+    assert!(exts.contains(&"djvu"));
+    assert!(exts.contains(&"cbz"));
+    assert!(exts.contains(&"cbr"));
+    assert!(exts.contains(&"cb7"));
+    assert!(exts.contains(&"md"));
+
+    let mut settings = AppSettings::default();
+    assert_eq!(settings.associated_extensions, vec!["fb2", "epub"]);
+
+    settings.associated_extensions = vec!["fb2".to_string(), "txt".to_string(), "doc".to_string()];
+    let json = serde_json::to_string(&settings).expect("serialize settings");
+    let loaded: AppSettings = serde_json::from_str(&json).expect("deserialize settings");
+    assert_eq!(loaded.associated_extensions, vec!["fb2", "txt", "doc"]);
+}

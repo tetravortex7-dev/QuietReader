@@ -78,6 +78,73 @@ pub fn handle_middle_mouse_scroll(
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PagedGeometry {
+    pub page_sizes: Vec<Vec2>,
+    pub max_pan: Vec2,
+    pub pad_x: f32,
+}
+
+pub fn compute_paged_geometry(
+    avail_size: Vec2,
+    fit_mode: &str,
+    zoom_percent: f32,
+    rotation: i32,
+    tex_sizes: &[Vec2],
+) -> PagedGeometry {
+    let num_pages = tex_sizes.len().max(1) as f32;
+    let target_w_per_page = (avail_size.x - 24.0) / num_pages;
+    let zoom_factor = (zoom_percent / 100.0).clamp(0.3, 4.0);
+
+    let page_sizes: Vec<Vec2> = tex_sizes
+        .iter()
+        .map(|&tex_size| {
+            let (mut w, mut h) = match fit_mode {
+                "FitHeight" => {
+                    let h = (avail_size.y - 20.0).max(100.0);
+                    let w = h * (tex_size.x / tex_size.y.max(1.0));
+                    (w, h)
+                }
+                "FitWidth" => {
+                    let w = (target_w_per_page - 12.0).max(100.0);
+                    let h = w * (tex_size.y / tex_size.x.max(1.0));
+                    (w, h)
+                }
+                "Original" => (tex_size.x, tex_size.y),
+                "Custom" => {
+                    let w = (target_w_per_page - 12.0) * zoom_factor;
+                    let h = w * (tex_size.y / tex_size.x.max(1.0));
+                    (w, h)
+                }
+                _ => {
+                    let max_w = (target_w_per_page - 12.0).max(100.0);
+                    let max_h = (avail_size.y - 20.0).max(100.0);
+                    let scale = (max_w / tex_size.x.max(1.0)).min(max_h / tex_size.y.max(1.0));
+                    (tex_size.x * scale, tex_size.y * scale)
+                }
+            };
+            if rotation == 90 || rotation == 270 {
+                std::mem::swap(&mut w, &mut h);
+            }
+            Vec2::new(w, h)
+        })
+        .collect();
+
+    let total_w = page_sizes.iter().map(|s| s.x).sum::<f32>()
+        + (page_sizes.len().saturating_sub(1) as f32 * 12.0);
+    let total_h = page_sizes.iter().map(|s| s.y).fold(0.0f32, f32::max);
+
+    let max_pan_x = ((total_w - avail_size.x) / 2.0).max(0.0);
+    let max_pan_y = ((total_h - avail_size.y) / 2.0).max(0.0);
+    let pad_x = ((avail_size.x - total_w) / 2.0).max(8.0);
+
+    PagedGeometry {
+        page_sizes,
+        max_pan: Vec2::new(max_pan_x, max_pan_y),
+        pad_x,
+    }
+}
+
 pub fn handle_paged_pan(
     ctx: &egui::Context,
     pan_offset: &mut Vec2,
@@ -94,12 +161,10 @@ pub fn handle_paged_pan(
     if m_down {
         ctx.set_cursor_icon(CursorIcon::Grabbing);
         *pan_offset += m_delta;
-        pan_offset.x = pan_offset.x.clamp(-max_pan_x, max_pan_x);
-        pan_offset.y = pan_offset.y.clamp(-max_pan_y, max_pan_y);
         ctx.request_repaint();
     } else if scroll_delta != Vec2::ZERO {
         *pan_offset += scroll_delta;
-        pan_offset.x = pan_offset.x.clamp(-max_pan_x, max_pan_x);
-        pan_offset.y = pan_offset.y.clamp(-max_pan_y, max_pan_y);
     }
+    pan_offset.x = pan_offset.x.clamp(-max_pan_x, max_pan_x);
+    pan_offset.y = pan_offset.y.clamp(-max_pan_y, max_pan_y);
 }

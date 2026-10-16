@@ -1,6 +1,6 @@
 use crate::document::{
-    ComicDocument, DjvuDocument, Document, DocumentError, EpubDocument, Fb2Document, PdfDocument,
-    TxtDocument,
+    ComicDocument, DjvuDocument, DocDocument, DocxDocument, Document, DocumentError,
+    EpubDocument, Fb2Document, PdfDocument, RtfDocument, TxtDocument,
 };
 use std::path::Path;
 
@@ -160,6 +160,96 @@ impl DocumentFormat for Fb2Format {
     }
 }
 
+pub struct DocxFormat;
+impl DocumentFormat for DocxFormat {
+    fn name(&self) -> &'static str {
+        "DOCX"
+    }
+    fn extensions(&self) -> &'static [&'static str] {
+        &["docx"]
+    }
+    fn probe(&self, path: &Path) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        if ext == "docx" {
+            return true;
+        }
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let mut magic = [0u8; 4];
+            if let Ok(4) = f.read(&mut magic) {
+                return &magic == b"PK\x03\x04";
+            }
+        }
+        false
+    }
+    fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = DocxDocument::from_file(path)?;
+        Ok(Box::new(doc))
+    }
+}
+
+pub struct RtfFormat;
+impl DocumentFormat for RtfFormat {
+    fn name(&self) -> &'static str {
+        "RTF"
+    }
+    fn extensions(&self) -> &'static [&'static str] {
+        &["rtf"]
+    }
+    fn probe(&self, path: &Path) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let mut buf = [0u8; 16];
+            if let Ok(n) = f.read(&mut buf) {
+                let s = String::from_utf8_lossy(&buf[..n]);
+                return s.starts_with("{\\rtf");
+            }
+        }
+        false
+    }
+    fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = RtfDocument::from_file(path)?;
+        Ok(Box::new(doc))
+    }
+}
+
+pub struct DocFormat;
+impl DocumentFormat for DocFormat {
+    fn name(&self) -> &'static str {
+        "DOC"
+    }
+    fn extensions(&self) -> &'static [&'static str] {
+        &["doc", "dot"]
+    }
+    fn probe(&self, path: &Path) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let mut magic = [0u8; 8];
+            if let Ok(8) = f.read(&mut magic) {
+                return &magic == b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
+            }
+        }
+        false
+    }
+    fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = DocDocument::from_file(path)?;
+        Ok(Box::new(doc))
+    }
+}
+
 pub struct TxtFormat;
 impl DocumentFormat for TxtFormat {
     fn name(&self) -> &'static str {
@@ -191,6 +281,9 @@ pub static FORMAT_REGISTRY: &[&dyn DocumentFormat] = &[
     &ComicFormat,
     &EpubFormat,
     &Fb2Format,
+    &DocxFormat,
+    &RtfFormat,
+    &DocFormat,
     &TxtFormat,
 ];
 

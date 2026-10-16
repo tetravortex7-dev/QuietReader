@@ -44,6 +44,7 @@ pub struct PdfViewState {
     active_generation: Arc<AtomicU64>,
     latest_requested_scales: Arc<Mutex<HashMap<usize, u32>>>,
     pub pan_offset: Vec2,
+    pub last_avail_size: Vec2,
     pub is_middle_dragging: bool,
     pub page_input: String,
     pub pending_target_page: Option<usize>,
@@ -141,6 +142,7 @@ impl Default for PdfViewState {
             active_generation,
             latest_requested_scales,
             pan_offset: Vec2::ZERO,
+            last_avail_size: Vec2::new(800.0, 600.0),
             is_middle_dragging: false,
             page_input: String::new(),
             pending_target_page: None,
@@ -209,6 +211,37 @@ impl PdfViewState {
         let step = if settings.layout == "Double" { 2 } else { 1 };
         let prev = self.current_page.saturating_sub(step);
         self.go_to_page(prev);
+    }
+
+    pub fn max_pan(&self, settings: &PdfSettings, page_count: usize) -> Vec2 {
+        let is_double = settings.layout == "Double" && self.current_page + 1 < page_count;
+        let pages_to_show: Vec<usize> = if is_double {
+            vec![self.current_page, self.current_page + 1]
+        } else {
+            vec![self.current_page]
+        };
+        let tex_sizes: Vec<Vec2> = pages_to_show
+            .iter()
+            .map(|&p| {
+                self.textures
+                    .get(&p)
+                    .map(|t| t.texture.size_vec2())
+                    .unwrap_or(Vec2::new(600.0, 800.0))
+            })
+            .collect();
+        let avail = if self.last_avail_size.x > 10.0 && self.last_avail_size.y > 10.0 {
+            self.last_avail_size
+        } else {
+            Vec2::new(800.0, 600.0)
+        };
+        super::paged_common::compute_paged_geometry(
+            avail,
+            &settings.fit_mode,
+            settings.zoom_percent,
+            settings.rotation,
+            &tex_sizes,
+        )
+        .max_pan
     }
 
     fn poll_responses(&mut self, ctx: &egui::Context, status_message: &mut Option<String>) {
@@ -733,6 +766,7 @@ impl PdfViewState {
             );
         } else {
             let avail_size = ui.available_size();
+            self.last_avail_size = avail_size;
             let is_double = settings.layout == "Double" && self.current_page + 1 < page_count;
             let pages_to_show: Vec<usize> = if is_double {
                 vec![self.current_page, self.current_page + 1]
@@ -740,12 +774,34 @@ impl PdfViewState {
                 vec![self.current_page]
             };
 
-            let max_pan_x = (avail_size.x * 2.0).max(400.0);
-            let max_pan_y = (avail_size.y * 2.0).max(400.0);
-            super::paged_common::handle_paged_pan(ctx, &mut self.pan_offset, max_pan_x, max_pan_y);
+            for &p in &pages_to_show {
+                let _ = self.request_page_texture(ctx, document, p, render_scale);
+            }
 
-            let num_pages = pages_to_show.len() as f32;
-            let target_w_per_page = (avail_size.x - 24.0) / num_pages;
+            let tex_sizes: Vec<Vec2> = pages_to_show
+                .iter()
+                .map(|&p| {
+                    self.textures
+                        .get(&p)
+                        .map(|t| t.texture.size_vec2())
+                        .unwrap_or(Vec2::new(600.0, 800.0))
+                })
+                .collect();
+
+            let geom = super::paged_common::compute_paged_geometry(
+                avail_size,
+                &settings.fit_mode,
+                settings.zoom_percent,
+                settings.rotation,
+                &tex_sizes,
+            );
+
+            super::paged_common::handle_paged_pan(
+                ctx,
+                &mut self.pan_offset,
+                geom.max_pan.x,
+                geom.max_pan.y,
+            );
 
             let (container_rect, _) = ui.allocate_exact_size(avail_size, egui::Sense::hover());
             let panned_rect = container_rect.translate(self.pan_offset);
@@ -758,45 +814,17 @@ impl PdfViewState {
             child_ui.set_clip_rect(container_rect);
 
             child_ui.horizontal_centered(|ui| {
-                ui.add_space(8.0);
-                for &p in &pages_to_show {
-                    if let Some(tex) = self.request_page_texture(ctx, document, p, render_scale) {
-                        let tex_size = tex.size_vec2();
-                        let (mut display_w, mut display_h) = match settings.fit_mode.as_str() {
-                            "FitHeight" => {
-                                let h = (avail_size.y - 20.0).max(100.0);
-                                let w = h * (tex_size.x / tex_size.y);
-                                (w, h)
-                            }
-                            "FitWidth" => {
-                                let w = (target_w_per_page - 12.0).max(100.0);
-                                let h = w * (tex_size.y / tex_size.x);
-                                (w, h)
-                            }
-                            "Original" => (tex_size.x / render_scale, tex_size.y / render_scale),
-                            "Custom" => {
-                                let w = (target_w_per_page - 12.0) * zoom_factor;
-                                let h = w * (tex_size.y / tex_size.x);
-                                (w, h)
-                            }
-                            _ => {
-                                let max_w = (target_w_per_page - 12.0).max(100.0);
-                                let max_h = (avail_size.y - 20.0).max(100.0);
-                                let scale = (max_w / tex_size.x).min(max_h / tex_size.y);
-                                (tex_size.x * scale, tex_size.y * scale)
-                            }
-                        };
-
-                        if settings.rotation == 90 || settings.rotation == 270 {
-                            std::mem::swap(&mut display_w, &mut display_h);
-                        }
-
+                ui.add_space(geom.pad_x);
+                for (idx, &p) in pages_to_show.iter().enumerate() {
+                    let display_size = geom.page_sizes[idx];
+                    if let Some(entry) = self.textures.get(&p) {
+                        let tex = entry.texture.clone();
                         self.render_page_with_selection(
                             ui,
                             ctx,
                             p,
                             &tex,
-                            Vec2::new(display_w, display_h),
+                            display_size,
                             settings.rotation,
                             &mut collected_selected_spans,
                         );

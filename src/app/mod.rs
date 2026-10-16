@@ -339,7 +339,13 @@ impl QuietReaderApp {
     }
 
     pub fn register_file_association(&mut self) {
-        match crate::platform::register_fb2_association() {
+        let exts: Vec<&str> = self
+            .settings
+            .associated_extensions
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        match crate::platform::register_file_associations(&exts) {
             Ok(msg) => {
                 self.status_message = Some(msg);
                 crate::platform::open_default_apps_settings();
