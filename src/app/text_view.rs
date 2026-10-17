@@ -1,3 +1,4 @@
+use super::icons::{Icon, IconButton, IconLabel};
 use super::theme::ReaderTheme;
 use crate::document::Document;
 use crate::settings::AppSettings;
@@ -45,8 +46,9 @@ impl TextView {
 
                     if let Some(ch) = chapter {
                         ui.add_space(20.0);
-                        if !ch.title.is_empty() {
-                            let title_heading = RichText::new(&ch.title)
+                        let clean_title = crate::document::strip_formatting_tags(&ch.title);
+                        if !clean_title.is_empty() {
+                            let title_heading = RichText::new(&clean_title)
                                 .size(font_size * 1.35)
                                 .strong()
                                 .color(theme.text_color());
@@ -54,10 +56,11 @@ impl TextView {
                                 ui.add(egui::Label::new(title_heading).selectable(allow_select));
                             resp.context_menu(|ui| {
                                 if ui.button("📋 Скопировать").clicked() {
-                                    ui.ctx().copy_text(ch.title.clone());
+                                    ui.ctx().copy_text(clean_title.clone());
                                     ui.close();
                                 }
-                                if ui.button("🔲 Выбрать всё (копировать раздел)").clicked() {
+                                if ui.button("🔲 Выбрать всё (копировать раздел)").clicked()
+                                {
                                     if let Some(full) =
                                         crate::core::ReaderCore::extract_chapter_text(
                                             doc.as_ref(),
@@ -87,7 +90,8 @@ impl TextView {
                                 continue;
                             }
 
-                            let char_count = paragraph.chars().count();
+                            let clean_paragraph = crate::document::strip_formatting_tags(paragraph);
+                            let char_count = clean_paragraph.chars().count();
                             let num_lines = (char_count as f32 / chars_per_line).ceil().max(1.0);
                             let est_height = num_lines * line_height + para_spacing;
 
@@ -97,18 +101,21 @@ impl TextView {
                             if bot_y < view_top || top_y > view_bot {
                                 ui.add_space(est_height);
                             } else {
-                                let text_content = format!("    {paragraph}");
-                                let text = RichText::new(&text_content)
-                                    .size(font_size)
-                                    .color(theme.text_color());
-                                let resp =
-                                    ui.add(egui::Label::new(text).wrap().selectable(allow_select));
+                                let layout_job = create_paragraph_layout_job(
+                                    paragraph,
+                                    font_size,
+                                    theme.text_color(),
+                                );
+                                let resp = ui.add(
+                                    egui::Label::new(layout_job).wrap().selectable(allow_select),
+                                );
                                 resp.context_menu(|ui| {
                                     if ui.button("📋 Скопировать").clicked() {
-                                        ui.ctx().copy_text(paragraph.clone());
+                                        ui.ctx().copy_text(clean_paragraph.clone());
                                         ui.close();
                                     }
-                                    if ui.button("🔲 Выбрать всё (копировать раздел)").clicked() {
+                                    if ui.button("🔲 Выбрать всё (копировать раздел)").clicked()
+                                    {
                                         if let Some(full) =
                                             crate::core::ReaderCore::extract_chapter_text(
                                                 doc.as_ref(),
@@ -171,7 +178,7 @@ impl TextView {
                 });
             });
 
-            *current_scroll_y = scroll_output.state.offset.y;
+            *current_scroll_y = scroll_output.state.clamped_offset().y;
             *viewport_height = scroll_output.inner_rect.height();
             *max_scroll_y =
                 (scroll_output.content_size.y - scroll_output.inner_rect.height()).max(0.0);
@@ -189,10 +196,11 @@ impl TextView {
         } else {
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
-                ui.heading(
-                    RichText::new("📖 QuietReader")
+                ui.add(
+                    IconLabel::new(Icon::Book, "QuietReader")
                         .size(36.0)
-                        .color(theme.accent_color()),
+                        .color(theme.accent_color())
+                        .strong(),
                 );
                 ui.add_space(10.0);
                 ui.label(
@@ -203,9 +211,11 @@ impl TextView {
                 ui.add_space(30.0);
 
                 ui.horizontal(|ui| {
-                    let open_btn = egui::Button::new(
-                        RichText::new("📂 Выбрать книгу / PDF / комикс").size(17.0),
+                    let open_btn = IconButton::new(
+                        Icon::OpenFile,
+                        "Выбрать книгу / PDF / комикс",
                     )
+                    .font_size(17.0)
                     .min_size(Vec2::new(280.0, 46.0));
 
                     if ui
@@ -216,9 +226,11 @@ impl TextView {
                         *on_open_file = true;
                     }
 
-                    let open_dir_btn = egui::Button::new(
-                        RichText::new("📁 Открыть папку манги").size(17.0),
+                    let open_dir_btn = IconButton::new(
+                        Icon::Folder,
+                        "Открыть папку манги",
                     )
+                    .font_size(17.0)
                     .min_size(Vec2::new(240.0, 46.0));
 
                     if ui.add(open_dir_btn).on_hover_text("Каталог с изображениями (JPG, PNG, WebP)").clicked() {
@@ -242,11 +254,11 @@ impl TextView {
 
                     for book in settings.recent_books.iter().take(4) {
                         let label = if book.author.is_empty() {
-                            format!("📖 {} (Раздел {})", book.title, book.chapter + 1)
+                            format!("{} (Раздел {})", book.title, book.chapter + 1)
                         } else {
-                            format!("📖 {} — {} (Раздел {})", book.author, book.title, book.chapter + 1)
+                            format!("{} — {} (Раздел {})", book.author, book.title, book.chapter + 1)
                         };
-                        if ui.button(RichText::new(label).size(14.0)).clicked() {
+                        if ui.add(IconButton::new(Icon::Book, &label).font_size(14.0)).clicked() {
                             *on_load_recent = Some(book.path.clone());
                         }
                         ui.add_space(4.0);
@@ -255,4 +267,50 @@ impl TextView {
             });
         }
     }
+}
+
+fn create_paragraph_layout_job(
+    paragraph: &str,
+    font_size: f32,
+    text_color: Color32,
+) -> egui::text::LayoutJob {
+    let spans = crate::document::parse_formatted_spans(paragraph);
+    let mut job = egui::text::LayoutJob::default();
+    for (idx, span) in spans.iter().enumerate() {
+        let text = if idx == 0 {
+            format!("    {}", span.text)
+        } else {
+            span.text.to_string()
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let family = match (span.bold, span.italic) {
+            (true, true) => {
+                egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
+            }
+            (true, false) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into()),
+            (false, true) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into()),
+            (false, false) => egui::FontFamily::Proportional,
+        };
+        let format = egui::TextFormat {
+            font_id: egui::FontId::new(font_size, family),
+            color: text_color,
+            italics: span.italic,
+            ..Default::default()
+        };
+        job.append(&text, 0.0, format);
+    }
+    if job.sections.is_empty() {
+        job.append(
+            &format!("    {paragraph}"),
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(font_size),
+                color: text_color,
+                ..Default::default()
+            },
+        );
+    }
+    job
 }

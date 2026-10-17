@@ -276,7 +276,9 @@ fn decode_image_bytes(bytes: &[u8]) -> Result<DecodedImage, DocumentError> {
         .map_err(|e| DocumentError::Corrupted(format!("Ошибка формата изображения: {e}")))?;
     if let Ok((w, h)) = dim_reader.into_dimensions() {
         if w == 0 || h == 0 {
-            return Err(DocumentError::Corrupted("Изображение имеет нулевой размер".to_string()));
+            return Err(DocumentError::Corrupted(
+                "Изображение имеет нулевой размер".to_string(),
+            ));
         }
         if w > 8192 || h > 16384 || (w as u64) * (h as u64) > 25_000_000 {
             return Err(DocumentError::LimitExceeded(format!(

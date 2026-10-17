@@ -44,7 +44,7 @@ impl Drop for SingleInstanceGuard {
 
 #[cfg(windows)]
 mod win32_ipc {
-    use super::{get_hwnd_file_path, get_ipc_request_path, SingleInstanceGuard};
+    use super::{SingleInstanceGuard, get_hwnd_file_path, get_ipc_request_path};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicIsize, Ordering};
 
@@ -108,11 +108,7 @@ mod win32_ipc {
         }
         let title = to_wide("QuietReader");
         let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
-        if is_own_process_window(hwnd) {
-            hwnd
-        } else {
-            0
-        }
+        if is_own_process_window(hwnd) { hwnd } else { 0 }
     }
 
     pub fn focus_hwnd(hwnd: isize) {
@@ -182,7 +178,18 @@ mod win32_ipc {
             if is_own_process_window(hwnd) {
                 REGISTERED_HWND.store(hwnd, Ordering::Relaxed);
                 let _ = std::fs::write(get_hwnd_file_path(), hwnd.to_string());
+                crate::platform::optimize_window_for_rendering(hwnd);
             }
+        }
+    }
+
+    pub fn get_primary_window_hwnd() -> isize {
+        let hwnd = REGISTERED_HWND.load(Ordering::Relaxed);
+        if hwnd != 0 {
+            hwnd
+        } else {
+            register_primary_window_hwnd();
+            REGISTERED_HWND.load(Ordering::Relaxed)
         }
     }
 
@@ -235,6 +242,17 @@ pub fn acquire_single_instance(initial_file: &Option<PathBuf>) -> Option<SingleI
 pub fn register_primary_window_hwnd() {
     #[cfg(windows)]
     win32_ipc::register_primary_window_hwnd();
+}
+
+pub fn get_primary_window_hwnd() -> isize {
+    #[cfg(windows)]
+    {
+        win32_ipc::get_primary_window_hwnd()
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
 }
 
 static LAST_IPC_POLL: Mutex<Option<Instant>> = Mutex::new(None);

@@ -39,7 +39,10 @@ impl Document for TxtDocument {
     }
 
     fn has_custom_toc(&self) -> bool {
-        self.toc.iter().any(|item| item.id.as_deref().unwrap_or("").starts_with("md_")) && self.toc.len() > 1
+        self.toc
+            .iter()
+            .any(|item| item.id.as_deref().unwrap_or("").starts_with("md_"))
+            && self.toc.len() > 1
     }
 
     fn text_content(&self) -> Option<&dyn TextContent> {

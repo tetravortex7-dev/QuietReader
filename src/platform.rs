@@ -100,6 +100,8 @@ mod windows_registry {
             lpcbData: *mut u32,
         ) -> i32;
 
+        fn RegDeleteKeyW(hKey: *mut c_void, lpSubKey: *const u16) -> i32;
+
         fn RegCloseKey(hKey: *mut c_void) -> i32;
 
         fn SHChangeNotify(
@@ -255,25 +257,20 @@ mod windows_registry {
         };
 
         let cmd_key_path = format!(r"Software\Classes\{progid_expected}\shell\open\command");
-        let is_our_progid_registered = reg_open_key(
-            HKEY_CURRENT_USER,
-            &cmd_key_path,
-            KEY_READ,
-        )
-        .and_then(|k| reg_get_string(&k, None))
-        .map(|cmd| cmd.to_lowercase().contains(&current_exe))
-        .unwrap_or(false);
+        let is_our_progid_registered = reg_open_key(HKEY_CURRENT_USER, &cmd_key_path, KEY_READ)
+            .and_then(|k| reg_get_string(&k, None))
+            .map(|cmd| cmd.to_lowercase().contains(&current_exe))
+            .unwrap_or(false);
 
         if !is_our_progid_registered {
             return AssociationStatus::NotRegistered;
         }
 
-        let user_choice_path = format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\UserChoice");
-        if let Some(user_choice_key) = reg_open_key(
-            HKEY_CURRENT_USER,
-            &user_choice_path,
-            KEY_READ,
-        ) {
+        let user_choice_path = format!(
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\UserChoice"
+        );
+        if let Some(user_choice_key) = reg_open_key(HKEY_CURRENT_USER, &user_choice_path, KEY_READ)
+        {
             if let Some(progid) = reg_get_string(&user_choice_key, Some("ProgId"))
                 && progid.eq_ignore_ascii_case(&progid_expected)
             {
@@ -283,8 +280,7 @@ mod windows_registry {
         }
 
         let dot_key_path = format!(r"Software\Classes\{ext_dot}");
-        if let Some(dot_key) =
-            reg_open_key(HKEY_CURRENT_USER, &dot_key_path, KEY_READ)
+        if let Some(dot_key) = reg_open_key(HKEY_CURRENT_USER, &dot_key_path, KEY_READ)
             && let Some(progid) = reg_get_string(&dot_key, None)
             && progid.eq_ignore_ascii_case(&progid_expected)
         {
@@ -368,32 +364,71 @@ mod windows_registry {
                 "cbz" => ("Комикс CBZ", "application/vnd.comicbook+zip"),
                 "cbr" => ("Комикс CBR", "application/vnd.comicbook-rar"),
                 "cb7" => ("Комикс CB7", "application/x-cb7"),
-                "docx" => ("Документ Microsoft Word (DOCX)", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+                "docx" => (
+                    "Документ Microsoft Word (DOCX)",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
                 "doc" => ("Документ Microsoft Word (DOC)", "application/msword"),
                 "rtf" => ("Документ RTF", "application/rtf"),
                 _ => ("Документ", "application/octet-stream"),
             };
 
-            if let Ok(dot_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{ext_dot}")) {
+            if let Ok(dot_key) =
+                reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{ext_dot}"))
+            {
                 let _ = reg_set_string(&dot_key, None, &progid);
                 let _ = reg_set_string(&dot_key, Some("Content Type"), content_type);
             }
 
-            if let Ok(open_with) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{ext_dot}\OpenWithProgids")) {
+            if let Ok(open_with) = reg_create_key(
+                HKEY_CURRENT_USER,
+                &format!(r"Software\Classes\{ext_dot}\OpenWithProgids"),
+            ) {
                 let _ = reg_set_string(&open_with, Some(&progid), "");
             }
 
-            if let Ok(progid_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{progid}")) {
+            if let Ok(progid_key) =
+                reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{progid}"))
+            {
                 let _ = reg_set_string(&progid_key, None, friendly_name);
                 let _ = reg_set_string(&progid_key, Some("FriendlyTypeName"), friendly_name);
             }
 
-            if let Ok(icon_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{progid}\DefaultIcon")) {
+            if let Ok(icon_key) = reg_create_key(
+                HKEY_CURRENT_USER,
+                &format!(r"Software\Classes\{progid}\DefaultIcon"),
+            ) {
                 let _ = reg_set_string(&icon_key, None, &doc_icon_cmd);
             }
 
-            if let Ok(cmd_key) = reg_create_key(HKEY_CURRENT_USER, &format!(r"Software\Classes\{progid}\shell\open\command")) {
+            if let Ok(cmd_key) = reg_create_key(
+                HKEY_CURRENT_USER,
+                &format!(r"Software\Classes\{progid}\shell\open\command"),
+            ) {
                 let _ = reg_set_string(&cmd_key, None, &open_cmd);
+            }
+
+            let file_exts_open_with = format!(
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\OpenWithProgids"
+            );
+            if let Ok(file_exts_key) = reg_create_key(HKEY_CURRENT_USER, &file_exts_open_with) {
+                let _ = reg_set_string(&file_exts_key, Some(&progid), "");
+            }
+
+            let file_exts_list = format!(
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\OpenWithList"
+            );
+            if let Ok(list_key) = reg_create_key(HKEY_CURRENT_USER, &file_exts_list) {
+                let _ = reg_set_string(&list_key, Some("a"), "QuietReader.exe");
+                let _ = reg_set_string(&list_key, Some("MRUList"), "a");
+            }
+
+            let user_choice_path = format!(
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\UserChoice"
+            );
+            let wide_uc = to_wide(&user_choice_path);
+            unsafe {
+                RegDeleteKeyW(HKEY_CURRENT_USER, wide_uc.as_ptr());
             }
 
             let _ = reg_set_string(&supported, Some(&ext_dot), "");
@@ -454,6 +489,7 @@ pub fn register_fb2_association() -> Result<String, String> {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 pub fn open_default_apps_settings() {
     let _ = std::process::Command::new("explorer.exe")
         .arg("ms-settings:defaultapps")
@@ -491,6 +527,7 @@ pub fn register_fb2_association() -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn open_default_apps_settings() {}
 
 #[cfg(not(windows))]
@@ -501,22 +538,61 @@ pub fn is_association_prompt_dismissed() -> bool {
 #[cfg(not(windows))]
 pub fn set_association_prompt_dismissed(_dismissed: bool) {}
 
+#[allow(dead_code)]
 pub fn load_system_font_bytes(font_name: &str) -> Option<Vec<u8>> {
-    platform_fonts::load_font(font_name)
+    platform_fonts::load_font_variant(font_name, false, false)
+}
+
+pub fn load_system_font_variant_bytes(
+    font_name: &str,
+    bold: bool,
+    italic: bool,
+) -> Option<Vec<u8>> {
+    platform_fonts::load_font_variant(font_name, bold, italic)
 }
 
 #[cfg(windows)]
 mod platform_fonts {
     use std::path::PathBuf;
 
-    pub fn load_font(font_name: &str) -> Option<Vec<u8>> {
-        let filename = match font_name {
-            "Georgia" => "georgia.ttf",
-            "Palatino Linotype" => "pala.ttf",
-            "Calibri" => "calibri.ttf",
-            "Segoe UI" => "segoeui.ttf",
-            "Verdana" => "verdana.ttf",
-            _ => "georgia.ttf",
+    pub fn load_font_variant(font_name: &str, bold: bool, italic: bool) -> Option<Vec<u8>> {
+        let filename = match (font_name, bold, italic) {
+            ("Georgia", false, false) => "georgia.ttf",
+            ("Georgia", true, false) => "georgiab.ttf",
+            ("Georgia", false, true) => "georgiai.ttf",
+            ("Georgia", true, true) => "georgiaz.ttf",
+
+            ("Palatino Linotype", false, false) => "pala.ttf",
+            ("Palatino Linotype", true, false) => "palab.ttf",
+            ("Palatino Linotype", false, true) => "palai.ttf",
+            ("Palatino Linotype", true, true) => "palabi.ttf",
+
+            ("Calibri", false, false) => "calibri.ttf",
+            ("Calibri", true, false) => "calibrib.ttf",
+            ("Calibri", false, true) => "calibrii.ttf",
+            ("Calibri", true, true) => "calibriz.ttf",
+
+            ("Segoe UI", false, false) => "segoeui.ttf",
+            ("Segoe UI", true, false) => "segoeuib.ttf",
+            ("Segoe UI", false, true) => "segoeuii.ttf",
+            ("Segoe UI", true, true) => "segoeuiz.ttf",
+
+            ("Verdana", false, false) => "verdana.ttf",
+            ("Verdana", true, false) => "verdanab.ttf",
+            ("Verdana", false, true) => "verdanai.ttf",
+            ("Verdana", true, true) => "verdanaz.ttf",
+
+            _ => {
+                if bold && italic {
+                    "georgiaz.ttf"
+                } else if bold {
+                    "georgiab.ttf"
+                } else if italic {
+                    "georgiai.ttf"
+                } else {
+                    "georgia.ttf"
+                }
+            }
         };
 
         if let Some(windir) = std::env::var_os("WINDIR") {
@@ -558,7 +634,7 @@ mod platform_fonts {
         None
     }
 
-    pub fn load_font(font_name: &str) -> Option<Vec<u8>> {
+    pub fn load_font_variant(font_name: &str, _bold: bool, _italic: bool) -> Option<Vec<u8>> {
         let candidates: &[&str] = match font_name {
             "Georgia" => &[
                 "georgia.ttf",
@@ -594,7 +670,7 @@ mod platform_fonts {
 mod platform_fonts {
     use std::path::PathBuf;
 
-    pub fn load_font(font_name: &str) -> Option<Vec<u8>> {
+    pub fn load_font_variant(font_name: &str, _bold: bool, _italic: bool) -> Option<Vec<u8>> {
         let candidates: &[&str] = match font_name {
             "Georgia" => &["Georgia.ttf", "georgia.ttf"],
             "Palatino Linotype" => &["Palatino.ttc", "pala.ttf"],
@@ -627,7 +703,7 @@ mod platform_fonts {
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod platform_fonts {
-    pub fn load_font(_font_name: &str) -> Option<Vec<u8>> {
+    pub fn load_font_variant(_font_name: &str, _bold: bool, _italic: bool) -> Option<Vec<u8>> {
         None
     }
 }

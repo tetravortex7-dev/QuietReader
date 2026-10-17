@@ -8,11 +8,15 @@ pub enum ReaderTheme {
     Oled,
     Warm,
     Mint,
+    Twilight,
 }
 
 impl ReaderTheme {
     pub fn is_dark(&self) -> bool {
-        matches!(self, ReaderTheme::Dark | ReaderTheme::Oled)
+        matches!(
+            self,
+            ReaderTheme::Dark | ReaderTheme::Oled | ReaderTheme::Twilight
+        )
     }
 
     pub fn bg_color(&self) -> Color32 {
@@ -23,6 +27,7 @@ impl ReaderTheme {
             ReaderTheme::Oled => Color32::from_rgb(0, 0, 0),
             ReaderTheme::Warm => Color32::from_rgb(250, 240, 220),
             ReaderTheme::Mint => Color32::from_rgb(238, 245, 238),
+            ReaderTheme::Twilight => Color32::from_rgb(54, 47, 43),
         }
     }
 
@@ -34,6 +39,7 @@ impl ReaderTheme {
             ReaderTheme::Oled => Color32::from_rgb(205, 205, 205),
             ReaderTheme::Warm => Color32::from_rgb(70, 50, 30),
             ReaderTheme::Mint => Color32::from_rgb(38, 55, 42),
+            ReaderTheme::Twilight => Color32::from_rgb(222, 210, 192),
         }
     }
 
@@ -49,6 +55,7 @@ impl ReaderTheme {
             ReaderTheme::Oled => Color32::from_rgb(10, 10, 12),
             ReaderTheme::Warm => Color32::from_rgb(242, 230, 208),
             ReaderTheme::Mint => Color32::from_rgb(226, 236, 226),
+            ReaderTheme::Twilight => Color32::from_rgb(66, 58, 53),
         }
     }
 
@@ -60,6 +67,7 @@ impl ReaderTheme {
             ReaderTheme::Oled => Color32::from_rgb(85, 145, 255),
             ReaderTheme::Warm => Color32::from_rgb(180, 95, 25),
             ReaderTheme::Mint => Color32::from_rgb(45, 125, 80),
+            ReaderTheme::Twilight => Color32::from_rgb(224, 150, 68),
         }
     }
 
@@ -110,6 +118,15 @@ impl ReaderTheme {
                     egui::Stroke::new(1.0, Color32::from_rgb(200, 215, 200));
                 visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(220, 230, 220);
                 visuals.widgets.inactive.bg_fill = Color32::from_rgb(220, 230, 220);
+            }
+            ReaderTheme::Twilight => {
+                visuals.widgets.hovered.fg_stroke.color = Color32::from_rgb(250, 240, 225);
+                visuals.widgets.active.fg_stroke.color = Color32::from_rgb(255, 255, 255);
+                visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(46, 40, 36);
+                visuals.widgets.noninteractive.bg_stroke =
+                    egui::Stroke::new(1.0, Color32::from_rgb(80, 70, 64));
+                visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(46, 40, 36);
+                visuals.widgets.inactive.bg_fill = Color32::from_rgb(46, 40, 36);
             }
             ReaderTheme::Light => {
                 visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(244, 245, 248);

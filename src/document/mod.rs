@@ -138,6 +138,97 @@ pub struct TocItem {
     pub children: Vec<TocItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormattedSpan<'a> {
+    pub text: &'a str,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+pub fn strip_formatting_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let b = s.as_bytes();
+    while i < b.len() {
+        if b[i] == b'<' {
+            if s[i..].starts_with("<b>") || s[i..].starts_with("<i>") {
+                i += 3;
+                continue;
+            } else if s[i..].starts_with("</b>") || s[i..].starts_with("</i>") {
+                i += 4;
+                continue;
+            }
+        }
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+pub fn parse_formatted_spans(text: &str) -> Vec<FormattedSpan<'_>> {
+    let mut spans = Vec::new();
+    let mut bold_depth: usize = 0;
+    let mut italic_depth: usize = 0;
+    let mut current_start = 0;
+    let mut i = 0;
+    let bytes = text.as_bytes();
+
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            let tag_info = if text[i..].starts_with("<b>") {
+                Some((3, true, true))
+            } else if text[i..].starts_with("</b>") {
+                Some((4, true, false))
+            } else if text[i..].starts_with("<i>") {
+                Some((3, false, true))
+            } else if text[i..].starts_with("</i>") {
+                Some((4, false, false))
+            } else {
+                None
+            };
+
+            if let Some((len, is_bold, is_open)) = tag_info {
+                if i > current_start {
+                    spans.push(FormattedSpan {
+                        text: &text[current_start..i],
+                        bold: bold_depth > 0,
+                        italic: italic_depth > 0,
+                    });
+                }
+                if is_bold {
+                    if is_open {
+                        bold_depth = bold_depth.saturating_add(1);
+                    } else {
+                        bold_depth = bold_depth.saturating_sub(1);
+                    }
+                } else {
+                    if is_open {
+                        italic_depth = italic_depth.saturating_add(1);
+                    } else {
+                        italic_depth = italic_depth.saturating_sub(1);
+                    }
+                }
+                i += len;
+                current_start = i;
+                continue;
+            }
+        }
+        let ch_len = text[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        i += ch_len;
+    }
+
+    if current_start < text.len() {
+        spans.push(FormattedSpan {
+            text: &text[current_start..],
+            bold: bold_depth > 0,
+            italic: italic_depth > 0,
+        });
+    }
+
+    spans
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentViewKind {
     Text,
@@ -179,12 +270,20 @@ pub const MAX_TOTAL_UNPACK_BYTES: u64 = 500 * 1024 * 1024;
 
 pub fn is_safe_archive_path(p: &str) -> bool {
     let trimmed = p.trim();
-    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('\\') || trimmed.contains(':') {
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || trimmed.contains(':')
+    {
         return false;
     }
     let decoded = epub::percent_decode_str(trimmed);
     let dec_trimmed = decoded.trim();
-    if dec_trimmed.is_empty() || dec_trimmed.starts_with('/') || dec_trimmed.starts_with('\\') || dec_trimmed.contains(':') {
+    if dec_trimmed.is_empty()
+        || dec_trimmed.starts_with('/')
+        || dec_trimmed.starts_with('\\')
+        || dec_trimmed.contains(':')
+    {
         return false;
     }
     let normalized = dec_trimmed.replace('\\', "/");

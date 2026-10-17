@@ -624,9 +624,15 @@ fn test_epub_percent_decode_and_path_resolution() {
     assert_eq!(percent_decode_str("no_percent.html"), "no_percent.html");
 
     assert_eq!(resolve_path("OEBPS", "ch1.xhtml"), "OEBPS/ch1.xhtml");
-    assert_eq!(resolve_path("OEBPS/text", "../ch1.xhtml"), "OEBPS/ch1.xhtml");
+    assert_eq!(
+        resolve_path("OEBPS/text", "../ch1.xhtml"),
+        "OEBPS/ch1.xhtml"
+    );
     assert_eq!(resolve_path("OEBPS", "../../outside.xhtml"), "");
-    assert_eq!(resolve_path("OEBPS", "http://evil.com/x.html"), "http://evil.com/x.html");
+    assert_eq!(
+        resolve_path("OEBPS", "http://evil.com/x.html"),
+        "http://evil.com/x.html"
+    );
 }
 
 #[test]
@@ -713,10 +719,14 @@ fn test_djvu_corrupted_header_and_short_bytes() {
     let res_short = DjvuDocument::from_bytes(vec![1, 2, 3], Path::new("dummy.djvu"));
     assert!(res_short.is_err());
 
-    let res_garbage = DjvuDocument::from_bytes(b"NOT_A_DJVU_FILE_AT_ALL".to_vec(), Path::new("dummy.djvu"));
+    let res_garbage =
+        DjvuDocument::from_bytes(b"NOT_A_DJVU_FILE_AT_ALL".to_vec(), Path::new("dummy.djvu"));
     assert!(res_garbage.is_err());
 
-    let res_trunc = DjvuDocument::from_bytes(b"AT&TFORM\x00\x00\x00\x04DJVU".to_vec(), Path::new("dummy.djvu"));
+    let res_trunc = DjvuDocument::from_bytes(
+        b"AT&TFORM\x00\x00\x00\x04DJVU".to_vec(),
+        Path::new("dummy.djvu"),
+    );
     assert!(res_trunc.is_err());
 }
 
@@ -734,7 +744,10 @@ fn test_djvu_bookmark_page_resolution() {
     assert_eq!(resolve_djvu_bookmark_page("#intro.djvu", &map, 10), 0);
     assert_eq!(resolve_djvu_bookmark_page("#ch1.djvu", &map, 10), 1);
     assert_eq!(resolve_djvu_bookmark_page("#ch2", &map, 10), 2);
-    assert_eq!(resolve_djvu_bookmark_page("#%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0.djvu", &map, 10), 3);
+    assert_eq!(
+        resolve_djvu_bookmark_page("#%D0%B3%D0%BB%D0%B0%D0%B2%D0%B0.djvu", &map, 10),
+        3
+    );
     assert_eq!(resolve_djvu_bookmark_page("#1", &map, 10), 0);
     assert_eq!(resolve_djvu_bookmark_page("#+5", &map, 10), 4);
     assert_eq!(resolve_djvu_bookmark_page("#page0006", &map, 10), 5);
@@ -764,7 +777,7 @@ fn test_djvu_thread_safety_send_sync() {
 
 #[test]
 fn test_document_format_name_and_custom_toc() {
-    use document::{Document, TxtDocument, Fb2Document};
+    use document::{Document, Fb2Document, TxtDocument};
     let txt = TxtDocument::from_text("Sample text", "title");
     assert_eq!(txt.format_name(), "TXT");
     assert!(!txt.has_custom_toc());
@@ -815,7 +828,10 @@ fn test_reader_core_bookmarks_and_search() {
     core.clear_bookmarks_for_path(&path);
     assert_eq!(core.bookmarks_for_path(&path).count(), 0);
 
-    let doc = TxtDocument::from_text("First chapter with keyword needle inside it\nSecond chapter without it", "Doc");
+    let doc = TxtDocument::from_text(
+        "First chapter with keyword needle inside it\nSecond chapter without it",
+        "Doc",
+    );
     let hits = ReaderCore::search_in_document(&doc, "needle");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].chapter_index, 0);
@@ -824,7 +840,9 @@ fn test_reader_core_bookmarks_and_search() {
 
 #[test]
 fn test_paged_common_helpers() {
-    use crate::app::paged_common::{calculate_paged_dimensions, parse_page_input, zoom_in, zoom_out, zoom_reset};
+    use crate::app::paged_common::{
+        calculate_paged_dimensions, parse_page_input, zoom_in, zoom_out, zoom_reset,
+    };
     use eframe::egui::Vec2;
 
     assert_eq!(parse_page_input("1", 10), Some(0));
@@ -856,4 +874,3 @@ fn test_paged_common_helpers() {
     let (_, h_fit_h) = calculate_paged_dimensions(800.0, 1200.0, 1000.0, 800.0, "FitHeight", 100.0);
     assert_eq!(h_fit_h, 784.0);
 }
-

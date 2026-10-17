@@ -135,11 +135,7 @@ pub fn extract_page_spans(page: &Page<'_>) -> Option<Vec<PageTextSpan>> {
     hayro::hayro_interpret::interpret_page(page, &mut state, &mut device);
 
     let spans = group_and_sort_glyphs(device.glyphs, width, height);
-    if spans.is_empty() {
-        None
-    } else {
-        Some(spans)
-    }
+    if spans.is_empty() { None } else { Some(spans) }
 }
 
 #[derive(Debug, Clone)]
@@ -275,7 +271,11 @@ pub fn order_spans_reading_flow(
     height: f64,
 ) -> Vec<RawSpan> {
     if raw_spans.len() < 4 {
-        raw_spans.sort_by(|a, b| a.min_y.total_cmp(&b.min_y).then_with(|| a.min_x.total_cmp(&b.min_x)));
+        raw_spans.sort_by(|a, b| {
+            a.min_y
+                .total_cmp(&b.min_y)
+                .then_with(|| a.min_x.total_cmp(&b.min_x))
+        });
         return raw_spans;
     }
 
@@ -318,19 +318,40 @@ pub fn order_spans_reading_flow(
             }
         }
 
-        headers.sort_by(|a, b| a.min_y.total_cmp(&b.min_y).then_with(|| a.min_x.total_cmp(&b.min_x)));
-        col_left.sort_by(|a, b| a.min_y.total_cmp(&b.min_y).then_with(|| a.min_x.total_cmp(&b.min_x)));
-        col_right.sort_by(|a, b| a.min_y.total_cmp(&b.min_y).then_with(|| a.min_x.total_cmp(&b.min_x)));
-        footers.sort_by(|a, b| a.min_y.total_cmp(&b.min_y).then_with(|| a.min_x.total_cmp(&b.min_x)));
+        headers.sort_by(|a, b| {
+            a.min_y
+                .total_cmp(&b.min_y)
+                .then_with(|| a.min_x.total_cmp(&b.min_x))
+        });
+        col_left.sort_by(|a, b| {
+            a.min_y
+                .total_cmp(&b.min_y)
+                .then_with(|| a.min_x.total_cmp(&b.min_x))
+        });
+        col_right.sort_by(|a, b| {
+            a.min_y
+                .total_cmp(&b.min_y)
+                .then_with(|| a.min_x.total_cmp(&b.min_x))
+        });
+        footers.sort_by(|a, b| {
+            a.min_y
+                .total_cmp(&b.min_y)
+                .then_with(|| a.min_x.total_cmp(&b.min_x))
+        });
 
-        let mut result = Vec::with_capacity(headers.len() + col_left.len() + col_right.len() + footers.len());
+        let mut result =
+            Vec::with_capacity(headers.len() + col_left.len() + col_right.len() + footers.len());
         result.extend(headers);
         result.extend(col_left);
         result.extend(col_right);
         result.extend(footers);
         result
     } else {
-        raw_spans.sort_by(|a, b| a.min_y.total_cmp(&b.min_y).then_with(|| a.min_x.total_cmp(&b.min_x)));
+        raw_spans.sort_by(|a, b| {
+            a.min_y
+                .total_cmp(&b.min_y)
+                .then_with(|| a.min_x.total_cmp(&b.min_x))
+        });
         raw_spans
     }
 }

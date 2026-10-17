@@ -1,9 +1,13 @@
 use eframe::egui;
 
+pub const FONT_FAMILY_BOLD: &str = "reader-bold";
+pub const FONT_FAMILY_ITALIC: &str = "reader-italic";
+pub const FONT_FAMILY_BOLD_ITALIC: &str = "reader-bold-italic";
+
 pub fn apply_font_family(ctx: &egui::Context, font_name: &str) {
     let mut fonts = egui::FontDefinitions::default();
 
-    if let Some(bytes) = crate::platform::load_system_font_bytes(font_name) {
+    if let Some(bytes) = crate::platform::load_system_font_variant_bytes(font_name, false, false) {
         fonts.font_data.insert(
             font_name.to_owned(),
             std::sync::Arc::new(egui::FontData::from_owned(bytes)),
@@ -13,6 +17,76 @@ pub fn apply_font_family(ctx: &egui::Context, font_name: &str) {
             .entry(egui::FontFamily::Proportional)
             .or_default()
             .insert(0, font_name.to_owned());
+    }
+
+    let bold_key = format!("{font_name}-Bold");
+    if let Some(bytes) = crate::platform::load_system_font_variant_bytes(font_name, true, false) {
+        fonts.font_data.insert(
+            bold_key.clone(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        fonts.families.insert(
+            egui::FontFamily::Name(FONT_FAMILY_BOLD.into()),
+            vec![
+                bold_key.clone(),
+                font_name.to_owned(),
+                "Ubuntu-Light".to_owned(),
+            ],
+        );
+    } else {
+        fonts.families.insert(
+            egui::FontFamily::Name(FONT_FAMILY_BOLD.into()),
+            vec![font_name.to_owned(), "Ubuntu-Light".to_owned()],
+        );
+    }
+
+    let italic_key = format!("{font_name}-Italic");
+    if let Some(bytes) = crate::platform::load_system_font_variant_bytes(font_name, false, true) {
+        fonts.font_data.insert(
+            italic_key.clone(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        fonts.families.insert(
+            egui::FontFamily::Name(FONT_FAMILY_ITALIC.into()),
+            vec![
+                italic_key.clone(),
+                font_name.to_owned(),
+                "Ubuntu-Light".to_owned(),
+            ],
+        );
+    } else {
+        fonts.families.insert(
+            egui::FontFamily::Name(FONT_FAMILY_ITALIC.into()),
+            vec![font_name.to_owned(), "Ubuntu-Light".to_owned()],
+        );
+    }
+
+    let bold_italic_key = format!("{font_name}-BoldItalic");
+    if let Some(bytes) = crate::platform::load_system_font_variant_bytes(font_name, true, true) {
+        fonts.font_data.insert(
+            bold_italic_key.clone(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        fonts.families.insert(
+            egui::FontFamily::Name(FONT_FAMILY_BOLD_ITALIC.into()),
+            vec![
+                bold_italic_key,
+                bold_key,
+                italic_key,
+                font_name.to_owned(),
+                "Ubuntu-Light".to_owned(),
+            ],
+        );
+    } else {
+        fonts.families.insert(
+            egui::FontFamily::Name(FONT_FAMILY_BOLD_ITALIC.into()),
+            vec![
+                bold_key,
+                italic_key,
+                font_name.to_owned(),
+                "Ubuntu-Light".to_owned(),
+            ],
+        );
     }
 
     ctx.set_fonts(fonts);

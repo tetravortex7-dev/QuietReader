@@ -1,3 +1,4 @@
+use super::icons::{Icon, IconButton, icon_button};
 use super::theme::ReaderTheme;
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea};
@@ -69,7 +70,7 @@ impl Dialogs {
             ))
             .inner_margin(egui::Margin::symmetric(14, 12));
 
-        egui::Window::new("📌 Привязка форматов к QuietReader")
+        egui::Window::new("Привязка форматов к QuietReader")
             .collapsible(false)
             .resizable(false)
             .frame(window_frame)
@@ -147,7 +148,7 @@ impl Dialogs {
                     let has_selected = !settings.associated_extensions.is_empty();
                     let btn = ui.add_enabled(
                         has_selected,
-                        egui::Button::new(RichText::new("✔ Привязать выбранные").strong()),
+                        IconButton::new(Icon::Check, "Привязать выбранные"),
                     );
                     if btn.clicked() {
                         *on_register_association = true;
@@ -158,7 +159,7 @@ impl Dialogs {
                         *on_save_settings = true;
                         *show_dialog = false;
                     }
-                    if ui.button("✖ Не сейчас").clicked() {
+                    if ui.add(IconButton::new(Icon::Close, "Не сейчас")).clicked() {
                         if *dont_show_again {
                             crate::platform::set_association_prompt_dismissed(true);
                             settings.dismiss_association_prompt = true;
@@ -195,7 +196,7 @@ impl Dialogs {
             ))
             .inner_margin(egui::Margin::symmetric(14, 12));
 
-        egui::Window::new("📚 Недавние книги")
+        egui::Window::new("Недавние книги")
             .collapsible(false)
             .resizable(true)
             .frame(window_frame)
@@ -209,8 +210,7 @@ impl Dialogs {
                             *show_dialog = false;
                         }
                         if !settings.recent_books.is_empty()
-                            && ui
-                                .button("🗑 Очистить")
+                            && icon_button(ui, Icon::Trash, "Очистить")
                                 .on_hover_text("Очистить список недавних книг")
                                 .clicked()
                         {

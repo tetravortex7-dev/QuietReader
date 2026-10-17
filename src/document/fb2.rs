@@ -209,6 +209,18 @@ impl Fb2Document {
                             }
                         }
 
+                        "strong" | "b" => {
+                            if in_paragraph && !in_title {
+                                current_paragraph.push_str("<b>");
+                            }
+                        }
+
+                        "emphasis" | "i" | "em" => {
+                            if in_paragraph && !in_title {
+                                current_paragraph.push_str("<i>");
+                            }
+                        }
+
                         "a" => {
                             if let Some(ref body) = current_body
                                 && body
@@ -277,6 +289,18 @@ impl Fb2Document {
                                     }
                                 }
                                 current_paragraph.clear();
+                            }
+                        }
+
+                        "strong" | "b" => {
+                            if in_paragraph && !in_title {
+                                current_paragraph.push_str("</b>");
+                            }
+                        }
+
+                        "emphasis" | "i" | "em" => {
+                            if in_paragraph && !in_title {
+                                current_paragraph.push_str("</i>");
                             }
                         }
 
@@ -436,7 +460,11 @@ impl Fb2Document {
                     .enumerate()
                     .map(|(i, c)| TocItem {
                         id: c.id.clone(),
-                        title: if c.title.is_empty() { format!("Раздел {}", i + 1) } else { c.title.clone() },
+                        title: if c.title.is_empty() {
+                            format!("Раздел {}", i + 1)
+                        } else {
+                            c.title.clone()
+                        },
                         chapter_index: i,
                         children: Vec::new(),
                     })
@@ -485,7 +513,9 @@ struct FlattenContext {
     section_id_to_chapter: HashMap<String, usize>,
 }
 
-fn build_chapters_and_toc(bodies: Vec<BodyNode>) -> (Vec<BookChapter>, Vec<TocItem>, HashMap<String, usize>) {
+fn build_chapters_and_toc(
+    bodies: Vec<BodyNode>,
+) -> (Vec<BookChapter>, Vec<TocItem>, HashMap<String, usize>) {
     let mut ctx = FlattenContext {
         chapters: Vec::new(),
         section_id_to_chapter: HashMap::new(),
@@ -626,7 +656,9 @@ fn flatten_section(
     let effective_chapter_idx = own_chapter_idx.or(first_child_chapter);
 
     if let (Some(id), Some(ch_idx)) = (&section.id, effective_chapter_idx) {
-        ctx.section_id_to_chapter.entry(id.clone()).or_insert(ch_idx);
+        ctx.section_id_to_chapter
+            .entry(id.clone())
+            .or_insert(ch_idx);
         ctx.section_id_to_chapter
             .entry(crate::document::epub::percent_decode_str(id))
             .or_insert(ch_idx);
@@ -713,6 +745,24 @@ pub fn extract_fb2_lenient(xml: &str) -> (String, String, Vec<BookChapter>) {
                                 }
                             }
                             current_p.clear();
+                        }
+                    }
+                    "strong" | "b" => {
+                        if in_p && !in_title {
+                            if is_closing {
+                                current_p.push_str("</b>");
+                            } else {
+                                current_p.push_str("<b>");
+                            }
+                        }
+                    }
+                    "emphasis" | "i" | "em" => {
+                        if in_p && !in_title {
+                            if is_closing {
+                                current_p.push_str("</i>");
+                            } else {
+                                current_p.push_str("<i>");
+                            }
                         }
                     }
                     _ => {}

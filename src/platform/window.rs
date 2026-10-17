@@ -64,24 +64,31 @@ pub fn reposition_window_into_work_area(
 mod windows_fullscreen {
     use super::{is_window_accessible_in_work_area, reposition_window_into_work_area};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    const GWL_STYLE: i32 = -16;
-    const GWL_EXSTYLE: i32 = -20;
-    const WS_CAPTION: i32 = 0x00C00000;
-    const WS_THICKFRAME: i32 = 0x00040000;
-    const WS_EX_DLGMODALFRAME: i32 = 0x00000001;
-    const WS_EX_WINDOWEDGE: i32 = 0x00000100;
-    const WS_EX_CLIENTEDGE: i32 = 0x00000200;
-    const WS_EX_STATICEDGE: i32 = 0x00020000;
     const MONITOR_DEFAULTTONULL: u32 = 0;
     const MONITOR_DEFAULTTONEAREST: u32 = 2;
-    const HWND_TOP: isize = 0;
-    const SWP_NOSIZE: u32 = 0x0001;
-    const SWP_NOMOVE: u32 = 0x0002;
+    const GWL_STYLE: i32 = -16;
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_OVERLAPPEDWINDOW: i32 = 0x00CF0000;
+    const WS_POPUP: i32 = -2147483648;
+    const WS_VISIBLE: i32 = 0x10000000;
+    const WS_CLIPSIBLINGS: i32 = 0x04000000;
+    const WS_CLIPCHILDREN: i32 = 0x02000000;
+    const WS_MAXIMIZE: i32 = 0x01000000;
+    const WS_EX_WINDOWEDGE: i32 = 0x00000100;
     const SWP_NOZORDER: u32 = 0x0004;
-    const SWP_NOACTIVATE: u32 = 0x0010;
-    const SWP_FRAMECHANGED: u32 = 0x0020;
     const SWP_NOOWNERZORDER: u32 = 0x0200;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+    const SWP_SHOWWINDOW: u32 = 0x0040;
+    const SW_MAXIMIZE: i32 = 3;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -94,9 +101,11 @@ mod windows_fullscreen {
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
-    struct Point {
-        x: i32,
-        y: i32,
+    struct MonitorInfo {
+        cb_size: u32,
+        rc_monitor: Rect,
+        rc_work: Rect,
+        dw_flags: u32,
     }
 
     #[repr(C)]
@@ -110,41 +119,29 @@ mod windows_fullscreen {
         rc_normal_position: Rect,
     }
 
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    struct MonitorInfo {
-        cb_size: u32,
-        rc_monitor: Rect,
-        rc_work: Rect,
-        dw_flags: u32,
-    }
-
     #[derive(Clone, Copy)]
-    struct SavedWindowState {
-        hwnd: isize,
+    struct SavedWindowInfo {
         style: i32,
         ex_style: i32,
-        placement: WindowPlacement,
+        rect: Rect,
+        maximized: bool,
     }
 
-    static SAVED_STATE: Mutex<Option<SavedWindowState>> = Mutex::new(None);
+    static SAVED_WINDOW_INFO: Mutex<Option<SavedWindowInfo>> = Mutex::new(None);
+    static IS_FULLSCREEN: AtomicBool = AtomicBool::new(false);
 
     #[link(name = "user32")]
     unsafe extern "system" {
-        fn GetActiveWindow() -> isize;
-        fn GetForegroundWindow() -> isize;
-        fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> isize;
-        fn GetWindowThreadProcessId(hwnd: isize, lpdw_process_id: *mut u32) -> u32;
-        fn IsIconic(hwnd: isize) -> i32;
-        fn IsZoomed(hwnd: isize) -> i32;
-        fn GetWindowRect(hwnd: isize, lprect: *mut Rect) -> i32;
+        fn MonitorFromRect(lprc: *const Rect, dw_flags: u32) -> isize;
+        fn MonitorFromWindow(hwnd: isize, dw_flags: u32) -> isize;
+        fn GetMonitorInfoW(hmonitor: isize, lpmi: *mut MonitorInfo) -> i32;
         fn GetWindowLongW(hwnd: isize, n_index: i32) -> i32;
         fn SetWindowLongW(hwnd: isize, n_index: i32, dw_new_long: i32) -> i32;
+        fn GetWindowRect(hwnd: isize, lp_rect: *mut Rect) -> i32;
         fn GetWindowPlacement(hwnd: isize, lpwndpl: *mut WindowPlacement) -> i32;
-        fn SetWindowPlacement(hwnd: isize, lpwndpl: *const WindowPlacement) -> i32;
-        fn MonitorFromWindow(hwnd: isize, dw_flags: u32) -> isize;
-        fn MonitorFromRect(lprc: *const Rect, dw_flags: u32) -> isize;
-        fn GetMonitorInfoW(hmonitor: isize, lpmi: *mut MonitorInfo) -> i32;
+        fn IsZoomed(hwnd: isize) -> i32;
+        fn IsWindow(hwnd: isize) -> i32;
+        fn ShowWindow(hwnd: isize, n_cmd_show: i32) -> i32;
         fn SetWindowPos(
             hwnd: isize,
             hwnd_insert_after: isize,
@@ -156,43 +153,115 @@ mod windows_fullscreen {
         ) -> i32;
     }
 
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetCurrentProcessId() -> u32;
+    pub fn optimize_window_for_rendering(_hwnd: isize) {}
+
+    pub fn is_window_fullscreen() -> bool {
+        IS_FULLSCREEN.load(Ordering::Relaxed)
     }
 
-    fn to_wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
+    fn apply_fullscreen_win32(hwnd: isize, fullscreen: bool) {
+        unsafe {
+            if hwnd == 0 || IsWindow(hwnd) == 0 {
+                return;
+            }
+            if fullscreen {
+                let style = GetWindowLongW(hwnd, GWL_STYLE);
+                let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                let maximized = IsZoomed(hwnd) != 0;
+
+                let mut rect = Rect::default();
+                if maximized {
+                    let mut wp = WindowPlacement {
+                        length: std::mem::size_of::<WindowPlacement>() as u32,
+                        ..Default::default()
+                    };
+                    if GetWindowPlacement(hwnd, &mut wp) != 0 {
+                        rect = wp.rc_normal_position;
+                    } else {
+                        GetWindowRect(hwnd, &mut rect);
+                    }
+                } else {
+                    GetWindowRect(hwnd, &mut rect);
+                }
+
+                if let Ok(mut guard) = SAVED_WINDOW_INFO.lock() {
+                    *guard = Some(SavedWindowInfo {
+                        style,
+                        ex_style,
+                        rect,
+                        maximized,
+                    });
+                }
+
+                let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                let mut mi = MonitorInfo {
+                    cb_size: std::mem::size_of::<MonitorInfo>() as u32,
+                    ..Default::default()
+                };
+                if mon != 0 && GetMonitorInfoW(mon, &mut mi) != 0 {
+                    let new_style = (style & !(WS_OVERLAPPEDWINDOW | WS_MAXIMIZE))
+                        | WS_POPUP
+                        | WS_VISIBLE
+                        | WS_CLIPSIBLINGS
+                        | WS_CLIPCHILDREN;
+                    let new_ex_style = ex_style & !WS_EX_WINDOWEDGE;
+
+                    SetWindowLongW(hwnd, GWL_STYLE, new_style);
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style);
+
+                    let w = mi.rc_monitor.right - mi.rc_monitor.left;
+                    let h = (mi.rc_monitor.bottom - mi.rc_monitor.top) + 1;
+
+                    SetWindowPos(
+                        hwnd,
+                        0,
+                        mi.rc_monitor.left,
+                        mi.rc_monitor.top,
+                        w,
+                        h,
+                        SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+                    );
+                }
+            } else {
+                let saved = SAVED_WINDOW_INFO.lock().ok().and_then(|mut g| g.take());
+                if let Some(info) = saved {
+                    let restored_style = (info.style & !WS_MAXIMIZE) | WS_VISIBLE;
+                    SetWindowLongW(hwnd, GWL_STYLE, restored_style);
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, info.ex_style);
+
+                    let w = (info.rect.right - info.rect.left).max(600);
+                    let h = (info.rect.bottom - info.rect.top).max(400);
+
+                    SetWindowPos(
+                        hwnd,
+                        0,
+                        info.rect.left,
+                        info.rect.top,
+                        w,
+                        h,
+                        SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+                    );
+
+                    if info.maximized {
+                        ShowWindow(hwnd, SW_MAXIMIZE);
+                    }
+                }
+            }
+        }
     }
 
-    fn is_own_process_window(hwnd: isize) -> bool {
-        if hwnd == 0 {
+    pub fn set_window_fullscreen(hwnd: isize, fullscreen: bool) -> bool {
+        if hwnd == 0 || unsafe { IsWindow(hwnd) == 0 } {
             return false;
         }
-        let mut proc_id = 0u32;
-        unsafe {
-            GetWindowThreadProcessId(hwnd, &mut proc_id);
-            proc_id != 0 && proc_id == GetCurrentProcessId()
+        if IS_FULLSCREEN.swap(fullscreen, Ordering::SeqCst) == fullscreen {
+            return true;
         }
-    }
-
-    fn get_own_window_hwnd() -> isize {
-        unsafe {
-            let mut hwnd = GetActiveWindow();
-            if is_own_process_window(hwnd) {
-                return hwnd;
-            }
-            hwnd = GetForegroundWindow();
-            if is_own_process_window(hwnd) {
-                return hwnd;
-            }
-            let title = to_wide("QuietReader");
-            hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
-            if is_own_process_window(hwnd) {
-                return hwnd;
-            }
-            0
-        }
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            apply_fullscreen_win32(hwnd, fullscreen);
+        });
+        true
     }
 
     pub fn sanitize_window_geometry(
@@ -291,172 +360,9 @@ mod windows_fullscreen {
         (None, None, w, h)
     }
 
+    #[allow(dead_code)]
     pub fn ensure_window_on_screen() -> bool {
-        let hwnd = get_own_window_hwnd();
-        if hwnd == 0 {
-            return false;
-        }
-        unsafe {
-            if IsIconic(hwnd) != 0 || IsZoomed(hwnd) != 0 {
-                return false;
-            }
-
-            let mut rect = Rect::default();
-            if GetWindowRect(hwnd, &mut rect) == 0 {
-                return false;
-            }
-
-            let ix = rect.left;
-            let iy = rect.top;
-            let iw = rect.right - rect.left;
-            let ih = rect.bottom - rect.top;
-            if iw <= 0 || ih <= 0 {
-                return false;
-            }
-
-            let grab_rect = Rect {
-                left: ix + 16,
-                top: iy,
-                right: (ix + iw - 16).max(ix + 80),
-                bottom: iy + 40,
-            };
-            let mon = MonitorFromRect(&grab_rect, MONITOR_DEFAULTTONULL);
-            if mon != 0 {
-                let mut mi = MonitorInfo {
-                    cb_size: std::mem::size_of::<MonitorInfo>() as u32,
-                    ..Default::default()
-                };
-                if GetMonitorInfoW(mon, &mut mi) != 0
-                    && is_window_accessible_in_work_area(
-                        ix,
-                        iy,
-                        iw,
-                        ih,
-                        mi.rc_work.left,
-                        mi.rc_work.top,
-                        mi.rc_work.right,
-                        mi.rc_work.bottom,
-                    )
-                {
-                    return false;
-                }
-            }
-
-            let nearest = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
-            if nearest != 0 {
-                let mut mi = MonitorInfo {
-                    cb_size: std::mem::size_of::<MonitorInfo>() as u32,
-                    ..Default::default()
-                };
-                if GetMonitorInfoW(nearest, &mut mi) != 0 {
-                    let (nx, ny, nw, nh) = reposition_window_into_work_area(
-                        ix,
-                        iy,
-                        iw,
-                        ih,
-                        mi.rc_work.left,
-                        mi.rc_work.top,
-                        mi.rc_work.right,
-                        mi.rc_work.bottom,
-                    );
-                    SetWindowPos(
-                        hwnd,
-                        0,
-                        nx,
-                        ny,
-                        nw,
-                        nh,
-                        SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
-                    );
-                    return true;
-                }
-            }
-            false
-        }
-    }
-
-    pub fn set_window_fullscreen(fullscreen: bool) -> bool {
-        unsafe {
-            if fullscreen {
-                let hwnd = get_own_window_hwnd();
-                if hwnd == 0 {
-                    return false;
-                }
-
-                let style = GetWindowLongW(hwnd, GWL_STYLE);
-                let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-                let mut placement = WindowPlacement {
-                    length: std::mem::size_of::<WindowPlacement>() as u32,
-                    ..Default::default()
-                };
-                GetWindowPlacement(hwnd, &mut placement);
-
-                if let Ok(mut guard) = SAVED_STATE.lock() {
-                    *guard = Some(SavedWindowState {
-                        hwnd,
-                        style,
-                        ex_style,
-                        placement,
-                    });
-                }
-
-                let new_style = style & !(WS_CAPTION | WS_THICKFRAME);
-                let new_ex_style = ex_style
-                    & !(WS_EX_DLGMODALFRAME
-                        | WS_EX_WINDOWEDGE
-                        | WS_EX_CLIENTEDGE
-                        | WS_EX_STATICEDGE);
-
-                SetWindowLongW(hwnd, GWL_STYLE, new_style);
-                SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style);
-
-                let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                let mut mi = MonitorInfo {
-                    cb_size: std::mem::size_of::<MonitorInfo>() as u32,
-                    ..Default::default()
-                };
-                if monitor != 0 && GetMonitorInfoW(monitor, &mut mi) != 0 {
-                    let x = mi.rc_monitor.left;
-                    let y = mi.rc_monitor.top;
-                    let w = mi.rc_monitor.right - mi.rc_monitor.left;
-                    let h = (mi.rc_monitor.bottom - mi.rc_monitor.top) + 1;
-                    SetWindowPos(
-                        hwnd,
-                        HWND_TOP,
-                        x,
-                        y,
-                        w,
-                        h,
-                        SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
-                    );
-                    return true;
-                }
-                false
-            } else {
-                let saved = SAVED_STATE.lock().ok().and_then(|mut g| g.take());
-                if let Some(saved) = saved {
-                    SetWindowLongW(saved.hwnd, GWL_STYLE, saved.style);
-                    SetWindowLongW(saved.hwnd, GWL_EXSTYLE, saved.ex_style);
-                    SetWindowPlacement(saved.hwnd, &saved.placement);
-                    SetWindowPos(
-                        saved.hwnd,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE
-                            | SWP_NOSIZE
-                            | SWP_NOZORDER
-                            | SWP_NOOWNERZORDER
-                            | SWP_FRAMECHANGED,
-                    );
-                    let _ = ensure_window_on_screen();
-                    return true;
-                }
-                false
-            }
-        }
+        false
     }
 }
 
@@ -500,21 +406,41 @@ pub fn sanitize_window_geometry(
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 pub fn ensure_window_on_screen() -> bool {
     windows_fullscreen::ensure_window_on_screen()
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn ensure_window_on_screen() -> bool {
     false
 }
 
 #[cfg(windows)]
-pub fn set_window_fullscreen(fullscreen: bool) -> bool {
-    windows_fullscreen::set_window_fullscreen(fullscreen)
+pub fn optimize_window_for_rendering(hwnd: isize) {
+    windows_fullscreen::optimize_window_for_rendering(hwnd);
 }
 
 #[cfg(not(windows))]
-pub fn set_window_fullscreen(_fullscreen: bool) -> bool {
+pub fn optimize_window_for_rendering(_hwnd: isize) {}
+
+#[cfg(windows)]
+pub fn set_window_fullscreen(hwnd: isize, fullscreen: bool) -> bool {
+    windows_fullscreen::set_window_fullscreen(hwnd, fullscreen)
+}
+
+#[cfg(not(windows))]
+pub fn set_window_fullscreen(_hwnd: isize, _fullscreen: bool) -> bool {
+    false
+}
+
+#[cfg(windows)]
+pub fn is_window_fullscreen() -> bool {
+    windows_fullscreen::is_window_fullscreen()
+}
+
+#[cfg(not(windows))]
+pub fn is_window_fullscreen() -> bool {
     false
 }

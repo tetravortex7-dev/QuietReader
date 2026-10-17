@@ -4,7 +4,12 @@ use crate::document::DocumentViewKind;
 use eframe::egui;
 
 impl QuietReaderApp {
-    pub(crate) fn execute_command(&mut self, ctx: &egui::Context, cmd: &Command, view_kind: DocumentViewKind) {
+    pub(crate) fn execute_command(
+        &mut self,
+        ctx: &egui::Context,
+        cmd: &Command,
+        view_kind: DocumentViewKind,
+    ) {
         match cmd {
             Command::CopyChapterText => {
                 if let Some(doc) = &self.document {
@@ -75,15 +80,24 @@ impl QuietReaderApp {
                         match nav_cmd {
                             Command::LineDown => {
                                 if self.settings.pdf.layout == "Continuous" {
-                                    let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
-                                    self.pending_scroll_y = Some((cur + 60.0).clamp(0.0, self.max_scroll_y));
+                                    let cur =
+                                        self.pending_scroll_y.unwrap_or(self.current_scroll_y);
+                                    self.pending_scroll_y =
+                                        Some((cur + 60.0).clamp(0.0, self.max_scroll_y));
                                 } else {
-                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
-                                    if max_pan_y > 1.0 && self.pdf_view.pan_offset.y > -max_pan_y + 1.0 {
-                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y - 60.0).max(-max_pan_y);
+                                    let max_pan_y =
+                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if max_pan_y > 1.0
+                                        && self.pdf_view.pan_offset.y > -max_pan_y + 1.0
+                                    {
+                                        self.pdf_view.pan_offset.y =
+                                            (self.pdf_view.pan_offset.y - 60.0).max(-max_pan_y);
                                     } else {
                                         self.pdf_view.next_page(total_pages, &self.settings.pdf);
-                                        let next_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        let next_max_y = self
+                                            .pdf_view
+                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .y;
                                         self.pdf_view.pan_offset.y = next_max_y;
                                     }
                                 }
@@ -91,15 +105,24 @@ impl QuietReaderApp {
                             }
                             Command::LineUp => {
                                 if self.settings.pdf.layout == "Continuous" {
-                                    let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
-                                    self.pending_scroll_y = Some((cur - 60.0).clamp(0.0, self.max_scroll_y));
+                                    let cur =
+                                        self.pending_scroll_y.unwrap_or(self.current_scroll_y);
+                                    self.pending_scroll_y =
+                                        Some((cur - 60.0).clamp(0.0, self.max_scroll_y));
                                 } else {
-                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
-                                    if max_pan_y > 1.0 && self.pdf_view.pan_offset.y < max_pan_y - 1.0 {
-                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y + 60.0).min(max_pan_y);
+                                    let max_pan_y =
+                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if max_pan_y > 1.0
+                                        && self.pdf_view.pan_offset.y < max_pan_y - 1.0
+                                    {
+                                        self.pdf_view.pan_offset.y =
+                                            (self.pdf_view.pan_offset.y + 60.0).min(max_pan_y);
                                     } else {
                                         self.pdf_view.prev_page(&self.settings.pdf);
-                                        let prev_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        let prev_max_y = self
+                                            .pdf_view
+                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .y;
                                         self.pdf_view.pan_offset.y = -prev_max_y;
                                     }
                                 }
@@ -107,15 +130,28 @@ impl QuietReaderApp {
                             }
                             Command::PageDown | Command::NextPage => {
                                 if self.settings.pdf.layout == "Continuous" {
-                                    let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
-                                    self.pending_scroll_y = Some((cur + self.viewport_height * 0.85).clamp(0.0, self.max_scroll_y));
+                                    let cur =
+                                        self.pending_scroll_y.unwrap_or(self.current_scroll_y);
+                                    self.pending_scroll_y = Some(
+                                        (cur + self.viewport_height * 0.85)
+                                            .clamp(0.0, self.max_scroll_y),
+                                    );
                                 } else {
-                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
-                                    if *nav_cmd == Command::PageDown && max_pan_y > 1.0 && self.pdf_view.pan_offset.y > -max_pan_y + 1.0 {
-                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y - self.viewport_height * 0.85).max(-max_pan_y);
+                                    let max_pan_y =
+                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if *nav_cmd == Command::PageDown
+                                        && max_pan_y > 1.0
+                                        && self.pdf_view.pan_offset.y > -max_pan_y + 1.0
+                                    {
+                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y
+                                            - self.viewport_height * 0.85)
+                                            .max(-max_pan_y);
                                     } else {
                                         self.pdf_view.next_page(total_pages, &self.settings.pdf);
-                                        let next_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        let next_max_y = self
+                                            .pdf_view
+                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .y;
                                         self.pdf_view.pan_offset.y = next_max_y;
                                     }
                                 }
@@ -123,15 +159,28 @@ impl QuietReaderApp {
                             }
                             Command::PageUp | Command::PrevPage => {
                                 if self.settings.pdf.layout == "Continuous" {
-                                    let cur = self.pending_scroll_y.unwrap_or(self.current_scroll_y);
-                                    self.pending_scroll_y = Some((cur - self.viewport_height * 0.85).clamp(0.0, self.max_scroll_y));
+                                    let cur =
+                                        self.pending_scroll_y.unwrap_or(self.current_scroll_y);
+                                    self.pending_scroll_y = Some(
+                                        (cur - self.viewport_height * 0.85)
+                                            .clamp(0.0, self.max_scroll_y),
+                                    );
                                 } else {
-                                    let max_pan_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
-                                    if *nav_cmd == Command::PageUp && max_pan_y > 1.0 && self.pdf_view.pan_offset.y < max_pan_y - 1.0 {
-                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y + self.viewport_height * 0.85).min(max_pan_y);
+                                    let max_pan_y =
+                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    if *nav_cmd == Command::PageUp
+                                        && max_pan_y > 1.0
+                                        && self.pdf_view.pan_offset.y < max_pan_y - 1.0
+                                    {
+                                        self.pdf_view.pan_offset.y = (self.pdf_view.pan_offset.y
+                                            + self.viewport_height * 0.85)
+                                            .min(max_pan_y);
                                     } else {
                                         self.pdf_view.prev_page(&self.settings.pdf);
-                                        let prev_max_y = self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                        let prev_max_y = self
+                                            .pdf_view
+                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .y;
                                         self.pdf_view.pan_offset.y = -prev_max_y;
                                     }
                                 }

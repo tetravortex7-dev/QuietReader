@@ -1,8 +1,9 @@
 use super::dialogs::SettingsTab;
 use super::fonts::apply_font_family;
+use super::icons::{Icon, IconButton, IconLabel, selectable_icon_button};
 use super::theme::ReaderTheme;
 use crate::settings::AppSettings;
-use eframe::egui::{self, Color32, RichText, ScrollArea, Vec2};
+use eframe::egui::{self, Color32, RichText, ScrollArea};
 
 pub struct SettingsView;
 
@@ -31,15 +32,15 @@ impl SettingsView {
             ui.add_space(8.0);
 
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("⚙ Настройки QuietReader")
+                ui.add(
+                    IconLabel::new(Icon::Settings, "Настройки QuietReader")
                         .size(22.0)
                         .strong()
                         .color(text_color),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new("✕ Вернуться к чтению").size(14.0).strong())
+                        .add(IconButton::new(Icon::Close, "Вернуться к чтению").font_size(14.0))
                         .clicked()
                     {
                         *show_settings = false;
@@ -49,8 +50,8 @@ impl SettingsView {
 
             ui.add_space(4.0);
             if let Some(err) = AppSettings::last_save_error() {
-                ui.label(
-                    RichText::new(format!("⚠ Ошибка сохранения настроек: {err}"))
+                ui.add(
+                    IconLabel::new(Icon::Warning, &format!("Ошибка сохранения настроек: {err}"))
                         .color(Color32::RED)
                         .strong(),
                 );
@@ -61,22 +62,18 @@ impl SettingsView {
 
             ui.horizontal_wrapped(|ui| {
                 let tabs = [
-                    (SettingsTab::Fonts, "🔤 Шрифты и текст"),
-                    (SettingsTab::Appearance, "🎨 Внешний вид"),
-                    (SettingsTab::AutoScroll, "📜 Автопрокрутка"),
-                    (SettingsTab::ComicsAndManga, "📖 Комиксы и манга"),
-                    (SettingsTab::Hotkeys, "⌨ Горячие клавиши"),
-                    (SettingsTab::System, "⚙ Система и файлы"),
+                    (SettingsTab::Fonts, Icon::Fonts, "Шрифты и текст"),
+                    (SettingsTab::Appearance, Icon::Appearance, "Внешний вид"),
+                    (SettingsTab::AutoScroll, Icon::AutoScroll, "Автопрокрутка"),
+                    (SettingsTab::ComicsAndManga, Icon::Book, "Комиксы и манга"),
+                    (SettingsTab::Hotkeys, Icon::Keyboard, "Горячие клавиши"),
+                    (SettingsTab::System, Icon::Settings, "Система и файлы"),
                 ];
 
-                for (tab, label) in tabs {
+                for (tab, icon, label) in tabs {
                     let is_active = *settings_tab == tab;
-                    let btn = egui::Button::selectable(
-                        is_active,
-                        RichText::new(label).size(13.5).strong(),
-                    )
-                    .min_size(Vec2::new(115.0, 32.0));
-                    if ui.add(btn).clicked() {
+                    let btn = selectable_icon_button(ui, is_active, icon, label);
+                    if btn.clicked() {
                         *settings_tab = tab;
                     }
                 }
@@ -221,7 +218,12 @@ impl SettingsView {
                     .strong()
                     .color(text_color),
             );
-            if ui.button(RichText::new("  ➖  ").size(13.0)).clicked() && *font_size > 12.0 {
+            if ui
+                .add(IconButton::new(Icon::Minus, "").min_size(egui::Vec2::new(26.0, 22.0)))
+                .on_hover_text("Уменьшить шрифт (Ctrl+-)")
+                .clicked()
+                && *font_size > 12.0
+            {
                 *font_size -= 1.0;
                 *on_save_settings = true;
             }
@@ -233,7 +235,12 @@ impl SettingsView {
             if resp.drag_stopped() || resp.lost_focus() {
                 *on_save_settings = true;
             }
-            if ui.button(RichText::new("  ➕  ").size(13.0)).clicked() && *font_size < 36.0 {
+            if ui
+                .add(IconButton::new(Icon::Plus, "").min_size(egui::Vec2::new(26.0, 22.0)))
+                .on_hover_text("Увеличить шрифт (Ctrl+=)")
+                .clicked()
+                && *font_size < 36.0
+            {
                 *font_size += 1.0;
                 *on_save_settings = true;
             }
@@ -275,6 +282,11 @@ impl SettingsView {
                 ReaderTheme::Sepia,
                 "Сепия (рекомендуется)",
                 "Теплый мягкий фон цвета пергамента и коричневатый текст. Снижает нагрузку на зрение при длительном чтении.",
+            ),
+            (
+                ReaderTheme::Twilight,
+                "Сумерки (вечернее чтение)",
+                "Мягкий кофейно-древесный полумрак и теплый кремовый текст. Не слепит как сепия и избавляет от резкого контраста ночного режима.",
             ),
             (
                 ReaderTheme::Warm,
@@ -345,7 +357,7 @@ impl SettingsView {
         ui.separator();
         ui.add_space(8.0);
 
-        let label = RichText::new("🔆 Не выключать экран во время чтения")
+        let label = RichText::new("Не выключать экран во время чтения")
             .size(14.0)
             .strong()
             .color(text_color);
@@ -384,13 +396,13 @@ impl SettingsView {
         );
         ui.add_space(8.0);
 
-        let scroll_btn_text = if *is_autoscrolling {
-            "⏸ Остановить автопрокрутку (клавиша A)"
+        let (scroll_icon, scroll_text) = if *is_autoscrolling {
+            (Icon::Pause, "Остановить автопрокрутку (клавиша A)")
         } else {
-            "▶ Запустить автопрокрутку (клавиша A)"
+            (Icon::Play, "Запустить автопрокрутку (клавиша A)")
         };
         if ui
-            .button(RichText::new(scroll_btn_text).size(14.0).strong())
+            .add(IconButton::new(scroll_icon, scroll_text).font_size(14.0))
             .clicked()
         {
             *on_toggle_autoscroll = true;
@@ -654,17 +666,22 @@ impl SettingsView {
                 .corner_radius(6.0)
                 .inner_margin(egui::Margin::symmetric(12, 10))
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Ассоциация форматов с QuietReader:").strong().color(text_color));
+                    ui.label(
+                        RichText::new("Ассоциация форматов с QuietReader:")
+                            .strong()
+                            .color(text_color),
+                    );
                     ui.add_space(4.0);
                     ui.label("Отметьте форматы, которые вы хотите открывать в QuietReader:");
                     ui.add_space(6.0);
 
                     ui.horizontal(|ui| {
                         if ui.small_button("Выбрать все").clicked() {
-                            settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS_INFO
-                                .iter()
-                                .map(|(ext, _)| ext.to_string())
-                                .collect();
+                            settings.associated_extensions =
+                                crate::platform::SUPPORTED_EXTENSIONS_INFO
+                                    .iter()
+                                    .map(|(ext, _)| ext.to_string())
+                                    .collect();
                             *on_save_settings = true;
                         }
                         if ui.small_button("Снять все").clicked() {
@@ -672,7 +689,8 @@ impl SettingsView {
                             *on_save_settings = true;
                         }
                         if ui.small_button("Только книги (FB2, EPUB)").clicked() {
-                            settings.associated_extensions = vec!["fb2".to_string(), "epub".to_string()];
+                            settings.associated_extensions =
+                                vec!["fb2".to_string(), "epub".to_string()];
                             *on_save_settings = true;
                         }
                     });
@@ -706,10 +724,19 @@ impl SettingsView {
 
                                 match crate::platform::check_extension_association_status(ext) {
                                     crate::platform::AssociationStatus::Default => {
-                                        ui.label(RichText::new("✔ по умолчанию").size(11.0).color(Color32::from_rgb(46, 139, 87)));
+                                        ui.add(
+                                            IconLabel::new(Icon::Check, "по умолчанию")
+                                                .size(11.0)
+                                                .color(Color32::from_rgb(46, 139, 87))
+                                                .strong(),
+                                        );
                                     }
                                     crate::platform::AssociationStatus::Registered => {
-                                        ui.label(RichText::new("зарегистрирован").size(11.0).color(Color32::GRAY));
+                                        ui.label(
+                                            RichText::new("зарегистрирован")
+                                                .size(11.0)
+                                                .color(Color32::GRAY),
+                                        );
                                     }
                                     _ => {
                                         ui.label("");
@@ -721,15 +748,29 @@ impl SettingsView {
 
                     ui.add_space(8.0);
                     let has_selected = !settings.associated_extensions.is_empty();
-                    if ui.add_enabled(
-                        has_selected,
-                        egui::Button::new(RichText::new("📌 Зарегистрировать выбранные и открыть параметры Windows").strong()),
-                    ).clicked() {
+                    if ui
+                        .add_enabled(
+                            has_selected,
+                            egui::Button::new(
+                                RichText::new(
+                                    "Зарегистрировать выбранные и открыть параметры Windows",
+                                )
+                                .strong(),
+                            ),
+                        )
+                        .clicked()
+                    {
                         *on_register_association = true;
                     }
 
                     ui.add_space(8.0);
-                    if ui.checkbox(&mut settings.dismiss_association_prompt, "Не показывать диалог ассоциации при старте программы").changed() {
+                    if ui
+                        .checkbox(
+                            &mut settings.dismiss_association_prompt,
+                            "Не показывать диалог ассоциации при старте программы",
+                        )
+                        .changed()
+                    {
                         *on_save_settings = true;
                     }
                 });
@@ -756,7 +797,7 @@ impl SettingsView {
                 );
                 ui.add_space(6.0);
                 if ui
-                    .button(RichText::new("💾 Сохранить настройки сейчас").strong())
+                    .add(IconButton::new(Icon::Check, "Сохранить настройки сейчас"))
                     .clicked()
                 {
                     *on_save_settings = true;

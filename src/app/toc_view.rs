@@ -187,14 +187,7 @@ pub fn render_toc_item(
     selected_chapter: &mut usize,
     accent_color: Color32,
 ) {
-    render_toc_item_bounded(
-        ui,
-        item,
-        current_chapter,
-        selected_chapter,
-        accent_color,
-        0,
-    );
+    render_toc_item_bounded(ui, item, current_chapter, selected_chapter, accent_color, 0);
 }
 
 fn render_toc_item_bounded(

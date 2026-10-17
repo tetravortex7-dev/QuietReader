@@ -55,11 +55,16 @@ impl DjvuDocument {
             0
         } else {
             return Err(DocumentError::Corrupted(
-                "Файл не является валидным DjVu документом (отсутствует заголовок AT&TFORM)".to_string(),
+                "Файл не является валидным DjVu документом (отсутствует заголовок AT&TFORM)"
+                    .to_string(),
             ));
         };
 
-        let data = if offset > 0 { &bytes[offset..] } else { &bytes[..] };
+        let data = if offset > 0 {
+            &bytes[offset..]
+        } else {
+            &bytes[..]
+        };
         if data.len() < 12 {
             return Err(DocumentError::Corrupted(
                 "Файл DjVu слишком короткий для чтения заголовка".to_string(),
@@ -106,11 +111,7 @@ impl DjvuDocument {
         };
 
         let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            djvu_rs::DjVuDocument::parse_with_resolver_and_options(
-                data,
-                Some(safe_resolver),
-                &opts,
-            )
+            djvu_rs::DjVuDocument::parse_with_resolver_and_options(data, Some(safe_resolver), &opts)
         }));
 
         let doc = match parse_result {
@@ -333,12 +334,7 @@ fn convert_djvu_bookmarks(
                     bm.title.clone()
                 },
                 chapter_index,
-                children: convert_djvu_bookmarks(
-                    &bm.children,
-                    page_id_map,
-                    total_pages,
-                    depth + 1,
-                ),
+                children: convert_djvu_bookmarks(&bm.children, page_id_map, total_pages, depth + 1),
             }
         })
         .collect()
@@ -560,11 +556,7 @@ impl PageContent for DjvuDocument {
                 collect_spans(zone, page_w, page_h, 0, &mut spans);
             }
 
-            if spans.is_empty() {
-                None
-            } else {
-                Some(spans)
-            }
+            if spans.is_empty() { None } else { Some(spans) }
         }));
         res.ok().flatten()
     }

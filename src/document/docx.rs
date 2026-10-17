@@ -177,7 +177,9 @@ impl DocxDocument {
                         .unwrap_or_else(|_| raw_str.to_string());
                     if current_tag == "title" && title.is_empty() {
                         title = txt.trim().to_string();
-                    } else if (current_tag == "creator" || current_tag == "author") && author.is_empty() {
+                    } else if (current_tag == "creator" || current_tag == "author")
+                        && author.is_empty()
+                    {
                         author = txt.trim().to_string();
                     }
                 }

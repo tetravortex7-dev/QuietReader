@@ -5,9 +5,10 @@ pub mod commands;
 pub mod dialogs;
 pub mod document_loader;
 pub mod fonts;
+pub mod icons;
 pub mod input;
-pub mod pdf_view;
 pub mod paged_common;
+pub mod pdf_view;
 pub mod settings_view;
 pub mod tabs;
 pub mod text_view;
@@ -98,6 +99,7 @@ impl QuietReaderApp {
             "Oled" => ReaderTheme::Oled,
             "Warm" => ReaderTheme::Warm,
             "Mint" => ReaderTheme::Mint,
+            "Twilight" => ReaderTheme::Twilight,
             _ => ReaderTheme::Sepia,
         };
 
@@ -161,11 +163,15 @@ impl QuietReaderApp {
                 let target_idx = saved_active_idx.min(app.tabs.len() - 1);
                 app.activate_tab(target_idx);
             }
-        } else if let Some(last_path) = app.settings.last_opened_book.clone() && last_path.exists() {
+        } else if let Some(last_path) = app.settings.last_opened_book.clone()
+            && last_path.exists()
+        {
             app.load_file(last_path);
         }
 
-        if let Some(path) = initial_file && path.exists() {
+        if let Some(path) = initial_file
+            && path.exists()
+        {
             app.load_file(path);
         }
 
@@ -220,8 +226,7 @@ impl QuietReaderApp {
     }
 
     pub fn flush_debounced_settings(&mut self) {
-        if self.settings_dirty
-            && self.last_settings_change.elapsed() >= Duration::from_millis(1500)
+        if self.settings_dirty && self.last_settings_change.elapsed() >= Duration::from_millis(1500)
         {
             self.flush_settings_now();
         }
@@ -250,6 +255,7 @@ impl QuietReaderApp {
             ReaderTheme::Oled => "Oled",
             ReaderTheme::Warm => "Warm",
             ReaderTheme::Mint => "Mint",
+            ReaderTheme::Twilight => "Twilight",
         }
         .to_string();
     }
@@ -281,11 +287,13 @@ impl QuietReaderApp {
             self.settings.last_opened_book = Some(tab.file_path);
             self.settings.active_tab_index = idx;
             if tab.is_loading {
-                self.status_message = Some(format!("Загрузка [{}]: {}...", tab.format_badge, tab.title));
+                self.status_message =
+                    Some(format!("Загрузка [{}]: {}...", tab.format_badge, tab.title));
             } else if let Some(ref err) = tab.load_error {
                 self.status_message = Some(format!("Ошибка [{}]: {err}", tab.format_badge));
             } else {
-                self.status_message = Some(format!("Вкладка [{}]: {}", tab.format_badge, tab.title));
+                self.status_message =
+                    Some(format!("Вкладка [{}]: {}", tab.format_badge, tab.title));
             }
         }
     }
@@ -329,7 +337,11 @@ impl QuietReaderApp {
 
     pub fn prev_tab(&mut self) {
         if self.tabs.len() > 1 {
-            let prev = if self.active_tab == 0 { self.tabs.len() - 1 } else { self.active_tab - 1 };
+            let prev = if self.active_tab == 0 {
+                self.tabs.len() - 1
+            } else {
+                self.active_tab - 1
+            };
             self.activate_tab(prev);
         }
     }
@@ -348,7 +360,6 @@ impl QuietReaderApp {
         match crate::platform::register_file_associations(&exts) {
             Ok(msg) => {
                 self.status_message = Some(msg);
-                crate::platform::open_default_apps_settings();
             }
             Err(e) => {
                 self.status_message = Some(format!("Ошибка ассоциации: {e}"));
@@ -358,7 +369,9 @@ impl QuietReaderApp {
 
     pub fn open_file_dialog(&mut self) {
         if let Some(paths) = Dialogs::pick_document_files() {
-            for path in paths { self.load_file(path); }
+            for path in paths {
+                self.load_file(path);
+            }
         }
     }
 
@@ -442,17 +455,24 @@ impl QuietReaderApp {
         if self.is_fullscreen == fullscreen {
             return;
         }
-        self.is_fullscreen = fullscreen;
-
-        if !crate::platform::set_window_fullscreen(fullscreen) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
+        #[cfg(windows)]
+        {
+            let hwnd = crate::platform::get_primary_window_hwnd();
+            if crate::platform::set_window_fullscreen(hwnd, fullscreen) {
+                self.is_fullscreen = fullscreen;
+                return;
+            }
         }
-
-        ctx.request_repaint();
+        self.is_fullscreen = fullscreen;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
     }
 }
 
 impl eframe::App for QuietReaderApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        self.theme.bg_color().to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.document_loader.update_ctx(&ctx);
@@ -460,6 +480,10 @@ impl eframe::App for QuietReaderApp {
         self.flush_debounced_settings();
 
         crate::platform::register_primary_window_hwnd();
+        #[cfg(windows)]
+        {
+            self.is_fullscreen = crate::platform::is_window_fullscreen();
+        }
         let (should_focus, ipc_files) = crate::platform::poll_single_instance_requests();
         if should_focus {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -470,29 +494,28 @@ impl eframe::App for QuietReaderApp {
             ctx.request_repaint();
         }
 
-        if !self.is_fullscreen {
-            if !ctx.input(|i| i.pointer.any_down()) && crate::platform::ensure_window_on_screen() {
-                ctx.request_repaint();
+        let close_requested = ctx.input(|i| {
+            let vp = i.viewport();
+            let is_fs = self.is_fullscreen
+                || crate::platform::is_window_fullscreen()
+                || vp.fullscreen.unwrap_or(false);
+            if !is_fs
+                && !vp.minimized.unwrap_or(false)
+                && let Some(inner) = vp.inner_rect
+            {
+                let pos = vp.outer_rect.map(|r| (r.min.x, r.min.y));
+                self.settings.update_window_state(
+                    pos.map(|p| p.0),
+                    pos.map(|p| p.1),
+                    inner.width(),
+                    inner.height(),
+                    vp.maximized.unwrap_or(false),
+                );
             }
-            let close_requested = ctx.input(|i| {
-                let vp = i.viewport();
-                if !vp.minimized.unwrap_or(false)
-                    && let Some(inner) = vp.inner_rect
-                {
-                    let pos = vp.outer_rect.map(|r| (r.min.x, r.min.y));
-                    self.settings.update_window_state(
-                        pos.map(|p| p.0),
-                        pos.map(|p| p.1),
-                        inner.width(),
-                        inner.height(),
-                        vp.maximized.unwrap_or(false),
-                    );
-                }
-                vp.close_requested()
-            });
-            if close_requested {
-                self.flush_settings_now();
-            }
+            vp.close_requested()
+        });
+        if close_requested {
+            self.flush_settings_now();
         }
 
         for dropped in ctx.input(|i| i.raw.dropped_files.clone()) {
@@ -582,7 +605,12 @@ impl eframe::App for QuietReaderApp {
                 } else {
                     let total_pages = self.pdf_view.page_count(&self.document);
                     let cur_page = self.pdf_view.current_page;
-                    if self.autoscroll.update_paged(&ctx, &self.settings.auto_scroll, cur_page, total_pages) {
+                    if self.autoscroll.update_paged(
+                        &ctx,
+                        &self.settings.auto_scroll,
+                        cur_page,
+                        total_pages,
+                    ) {
                         self.pdf_view.next_page(total_pages, &self.settings.pdf);
                         self.mark_settings_dirty();
                     }
@@ -600,7 +628,12 @@ impl eframe::App for QuietReaderApp {
                 } else {
                     let total_pages = self.comic_view.page_count(&self.document);
                     let cur_page = self.comic_view.current_page;
-                    if self.autoscroll.update_paged(&ctx, &self.settings.auto_scroll, cur_page, total_pages) {
+                    if self.autoscroll.update_paged(
+                        &ctx,
+                        &self.settings.auto_scroll,
+                        cur_page,
+                        total_pages,
+                    ) {
                         self.comic_view.next_page(total_pages, &self.settings.comic);
                         self.mark_settings_dirty();
                     }
@@ -654,26 +687,35 @@ impl eframe::App for QuietReaderApp {
                     TabBarAction::OpenNewFile => self.open_file_dialog(),
                 }
             }
-
-            let pdf_info = (self.pdf_view.current_page, self.pdf_view.page_count(&self.document));
-            let comic_info = (self.comic_view.current_page, self.comic_view.page_count(&self.document));
-            let text_info = (
-                self.current_chapter,
-                self.document.as_ref().map(|d| d.chapters().len()).unwrap_or(0),
-                self.current_scroll_y,
-                self.max_scroll_y,
-            );
-            render_bottom_bar(
-                ui,
-                &self.document,
-                &self.theme,
-                self.status_message.as_deref(),
-                view_kind,
-                pdf_info,
-                comic_info,
-                text_info,
-            );
         }
+
+        let pdf_info = (
+            self.pdf_view.current_page,
+            self.pdf_view.page_count(&self.document),
+        );
+        let comic_info = (
+            self.comic_view.current_page,
+            self.comic_view.page_count(&self.document),
+        );
+        let text_info = (
+            self.current_chapter,
+            self.document
+                .as_ref()
+                .map(|d| d.chapters().len())
+                .unwrap_or(0),
+            self.current_scroll_y,
+            self.max_scroll_y,
+        );
+        render_bottom_bar(
+            ui,
+            &self.document,
+            &self.theme,
+            self.status_message.as_deref(),
+            view_kind,
+            pdf_info,
+            comic_info,
+            text_info,
+        );
 
         if !self.is_fullscreen || self.show_toc {
             let prev_pdf_page = self.pdf_view.current_page;
@@ -751,10 +793,14 @@ impl eframe::App for QuietReaderApp {
                 } else if let Some((false, _, Some(err))) = active_tab_info {
                     ui.vertical_centered(|ui| {
                         ui.add_space(ui.available_height() * 0.35);
-                        ui.label(
-                            RichText::new("⚠ Не удалось открыть документ")
-                                .size(20.0)
-                                .color(egui::Color32::RED),
+                        ui.add(
+                            self::icons::IconLabel::new(
+                                self::icons::Icon::Warning,
+                                "Не удалось открыть документ",
+                            )
+                            .size(20.0)
+                            .color(egui::Color32::RED)
+                            .strong(),
                         );
                         ui.add_space(12.0);
                         ui.label(RichText::new(err).size(14.0).color(self.theme.text_color()));
@@ -834,10 +880,18 @@ impl eframe::App for QuietReaderApp {
                 }
             });
 
-        if close_tab_action { self.close_tab(self.active_tab); }
-        if on_open_file { self.open_file_dialog(); }
-        if on_open_folder { self.open_folder_dialog(); }
-        if let Some(path) = on_load_recent { self.load_file(path); }
+        if close_tab_action {
+            self.close_tab(self.active_tab);
+        }
+        if on_open_file {
+            self.open_file_dialog();
+        }
+        if on_open_folder {
+            self.open_folder_dialog();
+        }
+        if let Some(path) = on_load_recent {
+            self.load_file(path);
+        }
 
         let mut on_register_assoc = false;
         Dialogs::render_association_dialog(
@@ -849,7 +903,9 @@ impl eframe::App for QuietReaderApp {
             &mut on_register_assoc,
             &mut save_settings_action,
         );
-        if on_register_assoc { self.register_file_association(); }
+        if on_register_assoc {
+            self.register_file_association();
+        }
 
         let mut recent_file_to_open = None;
         Dialogs::render_recent_dialog(
@@ -861,10 +917,16 @@ impl eframe::App for QuietReaderApp {
             &mut recent_file_to_open,
             &mut save_settings_action,
         );
-        if let Some(path) = recent_file_to_open { self.load_file(path); }
+        if let Some(path) = recent_file_to_open {
+            self.load_file(path);
+        }
 
         if toggle_autoscroll_action {
-            self.autoscroll.toggle(self.current_scroll_y, self.max_scroll_y, self.settings.auto_scroll.step_distance);
+            self.autoscroll.toggle(
+                self.current_scroll_y,
+                self.max_scroll_y,
+                self.settings.auto_scroll.step_distance,
+            );
         }
         if save_settings_action {
             self.flush_settings_now();
@@ -872,6 +934,8 @@ impl eframe::App for QuietReaderApp {
                 self.status_message = Some("Настройки сохранены".to_string());
             }
         }
-        if register_assoc_action { self.register_file_association(); }
+        if register_assoc_action {
+            self.register_file_association();
+        }
     }
 }

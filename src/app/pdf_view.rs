@@ -341,10 +341,8 @@ impl PdfViewState {
                     for (page_idx, _) in self.pending_pages.drain() {
                         let msg = "Поток декодирования аварийно завершился".to_string();
                         self.failed_pages.insert(page_idx, msg.clone());
-                        *status_message = Some(format!(
-                            "Ошибка загрузки страницы {}: {msg}",
-                            page_idx + 1
-                        ));
+                        *status_message =
+                            Some(format!("Ошибка загрузки страницы {}: {msg}", page_idx + 1));
                     }
                     let (tx, rx) = spawn_pdf_worker(
                         self.active_generation.clone(),
@@ -435,7 +433,11 @@ impl PdfViewState {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
 
-            if ui.add_enabled(self.current_page > 0, egui::Button::new("◀")).on_hover_text("Предыдущая страница (←, ↑, PageUp)").clicked() {
+            if ui
+                .add_enabled(self.current_page > 0, egui::Button::new("◀"))
+                .on_hover_text("Предыдущая страница (←, ↑, PageUp)")
+                .clicked()
+            {
                 let step = if settings.layout == "Double" { 2 } else { 1 };
                 self.go_to_page(self.current_page.saturating_sub(step));
             }
@@ -445,9 +447,15 @@ impl PdfViewState {
             }
             let cur_display = self.current_page + 1;
             ui.label(RichText::new("Стр.").size(13.0));
-            let text_edit = ui.add(egui::TextEdit::singleline(&mut self.page_input).desired_width(38.0).font(egui::TextStyle::Body));
+            let text_edit = ui.add(
+                egui::TextEdit::singleline(&mut self.page_input)
+                    .desired_width(38.0)
+                    .font(egui::TextStyle::Body),
+            );
             if text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if let Some(target) = super::paged_common::parse_page_input(&self.page_input, page_count) {
+                if let Some(target) =
+                    super::paged_common::parse_page_input(&self.page_input, page_count)
+                {
                     self.go_to_page(target);
                 }
                 self.page_input = (self.current_page + 1).to_string();
@@ -457,56 +465,100 @@ impl PdfViewState {
 
             ui.label(RichText::new(format!("из {page_count}")).size(13.0));
 
-            if ui.add_enabled(self.current_page + 1 < page_count, egui::Button::new("▶")).on_hover_text("Следующая страница (→, ↓, PageDown, Пробел)").clicked() {
+            if ui
+                .add_enabled(self.current_page + 1 < page_count, egui::Button::new("▶"))
+                .on_hover_text("Следующая страница (→, ↓, PageDown, Пробел)")
+                .clicked()
+            {
                 let step = if settings.layout == "Double" { 2 } else { 1 };
                 self.go_to_page((self.current_page + step).min(page_count.saturating_sub(1)));
             }
 
             ui.separator();
 
-            if ui.button("−").on_hover_text("Уменьшить масштаб (Ctrl -)").clicked() {
+            if ui
+                .button("−")
+                .on_hover_text("Уменьшить масштаб (Ctrl -)")
+                .clicked()
+            {
                 super::paged_common::zoom_out(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
             let zoom_lbl = format!("{:.0}%", settings.zoom_percent);
-            if ui.button(RichText::new(zoom_lbl).strong()).on_hover_text("Сбросить масштаб на 100% (Ctrl 0)").clicked() {
-                super::paged_common::zoom_reset(&mut settings.zoom_percent, &mut settings.fit_mode, &mut self.pan_offset);
+            if ui
+                .button(RichText::new(zoom_lbl).strong())
+                .on_hover_text("Сбросить масштаб на 100% (Ctrl 0)")
+                .clicked()
+            {
+                super::paged_common::zoom_reset(
+                    &mut settings.zoom_percent,
+                    &mut settings.fit_mode,
+                    &mut self.pan_offset,
+                );
             }
 
-            if ui.button("+").on_hover_text("Увеличить масштаб (Ctrl +)").clicked() {
+            if ui
+                .button("+")
+                .on_hover_text("Увеличить масштаб (Ctrl +)")
+                .clicked()
+            {
                 super::paged_common::zoom_in(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
-            if ui.selectable_label(settings.fit_mode == "FitWidth", "По ширине").on_hover_text("Масштабировать по ширине окна").clicked() {
+            if ui
+                .selectable_label(settings.fit_mode == "FitWidth", "По ширине")
+                .on_hover_text("Масштабировать по ширине окна")
+                .clicked()
+            {
                 settings.fit_mode = "FitWidth".to_string();
                 self.pan_offset = Vec2::ZERO;
             }
 
-            if ui.selectable_label(settings.fit_mode == "FitWindow", "Целая страница").on_hover_text("Уместить страницу целиком в окно").clicked() {
+            if ui
+                .selectable_label(settings.fit_mode == "FitWindow", "Целая страница")
+                .on_hover_text("Уместить страницу целиком в окно")
+                .clicked()
+            {
                 settings.fit_mode = "FitWindow".to_string();
                 self.pan_offset = Vec2::ZERO;
             }
 
             ui.separator();
 
-            if ui.button("⟳ Повернуть").on_hover_text("Повернуть страницы на 90° по часовой стрелке").clicked() {
+            if ui
+                .button("⟳ Повернуть")
+                .on_hover_text("Повернуть страницы на 90° по часовой стрелке")
+                .clicked()
+            {
                 settings.rotation = (settings.rotation + 90) % 360;
                 self.pan_offset = Vec2::ZERO;
             }
 
             ui.separator();
 
-            if ui.selectable_label(settings.layout == "Single", "1 стр.").on_hover_text("Одиночная страница").clicked() {
+            if ui
+                .selectable_label(settings.layout == "Single", "1 стр.")
+                .on_hover_text("Одиночная страница")
+                .clicked()
+            {
                 settings.layout = "Single".to_string();
                 self.pan_offset = Vec2::ZERO;
             }
 
-            if ui.selectable_label(settings.layout == "Double", "2 стр.").on_hover_text("Две страницы (разворот)").clicked() {
+            if ui
+                .selectable_label(settings.layout == "Double", "2 стр.")
+                .on_hover_text("Две страницы (разворот)")
+                .clicked()
+            {
                 settings.layout = "Double".to_string();
                 self.pan_offset = Vec2::ZERO;
             }
 
-            if ui.selectable_label(settings.layout == "Continuous", "Свиток").on_hover_text("Непрерывный вертикальный свиток страниц").clicked() {
+            if ui
+                .selectable_label(settings.layout == "Continuous", "Свиток")
+                .on_hover_text("Непрерывный вертикальный свиток страниц")
+                .clicked()
+            {
                 settings.layout = "Continuous".to_string();
                 self.pan_offset = Vec2::ZERO;
             }
@@ -514,24 +566,47 @@ impl PdfViewState {
             ui.separator();
 
             if !self.selected_text.is_empty() {
-                if ui.button(RichText::new("📋 Скопировать").strong().color(theme.accent_color())).on_hover_text("Скопировать выделенный текст (Ctrl+C)").clicked() {
+                if ui
+                    .button(
+                        RichText::new("Скопировать")
+                            .strong()
+                            .color(theme.accent_color()),
+                    )
+                    .on_hover_text("Скопировать выделенный текст (Ctrl+C)")
+                    .clicked()
+                {
                     ui.ctx().copy_text(self.selected_text.clone());
                     let preview = truncate_str(&self.selected_text, 35);
                     *status_message = Some(format!("Скопировано: \"{preview}\""));
-                    self.copy_notification = Some((format!("Скопировано: \"{preview}\""), Instant::now()));
+                    self.copy_notification =
+                        Some((format!("Скопировано: \"{preview}\""), Instant::now()));
                 }
-                if ui.small_button("✕").on_hover_text("Снять выделение").clicked() {
+                if ui
+                    .small_button("X")
+                    .on_hover_text("Снять выделение")
+                    .clicked()
+                {
                     self.selection_start = None;
                     self.selection_current = None;
                     self.selection_dirty = false;
                     self.selected_text.clear();
                 }
             } else {
-                ui.label(RichText::new("Выделение: зажмите ЛКМ на странице").size(11.5).italics().color(theme.text_color().gamma_multiply(0.65)));
+                ui.label(
+                    RichText::new("Выделение: зажмите ЛКМ на странице")
+                        .size(11.5)
+                        .italics()
+                        .color(theme.text_color().gamma_multiply(0.65)),
+                );
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(format!("📄 {format_label}")).size(11.0).strong().color(theme.accent_color()));
+                ui.label(
+                    RichText::new(format_label)
+                        .size(11.0)
+                        .strong()
+                        .color(theme.accent_color()),
+                );
             });
         });
     }
@@ -560,10 +635,30 @@ impl PdfViewState {
             );
         } else {
             let uvs = match rot_deg {
-                90 => [Pos2::new(0.0, 1.0), Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0), Pos2::new(1.0, 1.0)],
-                180 => [Pos2::new(1.0, 1.0), Pos2::new(0.0, 1.0), Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0)],
-                270 => [Pos2::new(1.0, 0.0), Pos2::new(1.0, 1.0), Pos2::new(0.0, 1.0), Pos2::new(0.0, 0.0)],
-                _ => [Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0), Pos2::new(1.0, 1.0), Pos2::new(0.0, 1.0)],
+                90 => [
+                    Pos2::new(0.0, 1.0),
+                    Pos2::new(0.0, 0.0),
+                    Pos2::new(1.0, 0.0),
+                    Pos2::new(1.0, 1.0),
+                ],
+                180 => [
+                    Pos2::new(1.0, 1.0),
+                    Pos2::new(0.0, 1.0),
+                    Pos2::new(0.0, 0.0),
+                    Pos2::new(1.0, 0.0),
+                ],
+                270 => [
+                    Pos2::new(1.0, 0.0),
+                    Pos2::new(1.0, 1.0),
+                    Pos2::new(0.0, 1.0),
+                    Pos2::new(0.0, 0.0),
+                ],
+                _ => [
+                    Pos2::new(0.0, 0.0),
+                    Pos2::new(1.0, 0.0),
+                    Pos2::new(1.0, 1.0),
+                    Pos2::new(0.0, 1.0),
+                ],
             };
             let corners = [
                 rect.left_top(),
@@ -658,13 +753,14 @@ impl PdfViewState {
     ) {
         self.poll_responses(ctx, status_message);
 
-        let format_label = document.as_ref().map(|d| d.format_name()).unwrap_or("Документ");
+        let format_label = document
+            .as_ref()
+            .map(|d| d.format_name())
+            .unwrap_or("Документ");
         let page_count = self.page_count(document);
         if page_count == 0 {
             ui.centered_and_justified(|ui| {
-                ui.label(
-                    RichText::new("В этом документе нет страниц").color(theme.text_color()),
-                );
+                ui.label(RichText::new("В этом документе нет страниц").color(theme.text_color()));
             });
             return;
         }
@@ -672,7 +768,14 @@ impl PdfViewState {
         self.current_page = self.current_page.min(page_count.saturating_sub(1));
 
         ui.add_space(2.0);
-        self.render_toolbar(ui, page_count, settings, theme, status_message, format_label);
+        self.render_toolbar(
+            ui,
+            page_count,
+            settings,
+            theme,
+            status_message,
+            format_label,
+        );
         ui.add_space(4.0);
         ui.separator();
 
@@ -754,13 +857,13 @@ impl PdfViewState {
                     });
                 });
 
-            *current_scroll_y = scroll_output.state.offset.y;
+            *current_scroll_y = scroll_output.state.clamped_offset().y;
             *viewport_height = scroll_output.inner_rect.height();
             *max_scroll_y = (scroll_output.content_size.y - *viewport_height).max(0.0);
 
             super::paged_common::handle_middle_mouse_scroll(
                 ctx,
-                scroll_output.state.offset.y,
+                scroll_output.state.clamped_offset().y,
                 *max_scroll_y,
                 pending_scroll_y,
             );
@@ -887,15 +990,15 @@ impl PdfViewState {
             && let Some(curr) = self.selection_current
         {
             let pill_pos = curr + Vec2::new(12.0, 12.0);
-            egui::Area::new(egui::Id::new("pdf_selection_pill"))
+            egui::Area::new(egui::Id::unique("pdf_selection_pill"))
                 .fixed_pos(pill_pos)
                 .order(egui::Order::Tooltip)
                 .show(ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if ui
-                                .button(RichText::new("📋 Скопировать (Ctrl+C)").size(12.0))
-                                .clicked()
+                                 .button(RichText::new("Скопировать (Ctrl+C)").size(12.0))
+                                 .clicked()
                             {
                                 ctx.copy_text(self.selected_text.clone());
                                 let preview = truncate_str(&self.selected_text, 35);
@@ -903,7 +1006,7 @@ impl PdfViewState {
                                 self.copy_notification =
                                     Some((format!("Скопировано: \"{preview}\""), Instant::now()));
                             }
-                            if ui.small_button("✕").clicked() {
+                            if ui.small_button("X").clicked() {
                                 self.selection_start = None;
                                 self.selection_current = None;
                                 self.selection_dirty = false;
@@ -916,13 +1019,13 @@ impl PdfViewState {
 
         if let Some((msg, time)) = &self.copy_notification {
             if time.elapsed().as_secs_f32() < 2.0 {
-                egui::Area::new(egui::Id::new("pdf_copy_toast"))
+                egui::Area::new(egui::Id::unique("pdf_copy_toast"))
                     .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -45.0))
                     .order(egui::Order::Tooltip)
                     .show(ctx, |ui| {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
                             ui.label(
-                                RichText::new(format!("✓ {msg}"))
+                                RichText::new(msg)
                                     .strong()
                                     .color(theme.accent_color()),
                             );
@@ -951,23 +1054,34 @@ pub fn transform_span_bbox(bbox: [f32; 4], rotation: i32, rect: Rect) -> Rect {
         90 => {
             let (x0, x1) = (rect.max.x - bbox[3] * rw, rect.max.x - bbox[1] * rw);
             let (y0, y1) = (ry + bbox[0] * rh, ry + bbox[2] * rh);
-            Rect::from_min_max(Pos2::new(x0.min(x1), y0.min(y1)), Pos2::new(x0.max(x1), y0.max(y1)))
+            Rect::from_min_max(
+                Pos2::new(x0.min(x1), y0.min(y1)),
+                Pos2::new(x0.max(x1), y0.max(y1)),
+            )
         }
         180 => {
             let (x0, x1) = (rect.max.x - bbox[2] * rw, rect.max.x - bbox[0] * rw);
             let (y0, y1) = (rect.max.y - bbox[3] * rh, rect.max.y - bbox[1] * rh);
-            Rect::from_min_max(Pos2::new(x0.min(x1), y0.min(y1)), Pos2::new(x0.max(x1), y0.max(y1)))
+            Rect::from_min_max(
+                Pos2::new(x0.min(x1), y0.min(y1)),
+                Pos2::new(x0.max(x1), y0.max(y1)),
+            )
         }
         270 => {
             let (x0, x1) = (rx + bbox[1] * rw, rx + bbox[3] * rw);
             let (y0, y1) = (rect.max.y - bbox[2] * rh, rect.max.y - bbox[0] * rh);
-            Rect::from_min_max(Pos2::new(x0.min(x1), y0.min(y1)), Pos2::new(x0.max(x1), y0.max(y1)))
+            Rect::from_min_max(
+                Pos2::new(x0.min(x1), y0.min(y1)),
+                Pos2::new(x0.max(x1), y0.max(y1)),
+            )
         }
         _ => {
             let (x0, x1) = (rx + bbox[0] * rw, rx + bbox[2] * rw);
             let (y0, y1) = (ry + bbox[1] * rh, ry + bbox[3] * rh);
-            Rect::from_min_max(Pos2::new(x0.min(x1), y0.min(y1)), Pos2::new(x0.max(x1), y0.max(y1)))
+            Rect::from_min_max(
+                Pos2::new(x0.min(x1), y0.min(y1)),
+                Pos2::new(x0.max(x1), y0.max(y1)),
+            )
         }
     }
 }
-

@@ -1,11 +1,12 @@
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::app::document_loader::DocumentLoader;
 use crate::document::{
-    is_safe_archive_path, read_bounded, DjvuDocument, DocumentError, EpubDocument,
-    Fb2Document, PdfDocument, MAX_ARCHIVE_ENTRIES, MAX_SINGLE_ENTRY_BYTES, MAX_TOTAL_UNPACK_BYTES,
+    DjvuDocument, Document, DocumentError, EpubDocument, Fb2Document, MAX_ARCHIVE_ENTRIES,
+    MAX_SINGLE_ENTRY_BYTES, MAX_TOTAL_UNPACK_BYTES, PdfDocument, is_safe_archive_path,
+    read_bounded,
 };
 use crate::settings::AppSettings;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn unique_test_dir(prefix: &str) -> PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -79,7 +80,8 @@ fn test_corrupted_and_truncated_djvu_handling() {
     let res_garbage = DjvuDocument::from_bytes(b"RANDOM_NON_DJVU_DATA_BYTES".to_vec(), dummy_path);
     assert!(res_garbage.is_err());
 
-    let res_bad_form = DjvuDocument::from_bytes(b"AT&TXXXX\x00\x00\x00\x04DJVU".to_vec(), dummy_path);
+    let res_bad_form =
+        DjvuDocument::from_bytes(b"AT&TXXXX\x00\x00\x00\x04DJVU".to_vec(), dummy_path);
     assert!(res_bad_form.is_err());
 
     let res_trunc = DjvuDocument::from_bytes(b"AT&TFORM".to_vec(), dummy_path);
@@ -178,7 +180,11 @@ fn test_atomic_settings_save_and_backup_safety() {
     assert_eq!(loaded.font_size, 28.0);
     assert_eq!(loaded.theme, "Sepia");
 
-    std::fs::write(&bak_path, r#"{"schema_version":2,"font_size":25.0,"theme":"Dark"}"#).unwrap();
+    std::fs::write(
+        &bak_path,
+        r#"{"schema_version":2,"font_size":25.0,"theme":"Dark"}"#,
+    )
+    .unwrap();
     std::fs::write(&settings_path, "{ broken invalid json...").unwrap();
 
     let recovered = AppSettings::load_from_path(&settings_path);
@@ -235,25 +241,13 @@ fn test_paged_geometry_bounded_and_centered() {
     let avail_size = Vec2::new(1200.0, 800.0);
     let page_tex = Vec2::new(600.0, 900.0);
 
-    let geom_fit_window = compute_paged_geometry(
-        avail_size,
-        "FitWindow",
-        100.0,
-        0,
-        &[page_tex],
-    );
+    let geom_fit_window = compute_paged_geometry(avail_size, "FitWindow", 100.0, 0, &[page_tex]);
     assert_eq!(geom_fit_window.max_pan, Vec2::ZERO);
     assert!(geom_fit_window.pad_x > 200.0);
     assert!(geom_fit_window.page_sizes[0].y <= avail_size.y);
     assert!(geom_fit_window.page_sizes[0].x <= avail_size.x);
 
-    let geom_fit_width = compute_paged_geometry(
-        avail_size,
-        "FitWidth",
-        100.0,
-        0,
-        &[page_tex],
-    );
+    let geom_fit_width = compute_paged_geometry(avail_size, "FitWidth", 100.0, 0, &[page_tex]);
     assert_eq!(geom_fit_width.max_pan.x, 0.0);
     assert!(geom_fit_width.max_pan.y > 0.0);
     assert_eq!(
@@ -261,13 +255,8 @@ fn test_paged_geometry_bounded_and_centered() {
         (geom_fit_width.page_sizes[0].y - avail_size.y) / 2.0
     );
 
-    let geom_double = compute_paged_geometry(
-        avail_size,
-        "FitWindow",
-        100.0,
-        0,
-        &[page_tex, page_tex],
-    );
+    let geom_double =
+        compute_paged_geometry(avail_size, "FitWindow", 100.0, 0, &[page_tex, page_tex]);
     assert_eq!(geom_double.max_pan, Vec2::ZERO);
     assert_eq!(geom_double.page_sizes.len(), 2);
     assert!(geom_double.pad_x >= 8.0);
@@ -278,13 +267,17 @@ fn test_rtf_document_parsing() {
     use crate::document::Document;
 
     let rtf_data = b"{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0 Arial;}}{\\info{\\title Test Book}{\\author John Doe}}\\viewkind4\\uc1\\pard\\b Chapter 1\\b0\\par First paragraph of the story.\\par Second paragraph.\\par}";
-    let doc = crate::document::RtfDocument::from_bytes(rtf_data, "Fallback").expect("rtf parse failed");
+    let doc =
+        crate::document::RtfDocument::from_bytes(rtf_data, "Fallback").expect("rtf parse failed");
     assert_eq!(doc.metadata().title, "Test Book");
     assert_eq!(doc.metadata().author, "John Doe");
     assert_eq!(doc.chapters().len(), 1);
     let text = &doc.chapters()[0].paragraphs;
     assert!(text.iter().any(|p| p.contains("Chapter 1")));
-    assert!(text.iter().any(|p| p.contains("First paragraph of the story.")));
+    assert!(
+        text.iter()
+            .any(|p| p.contains("First paragraph of the story."))
+    );
     assert!(text.iter().any(|p| p.contains("Second paragraph.")));
     assert_eq!(doc.toc().len(), 0);
 }
@@ -302,9 +295,9 @@ fn test_rtf_corrupted_resilience() {
 
 #[test]
 fn test_docx_document_parsing() {
+    use crate::document::Document;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
-    use crate::document::Document;
 
     let mut buf = std::io::Cursor::new(Vec::new());
     {
@@ -319,7 +312,8 @@ fn test_docx_document_parsing() {
 </cp:coreProperties>"#).unwrap();
 
         zip.start_file("word/document.xml", options).unwrap();
-        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
     <w:body>
         <w:p>
@@ -333,20 +327,33 @@ fn test_docx_document_parsing() {
         </w:p>
         <w:p><w:r><w:t>Paragraph under second heading.</w:t></w:r></w:p>
     </w:body>
-</w:document>"#).unwrap();
+</w:document>"#,
+        )
+        .unwrap();
 
         zip.finish().unwrap();
     }
 
     let bytes = buf.into_inner();
-    let doc = crate::document::DocxDocument::from_bytes(&bytes, "Fallback").expect("docx parse failed");
+    let doc =
+        crate::document::DocxDocument::from_bytes(&bytes, "Fallback").expect("docx parse failed");
     assert_eq!(doc.metadata().title, "Docx Title");
     assert_eq!(doc.metadata().author, "Docx Author");
     assert_eq!(doc.chapters().len(), 2);
     assert_eq!(doc.chapters()[0].title, "Heading One");
-    assert!(doc.chapters()[0].paragraphs.iter().any(|p| p.contains("Paragraph under first heading.")));
+    assert!(
+        doc.chapters()[0]
+            .paragraphs
+            .iter()
+            .any(|p| p.contains("Paragraph under first heading."))
+    );
     assert_eq!(doc.chapters()[1].title, "Heading Two");
-    assert!(doc.chapters()[1].paragraphs.iter().any(|p| p.contains("Paragraph under second heading.")));
+    assert!(
+        doc.chapters()[1]
+            .paragraphs
+            .iter()
+            .any(|p| p.contains("Paragraph under second heading."))
+    );
 
     let toc = doc.toc();
     assert_eq!(toc.len(), 2);
@@ -372,9 +379,15 @@ fn test_doc_document_resilience_and_parsing() {
 fn test_registry_docx_rtf_doc_support() {
     use crate::document::FORMAT_REGISTRY;
 
-    let has_docx = FORMAT_REGISTRY.iter().any(|f| f.extensions().contains(&"docx"));
-    let has_rtf = FORMAT_REGISTRY.iter().any(|f| f.extensions().contains(&"rtf"));
-    let has_doc = FORMAT_REGISTRY.iter().any(|f| f.extensions().contains(&"doc"));
+    let has_docx = FORMAT_REGISTRY
+        .iter()
+        .any(|f| f.extensions().contains(&"docx"));
+    let has_rtf = FORMAT_REGISTRY
+        .iter()
+        .any(|f| f.extensions().contains(&"rtf"));
+    let has_doc = FORMAT_REGISTRY
+        .iter()
+        .any(|f| f.extensions().contains(&"doc"));
 
     assert!(has_docx);
     assert!(has_rtf);
@@ -387,7 +400,11 @@ fn test_registry_docx_rtf_doc_support() {
 
     std::fs::write(&docx_path, b"PK\x03\x04dummy").unwrap();
     std::fs::write(&rtf_path, b"{\\rtf1dummy}").unwrap();
-    std::fs::write(&doc_path, &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00]).unwrap();
+    std::fs::write(
+        &doc_path,
+        &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00],
+    )
+    .unwrap();
 
     assert!(FORMAT_REGISTRY.iter().any(|f| f.probe(&docx_path)));
     assert!(FORMAT_REGISTRY.iter().any(|f| f.probe(&rtf_path)));
@@ -421,4 +438,167 @@ fn test_platform_multi_extension_selection() {
     let json = serde_json::to_string(&settings).expect("serialize settings");
     let loaded: AppSettings = serde_json::from_str(&json).expect("deserialize settings");
     assert_eq!(loaded.associated_extensions, vec!["fb2", "txt", "doc"]);
+}
+
+#[test]
+fn test_fb2_formatting_bold_and_italic() {
+    let xml = r#"<FictionBook><body>
+        <section>
+            <title><p>Заголовок раздела</p></title>
+            <p>Обычный текст с <strong>жирным словом</strong> и <emphasis>курсивом</emphasis>.</p>
+            <p><strong><em>Жирный курсив</em></strong> вместе.</p>
+            <p><strong>В</strong> начале было Слово.</p>
+            <v>Строка стиха с <strong>жирным</strong> знаком.</v>
+        </section>
+    </body></FictionBook>"#;
+
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+    let chs = doc.chapters();
+    assert_eq!(chs.len(), 1);
+    assert_eq!(chs[0].paragraphs.len(), 4);
+
+    assert_eq!(
+        chs[0].paragraphs[0],
+        "Обычный текст с <b>жирным словом</b> и <i>курсивом</i>."
+    );
+    assert_eq!(chs[0].paragraphs[1], "<b><i>Жирный курсив</i></b> вместе.");
+    assert_eq!(chs[0].paragraphs[2], "<b>В</b> начале было Слово.");
+    assert_eq!(chs[0].paragraphs[3], "Строка стиха с <b>жирным</b> знаком.");
+
+    let spans = crate::document::parse_formatted_spans(&chs[0].paragraphs[2]);
+    assert_eq!(spans.len(), 2);
+    assert_eq!(spans[0].text, "В");
+    assert!(spans[0].bold);
+    assert!(!spans[0].italic);
+    assert_eq!(spans[1].text, " начале было Слово.");
+    assert!(!spans[1].bold);
+    assert!(!spans[1].italic);
+
+    let clean = crate::document::strip_formatting_tags(&chs[0].paragraphs[0]);
+    assert_eq!(clean, "Обычный текст с жирным словом и курсивом.");
+}
+
+#[test]
+fn test_epub_formatting_bold_and_italic() {
+    let html = r#"<html><body>
+        <h1>Глава</h1>
+        <p>Text with <b>bold</b> and <i>italic</i> and <strong>strong</strong> and <em>em</em>.</p>
+        <p><b><i>Combined bold italic</i></b> text.</p>
+    </body></html>"#;
+
+    let (title, paragraphs, _) = crate::document::epub::parse_html_chapter(html);
+    assert_eq!(title, "Глава");
+    assert_eq!(paragraphs.len(), 3);
+    assert_eq!(paragraphs[0], "Глава");
+    assert_eq!(
+        paragraphs[1],
+        "Text with <b>bold</b> and <i>italic</i> and <b>strong</b> and <i>em</i>."
+    );
+    assert_eq!(paragraphs[2], "<b><i>Combined bold italic</i></b> text.");
+
+    let (lenient_title, lenient_paras) = crate::document::epub::extract_html_lenient(html);
+    assert_eq!(lenient_title, "");
+    assert_eq!(lenient_paras.len(), 3);
+    assert_eq!(
+        lenient_paras[1],
+        "Text with <b>bold</b> and <i>italic</i> and <b>strong</b> and <i>em</i>."
+    );
+}
+
+#[test]
+fn test_search_and_copy_with_formatted_text() {
+    let xml = r#"<FictionBook><body>
+        <section>
+            <title><p>Раздел</p></title>
+            <p>Здесь есть <strong>секретное</strong> слово.</p>
+        </section>
+    </body></FictionBook>"#;
+
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+    let hits = crate::core::ReaderCore::search_in_document(&doc, "секретное");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].snippet, "Здесь есть секретное слово.");
+
+    let full_text = crate::core::ReaderCore::extract_chapter_text(&doc, 0).unwrap();
+    assert_eq!(full_text, "Раздел\n\nЗдесь есть секретное слово.");
+}
+
+#[test]
+fn test_parse_formatted_spans_edge_cases() {
+    let text = "5 < 10 and 10 > 5 and <b>bold</b> and unclosed <i>italic";
+    let spans = crate::document::parse_formatted_spans(text);
+    assert_eq!(spans[0].text, "5 < 10 and 10 > 5 and ");
+    assert!(!spans[0].bold && !spans[0].italic);
+    assert_eq!(spans[1].text, "bold");
+    assert!(spans[1].bold && !spans[1].italic);
+    assert_eq!(spans[2].text, " and unclosed ");
+    assert!(!spans[2].bold && !spans[2].italic);
+    assert_eq!(spans[3].text, "italic");
+    assert!(!spans[3].bold && spans[3].italic);
+
+    let stripped = crate::document::strip_formatting_tags(text);
+    assert_eq!(stripped, "5 < 10 and 10 > 5 and bold and unclosed italic");
+}
+
+#[test]
+fn test_text_pages_calculation_and_progress() {
+    let empty_chapters: Vec<crate::document::BookChapter> = Vec::new();
+    let (cur, total, pct) = crate::app::bars::calculate_text_pages(&empty_chapters, 0, 0.0, 0.0);
+    assert_eq!(cur, 1);
+    assert_eq!(total, 1);
+    assert_eq!(pct, 0.0);
+
+    let ch1_text = "a".repeat(1800 * 200);
+    let ch2_text = "b".repeat(1800 * 299);
+    let chapters = vec![
+        crate::document::BookChapter {
+            id: None,
+            title: String::new(),
+            paragraphs: vec![ch1_text],
+        },
+        crate::document::BookChapter {
+            id: None,
+            title: String::new(),
+            paragraphs: vec![ch2_text],
+        },
+    ];
+
+    let (cur, total, pct) = crate::app::bars::calculate_text_pages(&chapters, 0, 0.0, 1000.0);
+    assert_eq!(cur, 1);
+    assert_eq!(total, 499);
+    assert_eq!(pct, 0.0);
+
+    let (cur, total, _) =
+        crate::app::bars::calculate_text_pages(&chapters, 1, (100.0 / 299.0) * 1000.0, 1000.0);
+    assert_eq!(total, 499);
+    assert_eq!(cur, 301);
+
+    let (cur, total, pct) = crate::app::bars::calculate_text_pages(&chapters, 1, 1000.0, 1000.0);
+    assert_eq!(cur, 499);
+    assert_eq!(total, 499);
+    assert_eq!(pct, 100.0);
+}
+
+#[test]
+fn test_twilight_evening_theme() {
+    use crate::app::theme::ReaderTheme;
+    use eframe::egui::Color32;
+
+    assert!(ReaderTheme::Twilight.is_dark());
+    assert_eq!(
+        ReaderTheme::Twilight.bg_color(),
+        Color32::from_rgb(54, 47, 43)
+    );
+    assert_eq!(
+        ReaderTheme::Twilight.text_color(),
+        Color32::from_rgb(222, 210, 192)
+    );
+    assert_eq!(
+        ReaderTheme::Twilight.panel_bg_color(),
+        Color32::from_rgb(66, 58, 53)
+    );
+    assert_eq!(
+        ReaderTheme::Twilight.accent_color(),
+        Color32::from_rgb(224, 150, 68)
+    );
 }

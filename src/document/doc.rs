@@ -188,7 +188,8 @@ fn parse_doc(
                 }
             }
             let start_sec = u32::from_le_bytes([chunk[116], chunk[117], chunk[118], chunk[119]]);
-            let size = u32::from_le_bytes([chunk[120], chunk[121], chunk[122], chunk[123]]) as usize;
+            let size =
+                u32::from_le_bytes([chunk[120], chunk[121], chunk[122], chunk[123]]) as usize;
             streams.push(OleStream {
                 name,
                 start_sector: start_sec,
@@ -239,7 +240,8 @@ fn parse_doc(
                     let clxt = clx_data[pos];
                     if clxt == 0x01 {
                         if pos + 3 <= clx_data.len() {
-                            let cb_grpprl = u16::from_le_bytes([clx_data[pos + 1], clx_data[pos + 2]]) as usize;
+                            let cb_grpprl =
+                                u16::from_le_bytes([clx_data[pos + 1], clx_data[pos + 2]]) as usize;
                             pos += 3 + cb_grpprl;
                         } else {
                             break;
@@ -264,13 +266,15 @@ fn parse_doc(
                                             pcdt[piece_idx * 4 + 1],
                                             pcdt[piece_idx * 4 + 2],
                                             pcdt[piece_idx * 4 + 3],
-                                        ]) as usize;
+                                        ])
+                                            as usize;
                                         let cp2 = u32::from_le_bytes([
                                             pcdt[(piece_idx + 1) * 4],
                                             pcdt[(piece_idx + 1) * 4 + 1],
                                             pcdt[(piece_idx + 1) * 4 + 2],
                                             pcdt[(piece_idx + 1) * 4 + 3],
-                                        ]) as usize;
+                                        ])
+                                            as usize;
                                         let char_count = cp2.saturating_sub(cp1);
 
                                         let pcd_off = cp_table_bytes + piece_idx * 8;
@@ -290,14 +294,17 @@ fn parse_doc(
 
                                         if is_compressed {
                                             if file_offset + char_count <= word_doc_bytes.len() {
-                                                let raw = &word_doc_bytes[file_offset..file_offset + char_count];
-                                                let (dec, _, _) = encoding_rs::WINDOWS_1251.decode(raw);
+                                                let raw = &word_doc_bytes
+                                                    [file_offset..file_offset + char_count];
+                                                let (dec, _, _) =
+                                                    encoding_rs::WINDOWS_1251.decode(raw);
                                                 doc_text.push_str(&dec);
                                             }
                                         } else {
                                             let byte_count = char_count * 2;
                                             if file_offset + byte_count <= word_doc_bytes.len() {
-                                                let raw = &word_doc_bytes[file_offset..file_offset + byte_count];
+                                                let raw = &word_doc_bytes
+                                                    [file_offset..file_offset + byte_count];
                                                 for c in raw.chunks_exact(2) {
                                                     let code = u16::from_le_bytes([c[0], c[1]]);
                                                     if let Some(ch) = char::from_u32(code as u32) {
@@ -400,10 +407,20 @@ fn parse_doc(
 fn clean_word_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
-        if ch == '\u{0013}' || ch == '\u{0014}' || ch == '\u{0015}' || ch == '\u{0007}' || ch == '\u{0008}' {
+        if ch == '\u{0013}'
+            || ch == '\u{0014}'
+            || ch == '\u{0015}'
+            || ch == '\u{0007}'
+            || ch == '\u{0008}'
+        {
             continue;
         }
-        if ch == '\u{0001}' || ch == '\u{0002}' || ch == '\u{0003}' || ch == '\u{0004}' || ch == '\u{0005}' {
+        if ch == '\u{0001}'
+            || ch == '\u{0002}'
+            || ch == '\u{0003}'
+            || ch == '\u{0004}'
+            || ch == '\u{0005}'
+        {
             continue;
         }
         if ch.is_control() && ch != '\t' {

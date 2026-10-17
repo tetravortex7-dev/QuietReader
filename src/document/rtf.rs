@@ -171,7 +171,10 @@ fn parse_rtf(
                 &mut hex_buffer,
                 encoding,
                 &mut current_para,
-                state_stack.last().map(|s| s.dest).unwrap_or(Destination::Normal),
+                state_stack
+                    .last()
+                    .map(|s| s.dest)
+                    .unwrap_or(Destination::Normal),
                 &mut title,
                 &mut author,
             );
@@ -186,7 +189,10 @@ fn parse_rtf(
                 &mut hex_buffer,
                 encoding,
                 &mut current_para,
-                state_stack.last().map(|s| s.dest).unwrap_or(Destination::Normal),
+                state_stack
+                    .last()
+                    .map(|s| s.dest)
+                    .unwrap_or(Destination::Normal),
                 &mut title,
                 &mut author,
             );
@@ -199,7 +205,10 @@ fn parse_rtf(
                 &mut hex_buffer,
                 encoding,
                 &mut current_para,
-                state_stack.last().map(|s| s.dest).unwrap_or(Destination::Normal),
+                state_stack
+                    .last()
+                    .map(|s| s.dest)
+                    .unwrap_or(Destination::Normal),
                 &mut title,
                 &mut author,
             );
@@ -323,11 +332,7 @@ fn parse_rtf(
                     }
                     "u" => {
                         if let Some(v) = param_val {
-                            let code = if v < 0 {
-                                (v + 65536) as u32
-                            } else {
-                                v as u32
-                            };
+                            let code = if v < 0 { (v + 65536) as u32 } else { v as u32 };
                             if let Some(ch) = char::from_u32(code) {
                                 let current_dest = state_stack
                                     .last()
@@ -340,8 +345,7 @@ fn parse_rtf(
                                     Destination::Skip => {}
                                 }
                             }
-                            let skip_count =
-                                state_stack.last().map(|s| s.uc).unwrap_or(1);
+                            let skip_count = state_stack.last().map(|s| s.uc).unwrap_or(1);
                             let mut skipped = 0;
                             while skipped < skip_count && i < len {
                                 if bytes[i] == b'\\' {
@@ -410,7 +414,10 @@ fn parse_rtf(
         &mut hex_buffer,
         encoding,
         &mut current_para,
-        state_stack.last().map(|s| s.dest).unwrap_or(Destination::Normal),
+        state_stack
+            .last()
+            .map(|s| s.dest)
+            .unwrap_or(Destination::Normal),
         &mut title,
         &mut author,
     );

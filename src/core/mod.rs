@@ -69,7 +69,9 @@ impl ReaderCore {
         &'a self,
         book_path: &'a Path,
     ) -> impl Iterator<Item = &'a Bookmark> {
-        self.bookmarks.iter().filter(move |b| b.book_path == book_path)
+        self.bookmarks
+            .iter()
+            .filter(move |b| b.book_path == book_path)
     }
 
     pub fn clear_bookmarks_for_path(&mut self, book_path: &Path) {
@@ -84,10 +86,11 @@ impl ReaderCore {
         let mut hits = Vec::new();
         for (ch_idx, chapter) in doc.chapters().iter().enumerate() {
             for (p_idx, para) in chapter.paragraphs.iter().enumerate() {
-                if let Some(pos) = para.to_lowercase().find(&q) {
+                let clean = crate::document::strip_formatting_tags(para);
+                if let Some(pos) = clean.to_lowercase().find(&q) {
                     let start = pos.saturating_sub(30);
-                    let end = (pos + q.len() + 30).min(para.len());
-                    let snippet = para[start..end].trim().to_string();
+                    let end = (pos + q.len() + 30).min(clean.len());
+                    let snippet = clean[start..end].trim().to_string();
                     hits.push(SearchHit {
                         chapter_index: ch_idx,
                         paragraph_index: Some(p_idx),
@@ -136,14 +139,14 @@ impl ReaderCore {
         let ch = doc.chapters().get(current_chapter)?;
         let mut s = String::new();
         if !ch.title.is_empty() {
-            s.push_str(&ch.title);
+            s.push_str(&crate::document::strip_formatting_tags(&ch.title));
             s.push_str("\n\n");
         }
         for (i, p) in ch.paragraphs.iter().enumerate() {
             if i > 0 {
                 s.push_str("\n\n");
             }
-            s.push_str(p);
+            s.push_str(&crate::document::strip_formatting_tags(p));
         }
         Some(s)
     }

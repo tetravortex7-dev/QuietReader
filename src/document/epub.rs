@@ -125,7 +125,9 @@ impl EpubDocument {
     ) -> Result<String, DocumentError> {
         let normalized = entry_name.replace('\\', "/");
         if !crate::document::is_safe_archive_path(&normalized) {
-            return Err(DocumentError::Corrupted(format!("Небезопасный путь в EPUB: '{entry_name}'")));
+            return Err(DocumentError::Corrupted(format!(
+                "Небезопасный путь в EPUB: '{entry_name}'"
+            )));
         }
         let decoded = percent_decode_str(&normalized);
         let mut matched = None;
@@ -135,16 +137,24 @@ impl EpubDocument {
                 if name == normalized || name == decoded {
                     matched = Some(i);
                     break;
-                } else if matched.is_none() && (name.eq_ignore_ascii_case(&normalized) || name.eq_ignore_ascii_case(&decoded)) {
+                } else if matched.is_none()
+                    && (name.eq_ignore_ascii_case(&normalized)
+                        || name.eq_ignore_ascii_case(&decoded))
+                {
                     matched = Some(i);
                 }
             }
         }
 
-        let index = matched.ok_or_else(|| DocumentError::Corrupted(format!("Файл '{entry_name}' не найден")))?;
-        let file = archive.by_index(index).map_err(|e| DocumentError::Corrupted(format!("Ошибка '{entry_name}': {e}")))?;
+        let index = matched
+            .ok_or_else(|| DocumentError::Corrupted(format!("Файл '{entry_name}' не найден")))?;
+        let file = archive
+            .by_index(index)
+            .map_err(|e| DocumentError::Corrupted(format!("Ошибка '{entry_name}': {e}")))?;
         if file.size() > Self::MAX_ENTRY_BYTES {
-            return Err(DocumentError::LimitExceeded(format!("Файл '{entry_name}' превышает лимит")));
+            return Err(DocumentError::LimitExceeded(format!(
+                "Файл '{entry_name}' превышает лимит"
+            )));
         }
 
         let mut bytes = Vec::new();
@@ -153,12 +163,16 @@ impl EpubDocument {
             .map_err(|e| DocumentError::Io(format!("Ошибка чтения '{entry_name}': {e}")))?;
 
         if bytes.len() as u64 > Self::MAX_ENTRY_BYTES {
-            return Err(DocumentError::LimitExceeded(format!("Файл '{entry_name}' превышает лимит")));
+            return Err(DocumentError::LimitExceeded(format!(
+                "Файл '{entry_name}' превышает лимит"
+            )));
         }
 
         *running_unpacked = running_unpacked.saturating_add(bytes.len() as u64);
         if *running_unpacked > crate::document::MAX_TOTAL_UNPACK_BYTES {
-            return Err(DocumentError::LimitExceeded("Превышен общий лимит распаковки EPUB (500 МБ)".to_string()));
+            return Err(DocumentError::LimitExceeded(
+                "Превышен общий лимит распаковки EPUB (500 МБ)".to_string(),
+            ));
         }
 
         match String::from_utf8(bytes) {
@@ -175,17 +189,22 @@ impl EpubDocument {
         archive: &mut ZipArchive<R>,
         running_unpacked: &mut u64,
     ) -> Result<String, DocumentError> {
-        let container_xml = match Self::read_zip_entry(archive, "META-INF/container.xml", running_unpacked) {
-            Ok(c) => c,
-            Err(_) => {
-                for i in 0..archive.len() {
-                    if let Ok(f) = archive.by_index(i) && f.name().ends_with(".opf") {
-                        return Ok(f.name().to_string());
+        let container_xml =
+            match Self::read_zip_entry(archive, "META-INF/container.xml", running_unpacked) {
+                Ok(c) => c,
+                Err(_) => {
+                    for i in 0..archive.len() {
+                        if let Ok(f) = archive.by_index(i)
+                            && f.name().ends_with(".opf")
+                        {
+                            return Ok(f.name().to_string());
+                        }
                     }
+                    return Err(DocumentError::Corrupted(
+                        "META-INF/container.xml не найден".to_string(),
+                    ));
                 }
-                return Err(DocumentError::Corrupted("META-INF/container.xml не найден".to_string()));
-            }
-        };
+            };
 
         let mut reader = Reader::from_str(&container_xml);
         reader.config_mut().trim_text(true);
@@ -203,18 +222,26 @@ impl EpubDocument {
                     }
                 }
                 Ok(Event::Eof) => break,
-                Err(e) => return Err(DocumentError::Corrupted(format!("Ошибка container.xml: {e}"))),
+                Err(e) => {
+                    return Err(DocumentError::Corrupted(format!(
+                        "Ошибка container.xml: {e}"
+                    )));
+                }
                 _ => {}
             }
             buf.clear();
         }
 
         for i in 0..archive.len() {
-            if let Ok(f) = archive.by_index(i) && f.name().ends_with(".opf") {
+            if let Ok(f) = archive.by_index(i)
+                && f.name().ends_with(".opf")
+            {
                 return Ok(f.name().to_string());
             }
         }
-        Err(DocumentError::Corrupted("Не найден rootfile (OPF)".to_string()))
+        Err(DocumentError::Corrupted(
+            "Не найден rootfile (OPF)".to_string(),
+        ))
     }
 
     fn from_archive<R: Read + std::io::Seek>(
@@ -224,22 +251,31 @@ impl EpubDocument {
         for i in 0..archive.len() {
             if let Ok(entry) = archive.by_index_raw(i) {
                 if !crate::document::is_safe_archive_path(entry.name()) {
-                    return Err(DocumentError::Corrupted(format!("Небезопасный путь: {}", entry.name())));
+                    return Err(DocumentError::Corrupted(format!(
+                        "Небезопасный путь: {}",
+                        entry.name()
+                    )));
                 }
                 total_unpacked = total_unpacked.saturating_add(entry.size());
                 if total_unpacked > crate::document::MAX_TOTAL_UNPACK_BYTES {
-                    return Err(DocumentError::LimitExceeded("Превышен общий лимит архива EPUB".to_string()));
+                    return Err(DocumentError::LimitExceeded(
+                        "Превышен общий лимит архива EPUB".to_string(),
+                    ));
                 }
             }
         }
 
         let mut running_unpacked: u64 = 0;
         let opf_path = Self::find_opf_path(archive, &mut running_unpacked)?;
-        let opf_dir = Path::new(&opf_path).parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+        let opf_dir = Path::new(&opf_path)
+            .parent()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
         let opf_content = Self::read_zip_entry(archive, &opf_path, &mut running_unpacked)?;
         let (metadata, manifest, spine_idrefs, ncx_id, nav_id) = Self::parse_opf(&opf_content)?;
 
-        let manifest_map: HashMap<String, ManifestItem> = manifest.into_iter().map(|it| (it.id.clone(), it)).collect();
+        let manifest_map: HashMap<String, ManifestItem> =
+            manifest.into_iter().map(|it| (it.id.clone(), it)).collect();
         let mut spine_files: Vec<(String, String)> = Vec::new();
         for idref in &spine_idrefs {
             if let Some(item) = manifest_map.get(idref) {
@@ -247,7 +283,9 @@ impl EpubDocument {
             }
         }
         if spine_files.is_empty() {
-            return Err(DocumentError::Corrupted("EPUB spine не содержит разделов".to_string()));
+            return Err(DocumentError::Corrupted(
+                "EPUB spine не содержит разделов".to_string(),
+            ));
         }
 
         let mut chapters = Vec::new();
@@ -256,11 +294,17 @@ impl EpubDocument {
 
         for (ch_idx, (idref, path)) in spine_files.iter().enumerate() {
             let html_content = Self::read_zip_entry(archive, path, &mut running_unpacked)
-                .or_else(|_| Self::read_zip_entry(archive, &percent_decode_str(path), &mut running_unpacked))
+                .or_else(|_| {
+                    Self::read_zip_entry(archive, &percent_decode_str(path), &mut running_unpacked)
+                })
                 .unwrap_or_default();
 
             let (parsed_title, paragraphs, anchors) = parse_html_chapter(&html_content);
-            let final_title = if !parsed_title.is_empty() { parsed_title } else { format!("Раздел {}", ch_idx + 1) };
+            let final_title = if !parsed_title.is_empty() {
+                parsed_title
+            } else {
+                format!("Раздел {}", ch_idx + 1)
+            };
 
             let norm_path = normalize_zip_path(path);
             let dec_path = percent_decode_str(&norm_path);
@@ -268,10 +312,14 @@ impl EpubDocument {
             chapter_path_to_index.insert(dec_path.clone(), ch_idx);
 
             if let Some(fname) = Path::new(&norm_path).file_name().and_then(|n| n.to_str()) {
-                chapter_path_to_index.entry(fname.to_string()).or_insert(ch_idx);
+                chapter_path_to_index
+                    .entry(fname.to_string())
+                    .or_insert(ch_idx);
             }
             if let Some(fname) = Path::new(&dec_path).file_name().and_then(|n| n.to_str()) {
-                chapter_path_to_index.entry(fname.to_string()).or_insert(ch_idx);
+                chapter_path_to_index
+                    .entry(fname.to_string())
+                    .or_insert(ch_idx);
             }
 
             for anchor in anchors {
@@ -288,36 +336,75 @@ impl EpubDocument {
         }
 
         let mut toc = Vec::new();
-        if let Some(ncx_id) = ncx_id && let Some(ncx_item) = manifest_map.get(&ncx_id) {
+        if let Some(ncx_id) = ncx_id
+            && let Some(ncx_item) = manifest_map.get(&ncx_id)
+        {
             let ncx_full_path = resolve_path(&opf_dir, &ncx_item.href);
-            if let Ok(ncx_content) = Self::read_zip_entry(archive, &ncx_full_path, &mut running_unpacked) {
-                toc = parse_ncx_toc(&ncx_content, &opf_dir, &chapter_path_to_index, &anchor_to_chapter);
+            if let Ok(ncx_content) =
+                Self::read_zip_entry(archive, &ncx_full_path, &mut running_unpacked)
+            {
+                toc = parse_ncx_toc(
+                    &ncx_content,
+                    &opf_dir,
+                    &chapter_path_to_index,
+                    &anchor_to_chapter,
+                );
             }
         }
 
-        if toc.is_empty() && let Some(nav_id) = nav_id && let Some(nav_item) = manifest_map.get(&nav_id) {
+        if toc.is_empty()
+            && let Some(nav_id) = nav_id
+            && let Some(nav_item) = manifest_map.get(&nav_id)
+        {
             let nav_full_path = resolve_path(&opf_dir, &nav_item.href);
-            if let Ok(nav_content) = Self::read_zip_entry(archive, &nav_full_path, &mut running_unpacked) {
-                let nav_dir = Path::new(&nav_full_path).parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-                toc = parse_epub3_nav_toc(&nav_content, &nav_dir, &chapter_path_to_index, &anchor_to_chapter);
+            if let Ok(nav_content) =
+                Self::read_zip_entry(archive, &nav_full_path, &mut running_unpacked)
+            {
+                let nav_dir = Path::new(&nav_full_path)
+                    .parent()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                toc = parse_epub3_nav_toc(
+                    &nav_content,
+                    &nav_dir,
+                    &chapter_path_to_index,
+                    &anchor_to_chapter,
+                );
             }
         }
 
         if toc.is_empty() {
-            toc = chapters.iter().enumerate().map(|(idx, ch)| TocItem {
-                id: ch.id.clone(),
-                title: ch.title.clone(),
-                chapter_index: idx,
-                children: Vec::new(),
-            }).collect();
+            toc = chapters
+                .iter()
+                .enumerate()
+                .map(|(idx, ch)| TocItem {
+                    id: ch.id.clone(),
+                    title: ch.title.clone(),
+                    chapter_index: idx,
+                    children: Vec::new(),
+                })
+                .collect();
         }
 
-        Ok(Self { metadata, chapters, toc })
+        Ok(Self {
+            metadata,
+            chapters,
+            toc,
+        })
     }
 
     fn parse_opf(
         opf: &str,
-    ) -> Result<(BookMetadata, Vec<ManifestItem>, Vec<String>, Option<String>, Option<String>), DocumentError> {
+    ) -> Result<
+        (
+            BookMetadata,
+            Vec<ManifestItem>,
+            Vec<String>,
+            Option<String>,
+            Option<String>,
+        ),
+        DocumentError,
+    > {
         let mut reader = Reader::from_str(opf);
         reader.config_mut().trim_text(true);
 
@@ -360,7 +447,9 @@ impl EpubDocument {
                             if item.media_type == "application/x-dtbncx+xml" && ncx_id.is_none() {
                                 ncx_id = Some(item.id.clone());
                             }
-                            if item.properties.split_whitespace().any(|p| p == "nav") && nav_id.is_none() {
+                            if item.properties.split_whitespace().any(|p| p == "nav")
+                                && nav_id.is_none()
+                            {
                                 nav_id = Some(item.id.clone());
                             }
                             manifest.push(item);
@@ -378,7 +467,9 @@ impl EpubDocument {
                 }
                 Ok(Event::Text(ref e)) => {
                     let raw_str = e.as_ref();
-                    let text = quick_xml::escape::unescape(raw_str).map(|c| c.into_owned()).unwrap_or_else(|_| raw_str.to_string());
+                    let text = quick_xml::escape::unescape(raw_str)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_else(|_| raw_str.to_string());
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
                         match current_tag.as_str() {
@@ -390,7 +481,11 @@ impl EpubDocument {
                 }
                 Ok(Event::End(_)) => current_tag.clear(),
                 Ok(Event::Eof) => break,
-                Err(e) => return Err(DocumentError::Corrupted(format!("Ошибка парсинга OPF: {e}"))),
+                Err(e) => {
+                    return Err(DocumentError::Corrupted(format!(
+                        "Ошибка парсинга OPF: {e}"
+                    )));
+                }
                 _ => {}
             }
             buf.clear();
@@ -409,12 +504,20 @@ pub fn resolve_path(base_dir: &str, href: &str) -> String {
     if clean_href.contains(':') || clean_href.starts_with('/') || clean_href.starts_with('\\') {
         return clean_href.to_string();
     }
-    let combined = if base_dir.is_empty() { clean_href.to_string() } else { format!("{base_dir}/{clean_href}") };
+    let combined = if base_dir.is_empty() {
+        clean_href.to_string()
+    } else {
+        format!("{base_dir}/{clean_href}")
+    };
     let mut parts: Vec<&str> = Vec::new();
     for seg in combined.split('/') {
-        if seg.is_empty() || seg == "." { continue; }
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
         if seg == ".." {
-            if parts.is_empty() { return String::new(); }
+            if parts.is_empty() {
+                return String::new();
+            }
             parts.pop();
         } else {
             parts.push(seg);
@@ -432,7 +535,11 @@ pub fn percent_decode_str(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() && let Ok(b_val) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(b_val) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+        {
             result.push(b_val);
             i += 3;
             continue;
@@ -449,37 +556,64 @@ pub fn sanitize_xml_entities(input: &str) -> String {
     while let Some((idx, c)) = chars.next() {
         if c == '&' {
             let rest = &input[idx + 1..];
-            if let Some(semi_pos) = rest.find(';') && semi_pos <= 10 {
+            if let Some(semi_pos) = rest.find(';')
+                && semi_pos <= 10
+            {
                 let entity_name = &rest[..semi_pos];
                 if matches!(entity_name, "amp" | "lt" | "gt" | "quot" | "apos") {
                     out.push('&');
                     out.push_str(entity_name);
                     out.push(';');
-                    for _ in 0..=semi_pos { chars.next(); }
+                    for _ in 0..=semi_pos {
+                        chars.next();
+                    }
                     continue;
                 }
                 if entity_name.starts_with('#')
                     && (entity_name[1..].chars().all(|ch| ch.is_ascii_digit())
-                        || (entity_name.starts_with("#x") || entity_name.starts_with("#X")) && entity_name[2..].chars().all(|ch| ch.is_ascii_hexdigit()))
+                        || (entity_name.starts_with("#x") || entity_name.starts_with("#X"))
+                            && entity_name[2..].chars().all(|ch| ch.is_ascii_hexdigit()))
                 {
                     out.push('&');
                     out.push_str(entity_name);
                     out.push(';');
-                    for _ in 0..=semi_pos { chars.next(); }
+                    for _ in 0..=semi_pos {
+                        chars.next();
+                    }
                     continue;
                 }
                 let repl = match entity_name {
-                    "nbsp" => " ", "mdash" => "—", "ndash" => "–", "hellip" => "…",
-                    "laquo" => "«", "raquo" => "»", "ldquo" => "“", "rdquo" => "”",
-                    "lsquo" => "‘", "rsquo" => "’", "copy" => "©", "trade" => "™",
-                    "reg" => "®", "bull" => "•", "times" => "×", "divide" => "÷",
-                    "minus" => "−", "deg" => "°", "euro" => "€", "pound" => "£",
-                    "yen" => "¥", "cent" => "¢", "sect" => "§", "para" => "¶",
+                    "nbsp" => " ",
+                    "mdash" => "—",
+                    "ndash" => "–",
+                    "hellip" => "…",
+                    "laquo" => "«",
+                    "raquo" => "»",
+                    "ldquo" => "“",
+                    "rdquo" => "”",
+                    "lsquo" => "‘",
+                    "rsquo" => "’",
+                    "copy" => "©",
+                    "trade" => "™",
+                    "reg" => "®",
+                    "bull" => "•",
+                    "times" => "×",
+                    "divide" => "÷",
+                    "minus" => "−",
+                    "deg" => "°",
+                    "euro" => "€",
+                    "pound" => "£",
+                    "yen" => "¥",
+                    "cent" => "¢",
+                    "sect" => "§",
+                    "para" => "¶",
                     _ => "",
                 };
                 if !repl.is_empty() {
                     out.push_str(repl);
-                    for _ in 0..=semi_pos { chars.next(); }
+                    for _ in 0..=semi_pos {
+                        chars.next();
+                    }
                     continue;
                 }
             }
@@ -513,14 +647,45 @@ pub fn extract_html_lenient(html: &str) -> (String, Vec<String>) {
             if let Some(end_bracket) = rest.find('>') {
                 let tag_raw = rest[..end_bracket].trim();
                 let is_closing = tag_raw.starts_with('/');
-                let tag_name = tag_raw.split_whitespace().next().unwrap_or("").trim_start_matches('/').to_ascii_lowercase();
+                let tag_name = tag_raw
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_start_matches('/')
+                    .to_ascii_lowercase();
 
                 match tag_name.as_str() {
                     "script" | "style" | "head" => skip = !is_closing,
-                    "title" => { in_title = !is_closing; skip = false; }
-                    "p" | "div" | "blockquote" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => flush_p(&mut current_p, &mut paragraphs),
+                    "title" => {
+                        in_title = !is_closing;
+                        skip = false;
+                    }
+                    "p" | "div" | "blockquote" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                        flush_p(&mut current_p, &mut paragraphs)
+                    }
                     "br" => current_p.push('\n'),
-                    "hr" => { flush_p(&mut current_p, &mut paragraphs); paragraphs.push("* * *".to_string()); }
+                    "hr" => {
+                        flush_p(&mut current_p, &mut paragraphs);
+                        paragraphs.push("* * *".to_string());
+                    }
+                    "b" | "strong" => {
+                        if !skip && !in_title {
+                            if is_closing {
+                                current_p.push_str("</b>");
+                            } else {
+                                current_p.push_str("<b>");
+                            }
+                        }
+                    }
+                    "i" | "em" => {
+                        if !skip && !in_title {
+                            if is_closing {
+                                current_p.push_str("</i>");
+                            } else {
+                                current_p.push_str("<i>");
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 i += 1 + end_bracket + 1;
@@ -530,18 +695,33 @@ pub fn extract_html_lenient(html: &str) -> (String, Vec<String>) {
 
         if !skip {
             let start = i;
-            while i < bytes.len() && bytes[i] != b'<' { i += 1; }
+            while i < bytes.len() && bytes[i] != b'<' {
+                i += 1;
+            }
             if let Ok(text_slice) = std::str::from_utf8(&bytes[start..i]) {
-                let unescaped = quick_xml::escape::unescape(text_slice).map(|c| c.into_owned()).unwrap_or_else(|_| text_slice.to_string());
+                let unescaped = quick_xml::escape::unescape(text_slice)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| text_slice.to_string());
+                let has_leading = unescaped.starts_with(char::is_whitespace);
+                let has_trailing = unescaped.ends_with(char::is_whitespace);
                 let trimmed = unescaped.trim();
                 if !trimmed.is_empty() {
                     if in_title && title.is_empty() {
                         title = trimmed.to_string();
                     } else {
-                        if !current_p.is_empty() && !current_p.ends_with(' ') && !current_p.ends_with('\n') {
+                        if has_leading
+                            && !current_p.is_empty()
+                            && !current_p.ends_with(' ')
+                            && !current_p.ends_with('\n')
+                            && !current_p.ends_with("<b>")
+                            && !current_p.ends_with("<i>")
+                        {
                             current_p.push(' ');
                         }
                         current_p.push_str(trimmed);
+                        if has_trailing && !current_p.ends_with(' ') {
+                            current_p.push(' ');
+                        }
                     }
                 }
             }
@@ -572,42 +752,56 @@ pub fn parse_html_chapter(html: &str) -> (String, Vec<String>, Vec<String>) {
             Ok(Event::Start(ref e)) => {
                 for attr in e.attributes().flatten() {
                     let k = local_name(attr.key.as_ref()).to_ascii_lowercase();
-                    if k == "id" || k == "name" { anchors.push(attr.value.to_string()); }
+                    if k == "id" || k == "name" {
+                        anchors.push(attr.value.to_string());
+                    }
                 }
                 match local_name(e.name().as_ref()).to_ascii_lowercase().as_str() {
                     "script" | "style" | "head" => skip_content = true,
-                    "title" => { skip_content = false; in_title_tag = true; }
-                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => { flush_p(&mut current_p, &mut paragraphs); in_heading_tag = true; }
+                    "title" => {
+                        skip_content = false;
+                        in_title_tag = true;
+                    }
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                        flush_p(&mut current_p, &mut paragraphs);
+                        in_heading_tag = true;
+                    }
                     "p" | "div" | "blockquote" | "li" => flush_p(&mut current_p, &mut paragraphs),
                     "br" => current_p.push('\n'),
+                    "b" | "strong" => {
+                        if !skip_content && !in_title_tag && !in_heading_tag {
+                            current_p.push_str("<b>");
+                        }
+                    }
+                    "i" | "em" => {
+                        if !skip_content && !in_title_tag && !in_heading_tag {
+                            current_p.push_str("<i>");
+                        }
+                    }
                     _ => {}
                 }
             }
             Ok(Event::Empty(ref e)) => {
                 for attr in e.attributes().flatten() {
                     let k = local_name(attr.key.as_ref()).to_ascii_lowercase();
-                    if k == "id" || k == "name" { anchors.push(attr.value.to_string()); }
+                    if k == "id" || k == "name" {
+                        anchors.push(attr.value.to_string());
+                    }
                 }
                 match local_name(e.name().as_ref()).to_ascii_lowercase().as_str() {
                     "br" => current_p.push('\n'),
-                    "hr" => { flush_p(&mut current_p, &mut paragraphs); paragraphs.push("* * *".to_string()); }
+                    "hr" => {
+                        flush_p(&mut current_p, &mut paragraphs);
+                        paragraphs.push("* * *".to_string());
+                    }
                     _ => {}
                 }
             }
             Ok(Event::Text(ref e)) if !skip_content => {
                 let raw_str = e.as_ref();
-                let text = quick_xml::escape::unescape(raw_str).map(|c| c.into_owned()).unwrap_or_else(|_| raw_str.to_string());
-                if !text.is_empty() {
-                    if in_title_tag && title.is_empty() {
-                        title.push_str(text.trim());
-                    } else {
-                        current_p.push_str(&text);
-                    }
-                }
-            }
-            Ok(Event::Text(ref e)) if !skip_content => {
-                let raw_str = e.as_ref();
-                let text = quick_xml::escape::unescape(raw_str).map(|c| c.into_owned()).unwrap_or_else(|_| raw_str.to_string());
+                let text = quick_xml::escape::unescape(raw_str)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| raw_str.to_string());
                 if !text.is_empty() {
                     if in_title_tag && title.is_empty() {
                         title.push_str(text.trim());
@@ -641,11 +835,24 @@ pub fn parse_html_chapter(html: &str) -> (String, Vec<String>, Vec<String>) {
                         in_heading_tag = false;
                     }
                     "p" | "div" | "blockquote" | "li" => flush_p(&mut current_p, &mut paragraphs),
+                    "b" | "strong" => {
+                        if !skip_content && !in_title_tag && !in_heading_tag {
+                            current_p.push_str("</b>");
+                        }
+                    }
+                    "i" | "em" => {
+                        if !skip_content && !in_title_tag && !in_heading_tag {
+                            current_p.push_str("</i>");
+                        }
+                    }
                     _ => {}
                 }
             }
             Ok(Event::Eof) => break,
-            Err(_) => { had_error = true; break; }
+            Err(_) => {
+                had_error = true;
+                break;
+            }
             _ => {}
         }
         buf.clear();
@@ -658,7 +865,9 @@ pub fn parse_html_chapter(html: &str) -> (String, Vec<String>, Vec<String>) {
             if paragraphs.is_empty() || paragraphs.len() < fb_paras.len() / 2 {
                 paragraphs = fb_paras;
             }
-            if title.is_empty() { title = fb_title; }
+            if title.is_empty() {
+                title = fb_title;
+            }
         }
     }
     (title, paragraphs, anchors)
@@ -671,25 +880,49 @@ fn resolve_toc_destination(
     anchor_map: &HashMap<String, usize>,
 ) -> usize {
     let clean = src.trim();
-    if clean.is_empty() { return 0; }
+    if clean.is_empty() {
+        return 0;
+    }
 
-    let (file_part, anchor_part) = if let Some(pos) = clean.find('#') { (&clean[..pos], &clean[pos + 1..]) } else { (clean, "") };
+    let (file_part, anchor_part) = if let Some(pos) = clean.find('#') {
+        (&clean[..pos], &clean[pos + 1..])
+    } else {
+        (clean, "")
+    };
 
     if !anchor_part.is_empty() {
-        if let Some(&ch) = anchor_map.get(anchor_part) { return ch; }
+        if let Some(&ch) = anchor_map.get(anchor_part) {
+            return ch;
+        }
         let dec_anchor = percent_decode_str(anchor_part);
-        if let Some(&ch) = anchor_map.get(&dec_anchor) { return ch; }
+        if let Some(&ch) = anchor_map.get(&dec_anchor) {
+            return ch;
+        }
     }
-    if file_part.is_empty() { return 0; }
+    if file_part.is_empty() {
+        return 0;
+    }
 
     let resolved = resolve_path(opf_dir, file_part);
     let norm = normalize_zip_path(&resolved);
     let dec = percent_decode_str(&norm);
 
-    if let Some(&ch) = chapter_map.get(&norm) { return ch; }
-    if let Some(&ch) = chapter_map.get(&dec) { return ch; }
-    if let Some(fname) = Path::new(&norm).file_name().and_then(|n| n.to_str()) && let Some(&ch) = chapter_map.get(fname) { return ch; }
-    if let Some(fname) = Path::new(&dec).file_name().and_then(|n| n.to_str()) && let Some(&ch) = chapter_map.get(fname) { return ch; }
+    if let Some(&ch) = chapter_map.get(&norm) {
+        return ch;
+    }
+    if let Some(&ch) = chapter_map.get(&dec) {
+        return ch;
+    }
+    if let Some(fname) = Path::new(&norm).file_name().and_then(|n| n.to_str())
+        && let Some(&ch) = chapter_map.get(fname)
+    {
+        return ch;
+    }
+    if let Some(fname) = Path::new(&dec).file_name().and_then(|n| n.to_str())
+        && let Some(&ch) = chapter_map.get(fname)
+    {
+        return ch;
+    }
     0
 }
 
@@ -712,17 +945,29 @@ fn parse_ncx_toc(
     loop {
         match reader.read_event_into(&mut buf) {
             ext @ (Ok(Event::Start(_)) | Ok(Event::Empty(_))) => {
-                let e = match &ext { Ok(Event::Start(e)) | Ok(Event::Empty(e)) => e, _ => unreachable!() };
+                let e = match &ext {
+                    Ok(Event::Start(e)) | Ok(Event::Empty(e)) => e,
+                    _ => unreachable!(),
+                };
                 let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
                 if tag == "navpoint" && point_stack.len() < 32 {
                     let mut id = None;
                     for attr in e.attributes().flatten() {
-                        if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") { id = Some(attr.value.to_string()); }
+                        if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
+                            id = Some(attr.value.to_string());
+                        }
                     }
-                    point_stack.push(NavPoint { id, label: String::new(), content_src: String::new(), children: Vec::new() });
+                    point_stack.push(NavPoint {
+                        id,
+                        label: String::new(),
+                        content_src: String::new(),
+                        children: Vec::new(),
+                    });
                 } else if tag == "content" {
                     for attr in e.attributes().flatten() {
-                        if local_name(attr.key.as_ref()).eq_ignore_ascii_case("src") && let Some(last) = point_stack.last_mut() {
+                        if local_name(attr.key.as_ref()).eq_ignore_ascii_case("src")
+                            && let Some(last) = point_stack.last_mut()
+                        {
                             last.content_src = attr.value.to_string();
                         }
                     }
@@ -732,9 +977,14 @@ fn parse_ncx_toc(
             }
             Ok(Event::Text(ref e)) if in_text => {
                 let raw_str = e.as_ref();
-                let text = quick_xml::escape::unescape(raw_str).map(|c| c.into_owned()).unwrap_or_else(|_| raw_str.to_string());
+                let text = quick_xml::escape::unescape(raw_str)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| raw_str.to_string());
                 let trimmed = text.trim();
-                if !trimmed.is_empty() && let Some(last) = point_stack.last_mut() && last.label.is_empty() {
+                if !trimmed.is_empty()
+                    && let Some(last) = point_stack.last_mut()
+                    && last.label.is_empty()
+                {
                     last.label = trimmed.to_string();
                 }
             }
@@ -742,8 +992,14 @@ fn parse_ncx_toc(
                 let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
                 if tag == "text" {
                     in_text = false;
-                } else if tag == "navpoint" && let Some(finished_point) = point_stack.pop() {
-                    if let Some(parent) = point_stack.last_mut() { parent.children.push(finished_point); } else { root_nav_points.push(finished_point); }
+                } else if tag == "navpoint"
+                    && let Some(finished_point) = point_stack.pop()
+                {
+                    if let Some(parent) = point_stack.last_mut() {
+                        parent.children.push(finished_point);
+                    } else {
+                        root_nav_points.push(finished_point);
+                    }
                 }
             }
             Ok(Event::Eof) | Err(_) => break,
@@ -761,15 +1017,30 @@ fn parse_ncx_toc(
     ) -> TocItem {
         let ch_index = resolve_toc_destination(&nav.content_src, opf_dir, chapter_map, anchor_map);
         let children = if depth < 32 {
-            nav.children.iter().map(|c| convert_nav(c, opf_dir, chapter_map, anchor_map, depth + 1)).collect()
+            nav.children
+                .iter()
+                .map(|c| convert_nav(c, opf_dir, chapter_map, anchor_map, depth + 1))
+                .collect()
         } else {
             Vec::new()
         };
-        let title = if nav.label.is_empty() { "Без названия".to_string() } else { nav.label.clone() };
-        TocItem { id: nav.id.clone(), title, chapter_index: ch_index, children }
+        let title = if nav.label.is_empty() {
+            "Без названия".to_string()
+        } else {
+            nav.label.clone()
+        };
+        TocItem {
+            id: nav.id.clone(),
+            title,
+            chapter_index: ch_index,
+            children,
+        }
     }
 
-    root_nav_points.iter().map(|nav| convert_nav(nav, opf_dir, chapter_map, anchor_map, 0)).collect()
+    root_nav_points
+        .iter()
+        .map(|nav| convert_nav(nav, opf_dir, chapter_map, anchor_map, 0))
+        .collect()
 }
 
 fn parse_epub3_nav_toc(
@@ -796,7 +1067,9 @@ fn parse_epub3_nav_toc(
                 let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
                 if tag == "nav" {
                     for attr in e.attributes().flatten() {
-                        if attr.value.to_string().contains("toc") { in_toc_nav = true; }
+                        if attr.value.to_string().contains("toc") {
+                            in_toc_nav = true;
+                        }
                     }
                 } else if in_toc_nav {
                     if (tag == "ol" || tag == "ul") && stack.len() < 32 {
@@ -815,7 +1088,9 @@ fn parse_epub3_nav_toc(
             }
             Ok(Event::Text(ref e)) if in_anchor => {
                 let raw = e.as_ref();
-                let text = quick_xml::escape::unescape(raw).map(|c| c.into_owned()).unwrap_or_else(|_| raw.to_string());
+                let text = quick_xml::escape::unescape(raw)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| raw.to_string());
                 current_title.push_str(text.trim());
             }
             Ok(Event::End(ref e)) => {
@@ -826,14 +1101,33 @@ fn parse_epub3_nav_toc(
                     if tag == "a" {
                         in_anchor = false;
                         if !current_href.is_empty() {
-                            let ch = resolve_toc_destination(&current_href, nav_dir, chapter_map, anchor_map);
-                            let title = if current_title.is_empty() { "Раздел".to_string() } else { current_title.clone() };
+                            let ch = resolve_toc_destination(
+                                &current_href,
+                                nav_dir,
+                                chapter_map,
+                                anchor_map,
+                            );
+                            let title = if current_title.is_empty() {
+                                "Раздел".to_string()
+                            } else {
+                                current_title.clone()
+                            };
                             if let Some(cur_level) = stack.last_mut() {
-                                cur_level.push(TocItem { id: None, title, chapter_index: ch, children: Vec::new() });
+                                cur_level.push(TocItem {
+                                    id: None,
+                                    title,
+                                    chapter_index: ch,
+                                    children: Vec::new(),
+                                });
                             }
                         }
-                    } else if (tag == "ol" || tag == "ul") && stack.len() > 1 && let Some(children) = stack.pop() {
-                        if let Some(cur_level) = stack.last_mut() && let Some(last_item) = cur_level.last_mut() {
+                    } else if (tag == "ol" || tag == "ul")
+                        && stack.len() > 1
+                        && let Some(children) = stack.pop()
+                    {
+                        if let Some(cur_level) = stack.last_mut()
+                            && let Some(last_item) = cur_level.last_mut()
+                        {
                             last_item.children = children;
                         }
                     }

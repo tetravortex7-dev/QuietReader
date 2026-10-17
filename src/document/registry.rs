@@ -1,6 +1,6 @@
 use crate::document::{
-    ComicDocument, DjvuDocument, DocDocument, DocxDocument, Document, DocumentError,
-    EpubDocument, Fb2Document, PdfDocument, RtfDocument, TxtDocument,
+    ComicDocument, DjvuDocument, DocDocument, Document, DocumentError, DocxDocument, EpubDocument,
+    Fb2Document, PdfDocument, RtfDocument, TxtDocument,
 };
 use std::path::Path;
 

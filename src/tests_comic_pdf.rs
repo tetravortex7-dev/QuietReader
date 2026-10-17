@@ -458,9 +458,14 @@ fn test_comic_image_dimension_bounds() {
 fn test_fb2_deep_section_recursion_bounded() {
     use crate::document::Document;
     use crate::document::Fb2Document;
-    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?><FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\"><body>");
+    let mut xml = String::from(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\"><body>",
+    );
     for i in 0..50 {
-        xml.push_str(&format!("<section><title><p>Глава {}</p></title><p>Текст {}</p>", i, i));
+        xml.push_str(&format!(
+            "<section><title><p>Глава {}</p></title><p>Текст {}</p>",
+            i, i
+        ));
     }
     for _ in 0..50 {
         xml.push_str("</section>");
@@ -529,7 +534,12 @@ fn test_reading_progress_separation_from_recent_books() {
     assert_eq!(settings.reading_progress.len(), 30);
 
     let old_book_path = std::path::PathBuf::from("C:\\Books\\book_1.epub");
-    assert!(settings.recent_books.iter().all(|b| b.path != old_book_path));
+    assert!(
+        settings
+            .recent_books
+            .iter()
+            .all(|b| b.path != old_book_path)
+    );
     assert_eq!(settings.get_book_progress(&old_book_path), Some((1, 10.0)));
 
     settings.recent_books.clear();
@@ -540,7 +550,8 @@ fn test_reading_progress_separation_from_recent_books() {
 #[test]
 fn test_settings_new_fields_default_compatibility() {
     let minimal_json = r#"{"font_size": 22.0}"#;
-    let settings: AppSettings = serde_json::from_str(minimal_json).expect("Десериализация с дефолтами должна пройти успешно");
+    let settings: AppSettings = serde_json::from_str(minimal_json)
+        .expect("Десериализация с дефолтами должна пройти успешно");
 
     assert_eq!(settings.font_size, 22.0);
     assert_eq!(settings.font_family, "Georgia");
@@ -554,18 +565,72 @@ fn test_settings_new_fields_default_compatibility() {
 
 #[test]
 fn test_pdf_transitive_glyph_sorting_and_line_clustering() {
-    use crate::document::pdf::text::{group_and_sort_glyphs, GlyphEntry};
+    use crate::document::pdf::text::{GlyphEntry, group_and_sort_glyphs};
 
     let glyphs = vec![
-        GlyphEntry { c: 'l', x: 20.0, y: 10.2, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'H', x: 10.0, y: 10.0, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'e', x: 15.0, y: 9.8, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'o', x: 25.0, y: 10.1, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'W', x: 10.0, y: 30.0, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'o', x: 15.0, y: 30.2, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'r', x: 20.0, y: 29.9, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'l', x: 25.0, y: 30.0, font_size: 10.0, width: 5.0 },
-        GlyphEntry { c: 'd', x: 30.0, y: 30.1, font_size: 10.0, width: 5.0 },
+        GlyphEntry {
+            c: 'l',
+            x: 20.0,
+            y: 10.2,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'H',
+            x: 10.0,
+            y: 10.0,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'e',
+            x: 15.0,
+            y: 9.8,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'o',
+            x: 25.0,
+            y: 10.1,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'W',
+            x: 10.0,
+            y: 30.0,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'o',
+            x: 15.0,
+            y: 30.2,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'r',
+            x: 20.0,
+            y: 29.9,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'l',
+            x: 25.0,
+            y: 30.0,
+            font_size: 10.0,
+            width: 5.0,
+        },
+        GlyphEntry {
+            c: 'd',
+            x: 30.0,
+            y: 30.1,
+            font_size: 10.0,
+            width: 5.0,
+        },
     ];
 
     let spans = group_and_sort_glyphs(glyphs, 200.0, 200.0);
@@ -582,19 +647,23 @@ fn test_keyboard_input_suppressed_when_wants_keyboard_input() {
     let dummy_modifiers = Modifiers::default();
     let cmds = process_keyboard_events(
         true,
-        |k| matches!(k, Key::A | Key::Plus | Key::Space | Key::ArrowRight | Key::F),
+        |k| {
+            matches!(
+                k,
+                Key::A | Key::Plus | Key::Space | Key::ArrowRight | Key::F
+            )
+        },
         dummy_modifiers,
         false,
     );
     assert!(cmds.is_empty());
 
-    let cmds_not_focused = process_keyboard_events(
-        false,
-        |k| matches!(k, Key::F),
-        dummy_modifiers,
-        false,
+    let cmds_not_focused =
+        process_keyboard_events(false, |k| matches!(k, Key::F), dummy_modifiers, false);
+    assert_eq!(
+        cmds_not_focused,
+        vec![crate::core::Command::ToggleFullscreen]
     );
-    assert_eq!(cmds_not_focused, vec![crate::core::Command::ToggleFullscreen]);
 }
 
 #[test]
@@ -604,36 +673,19 @@ fn test_keyboard_manga_vs_comic_navigation_direction() {
 
     let dummy_modifiers = Modifiers::default();
 
-    let manga_left = process_keyboard_events(
-        false,
-        |k| k == Key::ArrowLeft,
-        dummy_modifiers,
-        true,
-    );
+    let manga_left = process_keyboard_events(false, |k| k == Key::ArrowLeft, dummy_modifiers, true);
     assert_eq!(manga_left, vec![crate::core::Command::NextPage]);
 
-    let manga_right = process_keyboard_events(
-        false,
-        |k| k == Key::ArrowRight,
-        dummy_modifiers,
-        true,
-    );
+    let manga_right =
+        process_keyboard_events(false, |k| k == Key::ArrowRight, dummy_modifiers, true);
     assert_eq!(manga_right, vec![crate::core::Command::PrevPage]);
 
-    let comic_left = process_keyboard_events(
-        false,
-        |k| k == Key::ArrowLeft,
-        dummy_modifiers,
-        false,
-    );
+    let comic_left =
+        process_keyboard_events(false, |k| k == Key::ArrowLeft, dummy_modifiers, false);
     assert_eq!(comic_left, vec![crate::core::Command::PrevPage]);
 
-    let comic_right = process_keyboard_events(
-        false,
-        |k| k == Key::ArrowRight,
-        dummy_modifiers,
-        false,
-    );
+    let comic_right =
+        process_keyboard_events(false, |k| k == Key::ArrowRight, dummy_modifiers, false);
     assert_eq!(comic_right, vec![crate::core::Command::NextPage]);
 }
 
@@ -870,7 +922,8 @@ fn test_text_view_virtualization_bounds_estimation() {
 fn test_pdf_transform_span_bbox_all_rotations() {
     use crate::app::pdf_view::transform_span_bbox;
     use eframe::egui;
-    let rect = egui::Rect::from_min_max(egui::Pos2::new(100.0, 200.0), egui::Pos2::new(300.0, 600.0));
+    let rect =
+        egui::Rect::from_min_max(egui::Pos2::new(100.0, 200.0), egui::Pos2::new(300.0, 600.0));
     let bbox = [0.1, 0.2, 0.5, 0.4];
 
     let r0 = transform_span_bbox(bbox, 0, rect);
@@ -900,31 +953,70 @@ fn test_pdf_transform_span_bbox_all_rotations() {
 
 #[test]
 fn test_pdf_reading_order_two_columns_and_gutter() {
-    use crate::document::pdf::text::{group_and_sort_glyphs, GlyphEntry};
+    use crate::document::pdf::text::{GlyphEntry, group_and_sort_glyphs};
     let mut glyphs = Vec::new();
     for (i, c) in "Left1".chars().enumerate() {
-        glyphs.push(GlyphEntry { c, x: 50.0 + i as f64 * 10.0, y: 300.0, font_size: 14.0, width: 10.0 });
+        glyphs.push(GlyphEntry {
+            c,
+            x: 50.0 + i as f64 * 10.0,
+            y: 300.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
     }
     for (i, c) in "Right1".chars().enumerate() {
-        glyphs.push(GlyphEntry { c, x: 450.0 + i as f64 * 10.0, y: 300.0, font_size: 14.0, width: 10.0 });
+        glyphs.push(GlyphEntry {
+            c,
+            x: 450.0 + i as f64 * 10.0,
+            y: 300.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
     }
     for (i, c) in "Left2".chars().enumerate() {
-        glyphs.push(GlyphEntry { c, x: 50.0 + i as f64 * 10.0, y: 350.0, font_size: 14.0, width: 10.0 });
+        glyphs.push(GlyphEntry {
+            c,
+            x: 50.0 + i as f64 * 10.0,
+            y: 350.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
     }
     for (i, c) in "Right2".chars().enumerate() {
-        glyphs.push(GlyphEntry { c, x: 450.0 + i as f64 * 10.0, y: 350.0, font_size: 14.0, width: 10.0 });
+        glyphs.push(GlyphEntry {
+            c,
+            x: 450.0 + i as f64 * 10.0,
+            y: 350.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
     }
     for (i, c) in "Left3".chars().enumerate() {
-        glyphs.push(GlyphEntry { c, x: 50.0 + i as f64 * 10.0, y: 400.0, font_size: 14.0, width: 10.0 });
+        glyphs.push(GlyphEntry {
+            c,
+            x: 50.0 + i as f64 * 10.0,
+            y: 400.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
     }
     for (i, c) in "Right3".chars().enumerate() {
-        glyphs.push(GlyphEntry { c, x: 450.0 + i as f64 * 10.0, y: 400.0, font_size: 14.0, width: 10.0 });
+        glyphs.push(GlyphEntry {
+            c,
+            x: 450.0 + i as f64 * 10.0,
+            y: 400.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
     }
 
     let spans = group_and_sort_glyphs(glyphs, 800.0, 1000.0);
     assert_eq!(spans.len(), 6);
     let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, vec!["Left1", "Left2", "Left3", "Right1", "Right2", "Right3"]);
+    assert_eq!(
+        texts,
+        vec!["Left1", "Left2", "Left3", "Right1", "Right2", "Right3"]
+    );
 }
 
 #[test]
@@ -936,7 +1028,8 @@ fn test_pdf_outline_resolve_dest_clamping() {
     if let Some(arr) = Array::from_bytes(dest_data) {
         let page_map = HashMap::new();
         let page_count = 3;
-        let resolved = crate::document::pdf::outline::resolve_dest_array(&arr, &page_map, page_count);
+        let resolved =
+            crate::document::pdf::outline::resolve_dest_array(&arr, &page_map, page_count);
         assert_eq!(resolved, Some(2));
     }
 }

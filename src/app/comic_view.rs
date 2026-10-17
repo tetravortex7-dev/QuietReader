@@ -194,10 +194,8 @@ impl ComicViewState {
                     for page_idx in self.pending_pages.drain() {
                         let msg = "Поток декодирования аварийно завершился".to_string();
                         self.failed_pages.insert(page_idx, msg.clone());
-                        *status_message = Some(format!(
-                            "Ошибка загрузки страницы {}: {msg}",
-                            page_idx + 1
-                        ));
+                        *status_message =
+                            Some(format!("Ошибка загрузки страницы {}: {msg}", page_idx + 1));
                     }
                     let (tx, rx) = spawn_comic_worker();
                     self.req_tx = tx;
@@ -268,7 +266,9 @@ impl ComicViewState {
                     .font(egui::TextStyle::Body),
             );
             if text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if let Some(target) = super::paged_common::parse_page_input(&self.page_input, page_count) {
+                if let Some(target) =
+                    super::paged_common::parse_page_input(&self.page_input, page_count)
+                {
                     self.current_page = target;
                     self.pan_offset = Vec2::ZERO;
                 }
@@ -484,7 +484,7 @@ impl ComicViewState {
                                 let tex_size = tex.size_vec2();
                                 let h = target_w * (tex_size.y / tex_size.x);
                                 let img_widget = egui::Image::from_texture(&tex)
-                                     .fit_to_exact_size(Vec2::new(target_w, h));
+                                    .fit_to_exact_size(Vec2::new(target_w, h));
                                 ui.add(img_widget);
                                 ui.add_space(8.0);
                             } else if let Some(err) = self.failed_pages.get(&p) {
@@ -504,7 +504,7 @@ impl ComicViewState {
                     });
                 });
 
-            *current_scroll_y = scroll_output.state.offset.y;
+            *current_scroll_y = scroll_output.state.clamped_offset().y;
             *viewport_height = scroll_output.inner_rect.height();
             *max_scroll_y = (scroll_output.content_size.y - *viewport_height).max(0.0);
 
@@ -596,7 +596,7 @@ impl ComicViewState {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.4);
                             ui.label(
-                                RichText::new(format!("❌ Ошибка страницы {}: {err}", p + 1))
+                                RichText::new(format!("Ошибка страницы {}: {err}", p + 1))
                                     .size(16.0)
                                     .color(theme.accent_color()),
                             );
@@ -605,7 +605,7 @@ impl ComicViewState {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.45);
                             ui.label(
-                                RichText::new(format!("⏳ Загрузка страницы {}...", p + 1))
+                                RichText::new(format!("Загрузка страницы {}...", p + 1))
                                     .size(18.0)
                                     .color(theme.text_color()),
                             );
