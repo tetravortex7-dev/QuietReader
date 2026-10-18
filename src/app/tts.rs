@@ -770,11 +770,13 @@ impl TtsController {
         current_book_has_text: bool,
         book_language: Option<&str>,
         on_play_requested: &mut bool,
+        lang: crate::i18n::UiLanguage,
     ) {
         if !self.show_panel {
             return;
         }
 
+        let t = lang.t();
         let st = self.status();
 
         egui::Area::new(Id::unique("tts_floating_panel"))
@@ -790,7 +792,7 @@ impl TtsController {
                 frame.show(ui, |ui| {
                     ui.horizontal(|ui| {
                     ui.add(
-                        IconLabel::new(Icon::Speech, "Чтение вслух")
+                        IconLabel::new(Icon::Speech, t.tts_title)
                             .size(13.5)
                             .strong()
                             .color(theme.text_color()),
@@ -803,10 +805,10 @@ impl TtsController {
                     let is_sys = st.engine == TtsEngineKind::System;
                     let is_edge = st.engine == TtsEngineKind::Edge;
 
-                    if ui.selectable_label(is_sys, "Системный").on_hover_text("Локальный офлайн-синтезатор Windows (Ирина, Павел)").clicked() && !is_sys {
+                    if ui.selectable_label(is_sys, t.tts_system).on_hover_text(t.tts_system_tip).clicked() && !is_sys {
                         self.set_engine(TtsEngineKind::System);
                     }
-                    if ui.selectable_label(is_edge, "Edge Нейро").clicked() && !is_edge {
+                    if ui.selectable_label(is_edge, t.tts_edge).clicked() && !is_edge {
                         self.set_engine(TtsEngineKind::Edge);
                     }
 
@@ -820,7 +822,7 @@ impl TtsController {
                     paint_icon(ui.painter(), Icon::Question, icon_rect, q_color);
                     q_resp
                         .on_hover_cursor(egui::CursorIcon::Help)
-                        .on_hover_text("Для качественного нейросетевого озвучивания требуется подключение к интернету");
+                        .on_hover_text(t.tts_internet_tip);
 
                     ui.add_space(6.0);
                     ui.separator();
@@ -828,13 +830,13 @@ impl TtsController {
 
                     if !st.is_available {
                         ui.label(
-                            RichText::new("Синтезатор речи недоступен")
+                            RichText::new(t.tts_unavailable)
                                 .color(Color32::RED)
                                 .size(12.0),
                         );
                     } else if !current_book_has_text {
                         ui.label(
-                            RichText::new("Откройте текстовую книгу для озвучивания")
+                            RichText::new(t.tts_open_text_book)
                                 .color(theme.secondary_text_color())
                                 .size(12.0),
                         );
@@ -842,14 +844,14 @@ impl TtsController {
                         let prev_btn = ui.add(
                             IconButton::new(Icon::ChevronUp, "")
                                 .min_size(Vec2::new(26.0, 24.0)),
-                        ).on_hover_text("Предыдущий абзац");
+                        ).on_hover_text(t.tts_prev_paragraph);
                         if prev_btn.clicked() {
                             self.prev_paragraph();
                         }
 
                         if st.is_playing && !st.is_paused {
                             let pause_btn = ui.add(
-                                IconButton::new(Icon::Pause, "Пауза")
+                                IconButton::new(Icon::Pause, t.tts_pause)
                                     .min_size(Vec2::new(76.0, 24.0)),
                             );
                             if pause_btn.clicked() {
@@ -857,7 +859,7 @@ impl TtsController {
                             }
                         } else {
                             let play_icon = Icon::Play;
-                            let play_label = if st.is_paused { "Продолжить" } else { "Слушать" };
+                            let play_label = if st.is_paused { t.tts_play } else { t.speech };
                             let play_btn = ui.add(
                                 IconButton::new(play_icon, play_label)
                                     .min_size(Vec2::new(88.0, 24.0)),
@@ -874,14 +876,14 @@ impl TtsController {
                         let next_btn = ui.add(
                             IconButton::new(Icon::ChevronDown, "")
                                 .min_size(Vec2::new(26.0, 24.0)),
-                        ).on_hover_text("Следующий абзац");
+                        ).on_hover_text(t.tts_next_paragraph);
                         if next_btn.clicked() {
                             self.next_paragraph();
                         }
 
                         if st.is_playing || st.is_paused {
                             let stop_btn = ui.add(
-                                IconButton::new(Icon::Close, "Стоп")
+                                IconButton::new(Icon::Close, t.tts_stop)
                                     .min_size(Vec2::new(64.0, 24.0)),
                             );
                             if stop_btn.clicked() {
@@ -926,7 +928,7 @@ impl TtsController {
                                 .as_ref()
                                 .and_then(|id| matched_voices.iter().find(|v| v.id == *id))
                                 .map(|v| format_voice_name(&v.name))
-                                .unwrap_or_else(|| "Выбор голоса".to_string());
+                                .unwrap_or_else(|| t.tts_voice.to_string());
 
                             egui::ComboBox::from_id_salt("tts_voice_combo")
                                 .selected_text(current_voice_name)
@@ -970,7 +972,7 @@ impl TtsController {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(IconButton::new(Icon::Close, "").min_size(Vec2::new(20.0, 20.0)))
-                            .on_hover_text("Скрыть панель озвучивания")
+                            .on_hover_text(t.tts_close_panel)
                             .clicked()
                         {
                             self.show_panel = false;

@@ -29,6 +29,7 @@ impl TextView {
         tts_highlight: Option<usize>,
         on_start_tts: &mut Option<usize>,
     ) {
+        let t = settings.ui_language.t();
         if let Some(doc) = document {
             let total_chapters = doc.chapters().len();
             let chapter = doc.chapters().get(*current_chapter);
@@ -75,11 +76,11 @@ impl TextView {
                             let resp =
                                 ui.add(egui::Label::new(title_job).selectable(allow_select));
                             resp.context_menu(|ui| {
-                                if ui.button("Скопировать").clicked() {
+                                if ui.button(t.copy).clicked() {
                                     ui.ctx().copy_text(clean_title.clone());
                                     ui.close();
                                 }
-                                if ui.button("Выбрать всё (копировать раздел)").clicked()
+                                if ui.button(t.copy_section).clicked()
                                 {
                                     if let Some(full) =
                                         crate::core::ReaderCore::extract_chapter_text(
@@ -143,15 +144,15 @@ impl TextView {
                                     );
                                 }
                                 resp.context_menu(|ui| {
-                                    if ui.add(IconButton::new(Icon::Speech, "Читать вслух с этого места")).clicked() {
+                                    if ui.add(IconButton::new(Icon::Speech, t.read_aloud_from_here)).clicked() {
                                         *on_start_tts = Some(p_idx);
                                         ui.close();
                                     }
-                                    if ui.button("Скопировать").clicked() {
+                                    if ui.button(t.copy).clicked() {
                                         ui.ctx().copy_text(clean_paragraph.clone());
                                         ui.close();
                                     }
-                                    if ui.button("Выбрать всё (копировать раздел)").clicked()
+                                    if ui.button(t.copy_section).clicked()
                                     {
                                         if let Some(full) =
                                             crate::core::ReaderCore::extract_chapter_text(
@@ -187,7 +188,7 @@ impl TextView {
                                 });
 
                             if let Some(prev_idx) = prev_chapter_idx
-                                && ui.button("« Предыдущий раздел").clicked()
+                                && ui.button(t.prev_section).clicked()
                             {
                                 *current_chapter = prev_idx;
                                 *pending_scroll_y = Some(0.0);
@@ -199,7 +200,7 @@ impl TextView {
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     if let Some(next_idx) = next_chapter_idx
-                                        && ui.button("Следующий раздел »").clicked()
+                                        && ui.button(t.next_section).clicked()
                                     {
                                         *current_chapter = next_idx;
                                         *pending_scroll_y = Some(0.0);
@@ -241,7 +242,7 @@ impl TextView {
                 );
                 ui.add_space(10.0);
                 ui.label(
-                    RichText::new("Минималистичная, портативная читалка книг, документов и комиксов")
+                    RichText::new(t.app_subtitle)
                         .size(18.0)
                         .color(theme.text_color()),
                 );
@@ -250,14 +251,14 @@ impl TextView {
                 ui.horizontal(|ui| {
                     let open_btn = IconButton::new(
                         Icon::OpenFile,
-                        "Выбрать книгу / PDF / комикс",
+                        t.choose_book_btn,
                     )
                     .font_size(17.0)
                     .min_size(Vec2::new(280.0, 46.0));
 
                     if ui
                         .add(open_btn)
-                        .on_hover_text("PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z")
+                        .on_hover_text(t.open_file_tooltip)
                         .clicked()
                     {
                         *on_open_file = true;
@@ -265,19 +266,19 @@ impl TextView {
 
                     let open_dir_btn = IconButton::new(
                         Icon::Folder,
-                        "Открыть папку манги",
+                        t.open_manga_folder_btn,
                     )
                     .font_size(17.0)
                     .min_size(Vec2::new(240.0, 46.0));
 
-                    if ui.add(open_dir_btn).on_hover_text("Каталог с изображениями (JPG, PNG, WebP)").clicked() {
+                    if ui.add(open_dir_btn).on_hover_text(t.images_folder_hint).clicked() {
                         *on_open_folder = true;
                     }
                 });
 
                 ui.add_space(16.0);
                 ui.label(
-                    RichText::new("или перетащите файл (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7) или папку с мангой в это окно")
+                    RichText::new(t.drag_drop_hint)
                         .size(14.0)
                         .color(Color32::from_gray(140)),
                 );
@@ -286,14 +287,15 @@ impl TextView {
                     ui.add_space(28.0);
                     ui.separator();
                     ui.add_space(12.0);
-                    ui.label(RichText::new("Недавние книги:").strong().size(16.0));
+                    ui.label(RichText::new(t.recent_books_header).strong().size(16.0));
                     ui.add_space(10.0);
 
                     for book in settings.recent_books.iter().take(4) {
+                        let sec_str = t.section_num.replace("{}", &(book.chapter + 1).to_string());
                         let label = if book.author.is_empty() {
-                            format!("{} (Раздел {})", book.title, book.chapter + 1)
+                            format!("{} ({})", book.title, sec_str)
                         } else {
-                            format!("{} — {} (Раздел {})", book.author, book.title, book.chapter + 1)
+                            format!("{} — {} ({})", book.author, book.title, sec_str)
                         };
                         if ui.add(IconButton::new(Icon::Book, &label).font_size(14.0)).clicked() {
                             *on_load_recent = Some(book.path.clone());

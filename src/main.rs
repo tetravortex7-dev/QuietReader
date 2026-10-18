@@ -4,6 +4,7 @@
 mod app;
 mod core;
 mod document;
+pub mod i18n;
 mod platform;
 mod settings;
 

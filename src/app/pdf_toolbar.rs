@@ -13,13 +13,15 @@ impl PdfViewState {
         theme: &ReaderTheme,
         status_message: &mut Option<String>,
         format_label: &str,
+        lang: crate::i18n::UiLanguage,
     ) {
+        let t = lang.t();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
 
             if ui
                 .add_enabled(self.current_page > 0, egui::Button::new("◀"))
-                .on_hover_text("Предыдущая страница (←, ↑, PageUp)")
+                .on_hover_text(t.prev_page)
                 .clicked()
             {
                 let step = if settings.layout == "Double" { 2 } else { 1 };
@@ -30,7 +32,7 @@ impl PdfViewState {
                 self.page_input = (self.current_page + 1).to_string();
             }
             let cur_display = self.current_page + 1;
-            ui.label(RichText::new("Стр.").size(13.0));
+            ui.label(RichText::new(t.page_prefix).size(13.0));
             let text_edit = ui.add(
                 egui::TextEdit::singleline(&mut self.page_input)
                     .desired_width(38.0)
@@ -47,11 +49,11 @@ impl PdfViewState {
                 self.page_input = cur_display.to_string();
             }
 
-            ui.label(RichText::new(format!("из {page_count}")).size(13.0));
+            ui.label(RichText::new(format!("{} {page_count}", t.page_of)).size(13.0));
 
             if ui
                 .add_enabled(self.current_page + 1 < page_count, egui::Button::new("▶"))
-                .on_hover_text("Следующая страница (→, ↓, PageDown, Пробел)")
+                .on_hover_text(t.next_page)
                 .clicked()
             {
                 let step = if settings.layout == "Double" { 2 } else { 1 };
@@ -62,7 +64,7 @@ impl PdfViewState {
 
             if ui
                 .button("−")
-                .on_hover_text("Уменьшить масштаб (Ctrl -)")
+                .on_hover_text(t.zoom_out)
                 .clicked()
             {
                 super::paged_common::zoom_out(&mut settings.zoom_percent, &mut settings.fit_mode);
@@ -71,7 +73,7 @@ impl PdfViewState {
             let zoom_lbl = format!("{:.0}%", settings.zoom_percent);
             if ui
                 .button(RichText::new(zoom_lbl).strong())
-                .on_hover_text("Сбросить масштаб на 100% (Ctrl 0)")
+                .on_hover_text(t.zoom_reset)
                 .clicked()
             {
                 super::paged_common::zoom_reset(
@@ -83,14 +85,14 @@ impl PdfViewState {
 
             if ui
                 .button("+")
-                .on_hover_text("Увеличить масштаб (Ctrl +)")
+                .on_hover_text(t.zoom_in)
                 .clicked()
             {
                 super::paged_common::zoom_in(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
             if ui
-                .selectable_label(settings.fit_mode == "FitWidth", "По ширине")
+                .selectable_label(settings.fit_mode == "FitWidth", t.fit_width_btn)
                 .on_hover_text("Масштабировать по ширине окна")
                 .clicked()
             {
@@ -99,7 +101,7 @@ impl PdfViewState {
             }
 
             if ui
-                .selectable_label(settings.fit_mode == "FitWindow", "Целая страница")
+                .selectable_label(settings.fit_mode == "FitWindow", t.fit_window_btn)
                 .on_hover_text("Уместить страницу целиком в окно")
                 .clicked()
             {
@@ -110,7 +112,7 @@ impl PdfViewState {
             ui.separator();
 
             if ui
-                .button("⟳ Повернуть")
+                .button(t.rotate_clockwise)
                 .on_hover_text("Повернуть страницы на 90° по часовой стрелке")
                 .clicked()
             {
@@ -121,7 +123,7 @@ impl PdfViewState {
             ui.separator();
 
             if ui
-                .selectable_label(settings.layout == "Single", "1 стр.")
+                .selectable_label(settings.layout == "Single", t.single_page_btn)
                 .on_hover_text("Одиночная страница")
                 .clicked()
             {
@@ -130,7 +132,7 @@ impl PdfViewState {
             }
 
             if ui
-                .selectable_label(settings.layout == "Double", "2 стр.")
+                .selectable_label(settings.layout == "Double", t.double_page_btn)
                 .on_hover_text("Две страницы (разворот)")
                 .clicked()
             {
@@ -139,7 +141,7 @@ impl PdfViewState {
             }
 
             if ui
-                .selectable_label(settings.layout == "Continuous", "Свиток")
+                .selectable_label(settings.layout == "Continuous", t.scroll_btn)
                 .on_hover_text("Непрерывный вертикальный свиток страниц")
                 .clicked()
             {
@@ -152,7 +154,7 @@ impl PdfViewState {
             if !self.selected_text.is_empty() {
                 if ui
                     .button(
-                        RichText::new("Скопировать")
+                        RichText::new(t.copy)
                             .strong()
                             .color(theme.accent_color()),
                     )

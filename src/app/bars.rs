@@ -20,7 +20,9 @@ pub fn render_top_bar(
     has_document: bool,
     is_fullscreen: bool,
     show_toc: bool,
+    lang: crate::i18n::UiLanguage,
 ) -> TopBarActions {
+    let t = lang.t();
     let mut actions = TopBarActions {
         open_file: false,
         open_folder: false,
@@ -34,38 +36,38 @@ pub fn render_top_bar(
 
     Panel::top("top_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
-            if icon_button(ui, Icon::OpenFile, "Открыть...").on_hover_text("Открыть один или несколько файлов в новых вкладках (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z)").clicked() {
+            if icon_button(ui, Icon::OpenFile, t.open_file).on_hover_text(t.open_file_tooltip).clicked() {
                 actions.open_file = true;
             }
-            if icon_button(ui, Icon::Folder, "Папка...").on_hover_text("Открыть каталог с изображениями манги или комикса в новой вкладке").clicked() {
+            if icon_button(ui, Icon::Folder, t.open_folder).on_hover_text(t.open_folder_tooltip).clicked() {
                 actions.open_folder = true;
             }
-            if icon_button(ui, Icon::Recent, "Недавние...").on_hover_text("Список недавно открытых книг").clicked() {
+            if icon_button(ui, Icon::Recent, t.recent_books).on_hover_text(t.recent_books_tooltip).clicked() {
                 actions.toggle_recent = true;
             }
             if has_document {
                 ui.separator();
-                let toc_text = if show_toc { "Скрыть оглавление" } else { "Оглавление" };
+                let toc_text = if show_toc { t.hide_toc } else { t.toc };
                 if icon_button(ui, Icon::Toc, toc_text).clicked() {
                     actions.toggle_toc = true;
                 }
-                if icon_button(ui, Icon::Search, "Поиск (Ctrl+F)").on_hover_text("Поиск по тексту книги (Ctrl+F)").clicked() {
+                if icon_button(ui, Icon::Search, t.search).on_hover_text(t.search_tooltip).clicked() {
                     actions.toggle_search = true;
                 }
-                if icon_button(ui, Icon::Speech, "Озвучить").on_hover_text("Озвучивание текста вслух (TTS)").clicked() {
+                if icon_button(ui, Icon::Speech, t.speech).on_hover_text(t.speech_tooltip).clicked() {
                     actions.toggle_tts = true;
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (fs_icon, fs_text) = if is_fullscreen {
-                    (Icon::Windowed, "Оконный (F)")
+                    (Icon::Windowed, t.windowed)
                 } else {
-                    (Icon::Fullscreen, "На весь экран (F)")
+                    (Icon::Fullscreen, t.fullscreen)
                 };
-                if icon_button(ui, fs_icon, fs_text).on_hover_text("Полноэкранный режим чтения (горячая клавиша: F, выход: F или Esc)").clicked() {
+                if icon_button(ui, fs_icon, fs_text).on_hover_text(t.fullscreen_tooltip).clicked() {
                     actions.toggle_fullscreen = true;
                 }
-                if icon_button(ui, Icon::Settings, "Настройки...").on_hover_text("Шрифты, темы оформления, автопрокрутка, комиксы и горячие клавиши").clicked() {
+                if icon_button(ui, Icon::Settings, t.settings).on_hover_text(t.settings_tooltip).clicked() {
                     actions.toggle_settings = true;
                 }
             });
@@ -84,7 +86,9 @@ pub fn render_bottom_bar(
     pdf_page: (usize, usize),
     comic_page: (usize, usize),
     text_chapter: (usize, usize, f32, f32),
+    lang: crate::i18n::UiLanguage,
 ) {
+    let t = lang.t();
     Panel::bottom("bottom_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
             if let Some(doc) = document {
@@ -107,7 +111,7 @@ pub fn render_bottom_bar(
             } else if let Some(msg) = status_message {
                 ui.label(msg);
             } else {
-                ui.label("Готов к чтению");
+                ui.label(t.ready_to_read);
             }
 
             let (cur_str, pct_str) = match view_kind {
@@ -123,7 +127,7 @@ pub fn render_bottom_bar(
                     } else {
                         0.0
                     };
-                    (format!("Страница {cur}/{total}"), format!("{pct:.1}%"))
+                    (format!("{} {cur}/{total}", t.page_prefix), format!("{pct:.1}%"))
                 }
                 DocumentViewKind::Comic => {
                     let (cur_idx, total) = comic_page;
@@ -137,16 +141,19 @@ pub fn render_bottom_bar(
                     } else {
                         0.0
                     };
-                    (format!("Страница {cur}/{total}"), format!("{pct:.1}%"))
+                    (format!("{} {cur}/{total}", t.page_prefix), format!("{pct:.1}%"))
                 }
                 DocumentViewKind::Text => {
                     if let Some(doc) = document {
                         let (ch_idx, total_chapters, cur_scroll, max_scroll) = text_chapter;
                         let (cur_page, total_pages, pct) =
                             calculate_text_pages(doc.chapters(), ch_idx, cur_scroll, max_scroll);
-                        let page_info = format!("Страница {cur_page}/{total_pages}");
+                        let page_info = format!("{} {cur_page}/{total_pages}", t.page_prefix);
                         let cur_str = if total_chapters > 1 {
-                            format!("{page_info}  •  Раздел {} из {total_chapters}", ch_idx + 1)
+                            let sec_str = t.section_x_of_y
+                                .replacen("{}", &(ch_idx + 1).to_string(), 1)
+                                .replacen("{}", &total_chapters.to_string(), 1);
+                            format!("{page_info}  •  {sec_str}")
                         } else {
                             page_info
                         };

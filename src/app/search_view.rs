@@ -85,11 +85,13 @@ impl SearchView {
         pending_scroll_y: &mut Option<f32>,
         font_size: f32,
         theme: &ReaderTheme,
+        lang: crate::i18n::UiLanguage,
     ) {
         if !state.is_open {
             return;
         }
 
+        let t = lang.t();
         let mut jump_target = None;
 
         egui::Area::new(Id::unique("floating_search_panel"))
@@ -107,7 +109,7 @@ impl SearchView {
                         ui.add(IconLabel::new(Icon::Search, "").size(14.0).color(theme.accent_color()));
 
                         let text_edit = egui::TextEdit::singleline(&mut state.query)
-                            .hint_text("Поиск по книге...")
+                            .hint_text(t.search_placeholder)
                             .desired_width(190.0);
                         let resp = ui.add(text_edit);
 
@@ -138,13 +140,13 @@ impl SearchView {
                             );
                         } else if total == 0 {
                             ui.label(
-                                RichText::new("0 из 0")
+                                RichText::new(format!("0 {} 0", t.page_of))
                                     .size(12.0)
                                     .color(Color32::from_rgb(220, 80, 80)),
                             );
                         } else {
                             ui.label(
-                                RichText::new(format!("{} из {total}", state.current_hit_index + 1))
+                                RichText::new(format!("{} {} {total}", state.current_hit_index + 1, t.page_of))
                                     .size(12.5)
                                     .strong()
                                     .color(theme.text_color()),
@@ -154,23 +156,23 @@ impl SearchView {
                         let prev_btn = ui.add(
                             IconButton::new(Icon::ChevronUp, "")
                                 .min_size(Vec2::new(24.0, 22.0)),
-                        ).on_hover_text("Предыдущее (Shift+Enter)");
+                        ).on_hover_text(t.search_prev);
 
                         let next_btn = ui.add(
                             IconButton::new(Icon::ChevronDown, "")
                                 .min_size(Vec2::new(24.0, 22.0)),
-                        ).on_hover_text("Следующее (Enter)");
+                        ).on_hover_text(t.search_next);
 
                         let list_btn = ui.add(
                             IconButton::new(Icon::Toc, "")
                                 .min_size(Vec2::new(24.0, 22.0))
                                 .selected(state.show_results_dropdown),
-                        ).on_hover_text("Список результатов");
+                        );
 
                         let close_btn = ui.add(
                             IconButton::new(Icon::Close, "")
                                 .min_size(Vec2::new(24.0, 22.0)),
-                        ).on_hover_text("Закрыть поиск (Esc)");
+                        );
 
                         if close_btn.clicked() {
                             state.close();
@@ -216,7 +218,7 @@ impl SearchView {
                                         .and_then(|d| d.chapters().get(hit.chapter_index))
                                         .map(|c| crate::document::strip_formatting_tags(&c.title))
                                         .filter(|t| !t.is_empty())
-                                        .unwrap_or_else(|| format!("Раздел {}", hit.chapter_index + 1));
+                                        .unwrap_or_else(|| t.section_num.replace("{}", &(hit.chapter_index + 1).to_string()));
 
                                     ui.group(|ui| {
                                         ui.horizontal(|ui| {

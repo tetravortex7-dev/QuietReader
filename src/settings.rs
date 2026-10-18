@@ -126,6 +126,10 @@ fn default_associated_extensions() -> Vec<String> {
     vec!["fb2".to_string(), "epub".to_string()]
 }
 
+fn default_ui_language() -> crate::i18n::UiLanguage {
+    crate::i18n::UiLanguage::Ru
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppSettings {
@@ -148,6 +152,8 @@ pub struct AppSettings {
     pub associated_extensions: Vec<String>,
     pub comic: ComicSettings,
     pub pdf: PdfSettings,
+    #[serde(default = "default_ui_language")]
+    pub ui_language: crate::i18n::UiLanguage,
 }
 
 impl Default for AppSettings {
@@ -170,6 +176,7 @@ impl Default for AppSettings {
             associated_extensions: default_associated_extensions(),
             comic: ComicSettings::default(),
             pdf: PdfSettings::default(),
+            ui_language: default_ui_language(),
         }
     }
 }

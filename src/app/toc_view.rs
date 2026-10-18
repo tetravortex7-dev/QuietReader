@@ -14,6 +14,7 @@ impl TocView {
         current_page: &mut usize,
         show_toc: &mut bool,
         theme: &ReaderTheme,
+        lang: crate::i18n::UiLanguage,
     ) {
         if !*show_toc {
             return;
@@ -24,6 +25,7 @@ impl TocView {
             None => return,
         };
 
+        let t = lang.t();
         let available_w = ui.available_width();
         let max_toc_w = (available_w * 0.45).clamp(200.0, 480.0);
         let mut close_toc = false;
@@ -39,11 +41,11 @@ impl TocView {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
 
                 ui.horizontal(|ui| {
-                    ui.heading("Оглавление");
+                    ui.heading(t.toc);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .small_button("×")
-                            .on_hover_text("Скрыть оглавление")
+                            .on_hover_text(t.hide_toc)
                             .clicked()
                         {
                             close_toc = true;
@@ -105,18 +107,19 @@ impl TocView {
                                             let page_name = page_content.page_name(p);
                                             let label = if is_double && p + 1 < page_count {
                                                 if page_name.is_empty() {
-                                                    format!("Стр. {}-{}", p + 1, p + 2)
+                                                    format!("{} {}-{}", t.page_prefix, p + 1, p + 2)
                                                 } else {
                                                     format!(
-                                                        "Стр. {}-{} ({page_name})",
+                                                        "{} {}-{} ({page_name})",
+                                                        t.page_prefix,
                                                         p + 1,
                                                         p + 2
                                                     )
                                                 }
                                             } else if page_name.is_empty() {
-                                                format!("Стр. {}", p + 1)
+                                                format!("{} {}", t.page_prefix, p + 1)
                                             } else {
-                                                format!("Стр. {} ({page_name})", p + 1)
+                                                format!("{} {} ({page_name})", t.page_prefix, p + 1)
                                             };
 
                                             let mut rich = RichText::new(label);
@@ -155,7 +158,7 @@ impl TocView {
                             if toc.is_empty() {
                                 ui.add_space(8.0);
                                 ui.label(
-                                    RichText::new("В этой книге нет оглавления")
+                                    RichText::new(t.toc_no_chapters)
                                         .italics()
                                         .color(Color32::from_gray(140)),
                                 );

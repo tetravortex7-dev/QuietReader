@@ -562,6 +562,7 @@ impl PdfViewState {
         viewport_height: &mut f32,
         max_scroll_y: &mut f32,
         status_message: &mut Option<String>,
+        lang: crate::i18n::UiLanguage,
     ) {
         self.poll_responses(ctx, status_message);
 
@@ -572,7 +573,7 @@ impl PdfViewState {
         let page_count = self.page_count(document);
         if page_count == 0 {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("В этом документе нет страниц").color(theme.text_color()));
+                ui.label(RichText::new(lang.t().no_pages_in_doc).color(theme.text_color()));
             });
             return;
         }
@@ -587,6 +588,7 @@ impl PdfViewState {
             theme,
             status_message,
             format_label,
+            lang,
         );
         ui.add_space(4.0);
         ui.separator();

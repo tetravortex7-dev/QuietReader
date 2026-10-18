@@ -27,20 +27,21 @@ impl SettingsView {
         let card_bg = theme.panel_bg_color();
         let card_stroke = egui::Stroke::new(1.0, accent_color.gamma_multiply(0.35));
 
+        let t = settings.ui_language.t();
         ui.vertical_centered(|ui| {
             ui.set_max_width(760.0);
             ui.add_space(8.0);
 
             ui.horizontal(|ui| {
                 ui.add(
-                    IconLabel::new(Icon::Settings, "Настройки QuietReader")
+                    IconLabel::new(Icon::Settings, t.settings_title)
                         .size(22.0)
                         .strong()
                         .color(text_color),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add(IconButton::new(Icon::Close, "Вернуться к чтению").font_size(14.0))
+                        .add(IconButton::new(Icon::Close, t.back_to_reading).font_size(14.0))
                         .clicked()
                     {
                         *show_settings = false;
@@ -51,7 +52,7 @@ impl SettingsView {
             ui.add_space(4.0);
             if let Some(err) = AppSettings::last_save_error() {
                 ui.add(
-                    IconLabel::new(Icon::Warning, &format!("Ошибка сохранения настроек: {err}"))
+                    IconLabel::new(Icon::Warning, &t.save_settings_error.replace("{}", &err))
                         .color(Color32::RED)
                         .strong(),
                 );
@@ -62,12 +63,12 @@ impl SettingsView {
 
             ui.horizontal_wrapped(|ui| {
                 let tabs = [
-                    (SettingsTab::Fonts, Icon::Fonts, "Шрифты и текст"),
-                    (SettingsTab::Appearance, Icon::Appearance, "Внешний вид"),
-                    (SettingsTab::AutoScroll, Icon::AutoScroll, "Автопрокрутка"),
-                    (SettingsTab::ComicsAndManga, Icon::Book, "Комиксы и манга"),
-                    (SettingsTab::Hotkeys, Icon::Keyboard, "Горячие клавиши"),
-                    (SettingsTab::System, Icon::Settings, "Система и файлы"),
+                    (SettingsTab::Fonts, Icon::Fonts, t.tab_fonts),
+                    (SettingsTab::Appearance, Icon::Appearance, t.tab_appearance),
+                    (SettingsTab::AutoScroll, Icon::AutoScroll, t.tab_autoscroll),
+                    (SettingsTab::ComicsAndManga, Icon::Book, t.tab_comics),
+                    (SettingsTab::Hotkeys, Icon::Keyboard, t.tab_hotkeys),
+                    (SettingsTab::System, Icon::Settings, t.tab_system),
                 ];
 
                 for (tab, icon, label) in tabs {
@@ -118,7 +119,9 @@ impl SettingsView {
                             SettingsTab::ComicsAndManga => {
                                 Self::render_comics_tab(ui, settings, theme, on_save_settings)
                             }
-                            SettingsTab::Hotkeys => Self::render_hotkeys_tab(ui, theme),
+                            SettingsTab::Hotkeys => {
+                                Self::render_hotkeys_tab(ui, theme, settings.ui_language)
+                            }
                             SettingsTab::System => Self::render_system_tab(
                                 ui,
                                 settings,
@@ -139,18 +142,14 @@ impl SettingsView {
         theme: &ReaderTheme,
         on_save_settings: &mut bool,
     ) {
+        let t = settings.ui_language.t();
         let text_color = theme.text_color();
 
         ui.label(
-            RichText::new("Гарнитура текста книги")
+            RichText::new(t.font_choice)
                 .size(17.0)
                 .strong()
                 .color(text_color),
-        );
-        ui.label(
-            RichText::new("Выберите типографику для максимального комфорта ваших глаз:")
-                .size(13.0)
-                .color(text_color.gamma_multiply(0.75)),
         );
         ui.add_space(8.0);
 
@@ -213,14 +212,14 @@ impl SettingsView {
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("Размер шрифта:")
+                RichText::new(t.font_size)
                     .size(15.0)
                     .strong()
                     .color(text_color),
             );
             if ui
                 .add(IconButton::new(Icon::Minus, "").min_size(egui::Vec2::new(26.0, 22.0)))
-                .on_hover_text("Уменьшить шрифт (Ctrl+-)")
+                .on_hover_text(t.font_decrease_tip)
                 .clicked()
                 && *font_size > 12.0
             {
@@ -237,7 +236,7 @@ impl SettingsView {
             }
             if ui
                 .add(IconButton::new(Icon::Plus, "").min_size(egui::Vec2::new(26.0, 22.0)))
-                .on_hover_text("Увеличить шрифт (Ctrl+=)")
+                .on_hover_text(t.font_increase_tip)
                 .clicked()
                 && *font_size < 36.0
             {
@@ -253,10 +252,9 @@ impl SettingsView {
             .corner_radius(6.0)
             .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
-                ui.label(RichText::new("Живой предпросмотр текста:").italics().size(12.0).color(text_color.gamma_multiply(0.65)));
+                ui.label(RichText::new(t.live_preview).italics().size(12.0).color(text_color.gamma_multiply(0.65)));
                 ui.add_space(6.0);
-                let sample = "— В тишине страниц оживают миры. Чтение — это не просто буквы на экране, а живой разговор с мудростью прошлых эпох.\n\nБыть спокойным, видеть ясно, читать с удовольствием.";
-                ui.label(RichText::new(sample).size(*font_size).color(text_color));
+                ui.label(RichText::new(t.sample_text).size(*font_size).color(text_color));
             });
     }
 
@@ -267,10 +265,38 @@ impl SettingsView {
         settings: &mut AppSettings,
         on_save_settings: &mut bool,
     ) {
+        let t = settings.ui_language.t();
         let text_color = theme.text_color();
 
         ui.label(
-            RichText::new("Цветовая тема читалки")
+            RichText::new(t.interface_language)
+                .size(17.0)
+                .strong()
+                .color(text_color),
+        );
+        ui.label(
+            RichText::new(t.interface_language_desc)
+                .size(13.0)
+                .color(text_color.gamma_multiply(0.75)),
+        );
+        ui.add_space(6.0);
+
+        ui.horizontal_wrapped(|ui| {
+            for &lang in crate::i18n::UiLanguage::ALL.iter() {
+                let is_sel = settings.ui_language == lang;
+                if ui.selectable_label(is_sel, lang.native_name()).clicked() && !is_sel {
+                    settings.ui_language = lang;
+                    *on_save_settings = true;
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        ui.label(
+            RichText::new(t.theme_title)
                 .size(17.0)
                 .strong()
                 .color(text_color),
@@ -357,7 +383,7 @@ impl SettingsView {
         ui.separator();
         ui.add_space(8.0);
 
-        let label = RichText::new("Не выключать экран во время чтения")
+        let label = RichText::new(t.keep_screen_on)
             .size(14.0)
             .strong()
             .color(text_color);
@@ -367,7 +393,7 @@ impl SettingsView {
             *on_save_settings = true;
         }
         ui.label(
-            RichText::new("Пока окно QuietReader активно, дисплей не гаснет автоматически.")
+            RichText::new(t.keep_screen_on_desc)
                 .size(12.0)
                 .color(text_color.gamma_multiply(0.7)),
         );
@@ -381,25 +407,26 @@ impl SettingsView {
         theme: &ReaderTheme,
         on_save_settings: &mut bool,
     ) {
+        let t = settings.ui_language.t();
         let text_color = theme.text_color();
 
         ui.label(
-            RichText::new("Автоматическая промотка страниц")
+            RichText::new(t.autoscroll_title)
                 .size(17.0)
                 .strong()
                 .color(text_color),
         );
         ui.label(
-            RichText::new("Чтение без постоянных касаний колесика мыши:")
+            RichText::new(t.autoscroll_desc)
                 .size(13.0)
                 .color(text_color.gamma_multiply(0.75)),
         );
         ui.add_space(8.0);
 
         let (scroll_icon, scroll_text) = if *is_autoscrolling {
-            (Icon::Pause, "Остановить автопрокрутку (клавиша A)")
+            (Icon::Pause, t.autoscroll_stop)
         } else {
-            (Icon::Play, "Запустить автопрокрутку (клавиша A)")
+            (Icon::Play, t.autoscroll_start)
         };
         if ui
             .add(IconButton::new(scroll_icon, scroll_text).font_size(14.0))
@@ -410,12 +437,12 @@ impl SettingsView {
 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Тип движения:").strong().color(text_color));
+            ui.label(RichText::new(t.motion_type).strong().color(text_color));
             if ui
                 .radio_value(
                     &mut settings.auto_scroll.pause_mode,
                     true,
-                    "С паузами (шаг + остановка)",
+                    t.mode_pause,
                 )
                 .clicked()
             {
@@ -425,7 +452,7 @@ impl SettingsView {
                 .radio_value(
                     &mut settings.auto_scroll.pause_mode,
                     false,
-                    "Непрерывный (плавный скролл)",
+                    t.mode_continuous,
                 )
                 .clicked()
             {
@@ -436,7 +463,7 @@ impl SettingsView {
         ui.add_space(8.0);
         if settings.auto_scroll.pause_mode {
             ui.horizontal(|ui| {
-                ui.label("Время паузы для чтения:");
+                ui.label(t.pause_duration);
                 let resp = ui.add(
                     egui::Slider::new(&mut settings.auto_scroll.pause_duration, 0.5..=15.0)
                         .suffix(" сек"),
@@ -446,7 +473,7 @@ impl SettingsView {
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Шаг сдвига:");
+                ui.label(t.step_distance);
                 let resp = ui.add(
                     egui::Slider::new(&mut settings.auto_scroll.step_distance, 30.0..=350.0)
                         .suffix(" px"),
@@ -457,7 +484,7 @@ impl SettingsView {
             });
         } else {
             ui.horizontal(|ui| {
-                ui.label("Скорость прокрутки:");
+                ui.label(t.scroll_speed);
                 let resp = ui.add(
                     egui::Slider::new(&mut settings.auto_scroll.continuous_speed, 10.0..=250.0)
                         .suffix(" px/сек"),
@@ -475,9 +502,10 @@ impl SettingsView {
         theme: &ReaderTheme,
         on_save_settings: &mut bool,
     ) {
+        let t = settings.ui_language.t();
         let text_color = theme.text_color();
         ui.label(
-            RichText::new("Параметры комиксов, манги и PDF")
+            RichText::new(t.comics_title)
                 .size(17.0)
                 .strong()
                 .color(text_color),
@@ -487,23 +515,23 @@ impl SettingsView {
         let modes = [
             (
                 "Auto",
-                "Авто (японский порядок R2L для манги, обычный для остальных)",
-                "Определяет ориентацию по метаданным архива",
+                t.mode_auto,
+                t.mode_auto_desc,
             ),
             (
                 "Manga",
-                "Только манга (справа-налево)",
-                "Принудительный японский порядок страниц R2L",
+                t.mode_manga,
+                t.mode_manga_desc,
             ),
             (
                 "Comic",
-                "Обычный комикс (слева-направо)",
-                "Европейский порядок страниц L2R",
+                t.mode_comic,
+                t.mode_comic_desc,
             ),
             (
                 "Webtoon",
-                "Вебтун (вертикальная лента)",
-                "Непрерывная вертикальная прокрутка",
+                t.mode_webtoon,
+                t.mode_webtoon_desc,
             ),
         ];
 
@@ -545,7 +573,7 @@ impl SettingsView {
         ui.separator();
         ui.add_space(6.0);
         ui.label(
-            RichText::new("Разворот и масштаб страниц:")
+            RichText::new(t.layout_title)
                 .strong()
                 .color(text_color),
         );
@@ -553,12 +581,12 @@ impl SettingsView {
             let s1 = ui.radio_value(
                 &mut settings.comic.page_layout,
                 "Single".to_string(),
-                "Одиночная (1)",
+                t.layout_single,
             );
             let s2 = ui.radio_value(
                 &mut settings.comic.page_layout,
                 "Double".to_string(),
-                "Разворот (2)",
+                t.layout_double,
             );
             if s1.clicked() || s2.clicked() {
                 *on_save_settings = true;
@@ -566,9 +594,9 @@ impl SettingsView {
         });
         ui.horizontal_wrapped(|ui| {
             for (val, label) in [
-                ("FitWindow", "По окну"),
-                ("FitWidth", "По ширине"),
-                ("FitHeight", "По высоте"),
+                ("FitWindow", t.fit_window),
+                ("FitWidth", t.fit_width),
+                ("FitHeight", t.fit_height),
                 ("Original", "100%"),
             ] {
                 if ui
@@ -581,10 +609,11 @@ impl SettingsView {
         });
     }
 
-    fn render_hotkeys_tab(ui: &mut egui::Ui, theme: &ReaderTheme) {
+    fn render_hotkeys_tab(ui: &mut egui::Ui, theme: &ReaderTheme, lang: crate::i18n::UiLanguage) {
+        let t = lang.t();
         let text_color = theme.text_color();
         ui.label(
-            RichText::new("Горячие клавиши читалки")
+            RichText::new(t.tab_hotkeys)
                 .size(17.0)
                 .strong()
                 .color(text_color),
@@ -648,11 +677,12 @@ impl SettingsView {
         on_save_settings: &mut bool,
         theme: &ReaderTheme,
     ) {
+        let t = settings.ui_language.t();
         let text_color = theme.text_color();
         let card_stroke = egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.25));
 
         ui.label(
-            RichText::new("Интеграция с системой и хранилище")
+            RichText::new(t.system_title)
                 .size(17.0)
                 .strong()
                 .color(text_color),
@@ -667,16 +697,16 @@ impl SettingsView {
                 .inner_margin(egui::Margin::symmetric(12, 10))
                 .show(ui, |ui| {
                     ui.label(
-                        RichText::new("Ассоциация форматов с QuietReader:")
+                        RichText::new(t.assoc_title)
                             .strong()
                             .color(text_color),
                     );
                     ui.add_space(4.0);
-                    ui.label("Отметьте форматы, которые вы хотите открывать в QuietReader:");
+                    ui.label(t.assoc_hint);
                     ui.add_space(6.0);
 
                     ui.horizontal(|ui| {
-                        if ui.small_button("Выбрать все").clicked() {
+                        if ui.small_button(t.select_all).clicked() {
                             settings.associated_extensions =
                                 crate::platform::SUPPORTED_EXTENSIONS_INFO
                                     .iter()
@@ -684,11 +714,11 @@ impl SettingsView {
                                     .collect();
                             *on_save_settings = true;
                         }
-                        if ui.small_button("Снять все").clicked() {
+                        if ui.small_button(t.deselect_all).clicked() {
                             settings.associated_extensions.clear();
                             *on_save_settings = true;
                         }
-                        if ui.small_button("Только книги (FB2, EPUB)").clicked() {
+                        if ui.small_button(t.only_books).clicked() {
                             settings.associated_extensions =
                                 vec!["fb2".to_string(), "epub".to_string()];
                             *on_save_settings = true;
@@ -725,7 +755,7 @@ impl SettingsView {
                                 match crate::platform::check_extension_association_status(ext) {
                                     crate::platform::AssociationStatus::Default => {
                                         ui.add(
-                                            IconLabel::new(Icon::Check, "по умолчанию")
+                                            IconLabel::new(Icon::Check, t.status_default)
                                                 .size(11.0)
                                                 .color(Color32::from_rgb(46, 139, 87))
                                                 .strong(),
@@ -733,7 +763,7 @@ impl SettingsView {
                                     }
                                     crate::platform::AssociationStatus::Registered => {
                                         ui.label(
-                                            RichText::new("зарегистрирован")
+                                            RichText::new(t.status_registered)
                                                 .size(11.0)
                                                 .color(Color32::GRAY),
                                         );
@@ -752,10 +782,8 @@ impl SettingsView {
                         .add_enabled(
                             has_selected,
                             egui::Button::new(
-                                RichText::new(
-                                    "Зарегистрировать выбранные и открыть параметры Windows",
-                                )
-                                .strong(),
+                                RichText::new(t.register_btn)
+                                    .strong(),
                             ),
                         )
                         .clicked()
@@ -767,7 +795,7 @@ impl SettingsView {
                     if ui
                         .checkbox(
                             &mut settings.dismiss_association_prompt,
-                            "Не показывать диалог ассоциации при старте программы",
+                            t.dont_show_assoc,
                         )
                         .changed()
                     {
@@ -784,7 +812,7 @@ impl SettingsView {
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
                 ui.label(
-                    RichText::new("Хранилище настроек:")
+                    RichText::new(t.settings_storage)
                         .strong()
                         .color(text_color),
                 );
@@ -797,7 +825,7 @@ impl SettingsView {
                 );
                 ui.add_space(6.0);
                 if ui
-                    .add(IconButton::new(Icon::Check, "Сохранить настройки сейчас"))
+                    .add(IconButton::new(Icon::Check, t.save_settings_now))
                     .clicked()
                 {
                     *on_save_settings = true;

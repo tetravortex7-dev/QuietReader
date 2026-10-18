@@ -242,14 +242,16 @@ impl ComicViewState {
         settings: &mut ComicSettings,
         theme: &ReaderTheme,
         is_manga: bool,
+        lang: crate::i18n::UiLanguage,
     ) {
+        let t = lang.t();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
 
             let prev_enabled = self.current_page > 0;
             if ui
                 .add_enabled(prev_enabled, egui::Button::new("◀"))
-                .on_hover_text("Предыдущая страница")
+                .on_hover_text(t.prev_page)
                 .clicked()
             {
                 self.prev_page(settings);
@@ -259,7 +261,7 @@ impl ComicViewState {
                 self.page_input = (self.current_page + 1).to_string();
             }
             let cur_display = self.current_page + 1;
-            ui.label(RichText::new("Стр.").size(13.0));
+            ui.label(RichText::new(t.page_prefix).size(13.0));
             let text_edit = ui.add(
                 egui::TextEdit::singleline(&mut self.page_input)
                     .desired_width(38.0)
@@ -277,12 +279,12 @@ impl ComicViewState {
                 self.page_input = cur_display.to_string();
             }
 
-            ui.label(RichText::new(format!("из {page_count}")).size(13.0));
+            ui.label(RichText::new(format!("{} {page_count}", t.page_of)).size(13.0));
 
             let next_enabled = self.current_page + 1 < page_count;
             if ui
                 .add_enabled(next_enabled, egui::Button::new("▶"))
-                .on_hover_text("Следующая страница")
+                .on_hover_text(t.next_page)
                 .clicked()
             {
                 self.next_page(page_count, settings);
@@ -292,8 +294,7 @@ impl ComicViewState {
 
             let is_manga_active = settings.reading_mode == "Manga";
             if ui
-                .selectable_label(is_manga_active, "🍙 Манга (RTL)")
-                .on_hover_text("Режим чтения справа-налево (японская манга)")
+                .selectable_label(is_manga_active, t.manga_mode_btn)
                 .clicked()
             {
                 settings.reading_mode = "Manga".to_string();
@@ -301,8 +302,7 @@ impl ComicViewState {
 
             let is_comic_active = settings.reading_mode == "Comic";
             if ui
-                .selectable_label(is_comic_active, "📖 Комикс (LTR)")
-                .on_hover_text("Режим чтения слева-направо (европейские и американские комиксы)")
+                .selectable_label(is_comic_active, t.comic_mode_btn)
                 .clicked()
             {
                 settings.reading_mode = "Comic".to_string();
@@ -312,8 +312,7 @@ impl ComicViewState {
 
             let is_single = settings.page_layout == "Single" && settings.reading_mode != "Webtoon";
             if ui
-                .selectable_label(is_single, "1 стр.")
-                .on_hover_text("Одиночная страница")
+                .selectable_label(is_single, t.single_page_btn)
                 .clicked()
             {
                 settings.page_layout = "Single".to_string();
@@ -325,8 +324,7 @@ impl ComicViewState {
 
             let is_double = settings.page_layout == "Double" && settings.reading_mode != "Webtoon";
             if ui
-                .selectable_label(is_double, "2 стр.")
-                .on_hover_text("Двухстраничный разворот")
+                .selectable_label(is_double, t.double_page_btn)
                 .clicked()
             {
                 settings.page_layout = "Double".to_string();
@@ -338,8 +336,7 @@ impl ComicViewState {
 
             let is_webtoon = settings.reading_mode == "Webtoon";
             if ui
-                .selectable_label(is_webtoon, "Свиток")
-                .on_hover_text("Непрерывная вертикальная лента (Webtoon / манхва)")
+                .selectable_label(is_webtoon, t.scroll_btn)
                 .clicked()
             {
                 settings.reading_mode = "Webtoon".to_string();
@@ -350,7 +347,7 @@ impl ComicViewState {
 
             if ui
                 .button("−")
-                .on_hover_text("Уменьшить масштаб (Ctrl -)")
+                .on_hover_text(t.zoom_out)
                 .clicked()
             {
                 super::paged_common::zoom_out(&mut settings.zoom_percent, &mut settings.fit_mode);
@@ -359,7 +356,7 @@ impl ComicViewState {
             let zoom_lbl = format!("{:.0}%", settings.zoom_percent);
             if ui
                 .button(RichText::new(zoom_lbl).strong())
-                .on_hover_text("Сбросить масштаб на 100% (Ctrl 0)")
+                .on_hover_text(t.zoom_reset)
                 .clicked()
             {
                 super::paged_common::zoom_reset(
@@ -371,7 +368,7 @@ impl ComicViewState {
 
             if ui
                 .button("+")
-                .on_hover_text("Увеличить масштаб (Ctrl +)")
+                .on_hover_text(t.zoom_in)
                 .clicked()
             {
                 super::paged_common::zoom_in(&mut settings.zoom_percent, &mut settings.fit_mode);
@@ -379,8 +376,7 @@ impl ComicViewState {
 
             let fit_win_active = settings.fit_mode == "FitWindow";
             if ui
-                .selectable_label(fit_win_active, "По окну")
-                .on_hover_text("Вместить изображение целиком в окно")
+                .selectable_label(fit_win_active, t.fit_window_btn)
                 .clicked()
             {
                 settings.fit_mode = "FitWindow".to_string();
@@ -389,8 +385,7 @@ impl ComicViewState {
 
             let fit_w_active = settings.fit_mode == "FitWidth";
             if ui
-                .selectable_label(fit_w_active, "По ширине")
-                .on_hover_text("Растянуть изображение по ширине окна")
+                .selectable_label(fit_w_active, t.fit_width_btn)
                 .clicked()
             {
                 settings.fit_mode = "FitWidth".to_string();
@@ -399,8 +394,7 @@ impl ComicViewState {
 
             let fit_h_active = settings.fit_mode == "FitHeight";
             if ui
-                .selectable_label(fit_h_active, "По высоте")
-                .on_hover_text("Растянуть изображение по высоте окна")
+                .selectable_label(fit_h_active, t.fit_height_btn)
                 .clicked()
             {
                 settings.fit_mode = "FitHeight".to_string();
@@ -409,9 +403,9 @@ impl ComicViewState {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let badge_txt = if is_manga {
-                    "🍙 Манга"
+                    "🍙 Manga"
                 } else {
-                    "🎨 Комикс"
+                    "🎨 Comic"
                 };
                 ui.label(
                     RichText::new(badge_txt)
@@ -435,13 +429,14 @@ impl ComicViewState {
         viewport_height: &mut f32,
         max_scroll_y: &mut f32,
         status_message: &mut Option<String>,
+        lang: crate::i18n::UiLanguage,
     ) {
         self.poll_responses(ctx, status_message);
 
         let page_count = self.page_count(document);
         if page_count == 0 {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("В этом документе нет страниц").color(theme.text_color()));
+                ui.label(RichText::new(lang.t().no_pages_in_doc).color(theme.text_color()));
             });
             return;
         }
@@ -450,7 +445,7 @@ impl ComicViewState {
         let is_manga = self.is_effective_manga(document, settings);
 
         ui.add_space(2.0);
-        self.render_toolbar(ui, page_count, settings, theme, is_manga);
+        self.render_toolbar(ui, page_count, settings, theme, is_manga, lang);
         ui.add_space(4.0);
         ui.separator();
 

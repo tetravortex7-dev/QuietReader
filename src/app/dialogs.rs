@@ -62,6 +62,7 @@ impl Dialogs {
             return;
         }
 
+        let t = settings.ui_language.t();
         let window_frame = egui::Frame::window(&ctx.global_style())
             .fill(theme.panel_bg_color())
             .stroke(egui::Stroke::new(
@@ -70,7 +71,7 @@ impl Dialogs {
             ))
             .inner_margin(egui::Margin::symmetric(14, 12));
 
-        egui::Window::new("Привязка форматов к QuietReader")
+        egui::Window::new(t.assoc_dialog_title)
             .collapsible(false)
             .resizable(false)
             .frame(window_frame)
@@ -78,29 +79,27 @@ impl Dialogs {
             .show(ctx, |ui| {
                 ui.set_max_width(460.0);
                 ui.label(
-                    RichText::new("Выберите форматы файлов для привязки к читалке:")
+                    RichText::new(t.assoc_dialog_heading)
                         .size(15.0)
                         .strong(),
                 );
                 ui.add_space(4.0);
-                ui.label(
-                    "Отметьте нужные форматы галочками. Выбранные файлы будут открываться в QuietReader по двойному щелчку и появятся в контекстном меню «Открыть с помощью».",
-                );
+                ui.label(t.assoc_dialog_text);
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
-                    if ui.small_button("Выбрать все").clicked() {
+                    if ui.small_button(t.select_all).clicked() {
                         settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS_INFO
                             .iter()
                             .map(|(ext, _)| ext.to_string())
                             .collect();
                         *on_save_settings = true;
                     }
-                    if ui.small_button("Снять все").clicked() {
+                    if ui.small_button(t.deselect_all).clicked() {
                         settings.associated_extensions.clear();
                         *on_save_settings = true;
                     }
-                    if ui.small_button("Только книги (FB2, EPUB)").clicked() {
+                    if ui.small_button(t.only_books).clicked() {
                         settings.associated_extensions = vec!["fb2".to_string(), "epub".to_string()];
                         *on_save_settings = true;
                     }
@@ -142,13 +141,13 @@ impl Dialogs {
                     });
 
                 ui.add_space(8.0);
-                ui.checkbox(dont_show_again, "Больше не предлагать при запуске");
+                ui.checkbox(dont_show_again, t.dont_show_assoc);
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let has_selected = !settings.associated_extensions.is_empty();
                     let btn = ui.add_enabled(
                         has_selected,
-                        IconButton::new(Icon::Check, "Привязать выбранные"),
+                        IconButton::new(Icon::Check, t.apply_assoc),
                     );
                     if btn.clicked() {
                         *on_register_association = true;
@@ -159,7 +158,7 @@ impl Dialogs {
                         *on_save_settings = true;
                         *show_dialog = false;
                     }
-                    if ui.add(IconButton::new(Icon::Close, "Не сейчас")).clicked() {
+                    if ui.add(IconButton::new(Icon::Close, t.remind_later)).clicked() {
                         if *dont_show_again {
                             crate::platform::set_association_prompt_dismissed(true);
                             settings.dismiss_association_prompt = true;
@@ -185,6 +184,7 @@ impl Dialogs {
             return;
         }
 
+        let t = settings.ui_language.t();
         let mut book_to_open = None;
         let mut clear_recent = false;
 
@@ -196,7 +196,7 @@ impl Dialogs {
             ))
             .inner_margin(egui::Margin::symmetric(14, 12));
 
-        egui::Window::new("Недавние книги")
+        egui::Window::new(t.recent_books)
             .collapsible(false)
             .resizable(true)
             .frame(window_frame)
@@ -204,14 +204,14 @@ impl Dialogs {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("История чтения");
+                    ui.heading(t.reading_history);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Закрыть").clicked() {
+                        if ui.button(t.close_btn).clicked() {
                             *show_dialog = false;
                         }
                         if !settings.recent_books.is_empty()
-                            && icon_button(ui, Icon::Trash, "Очистить")
-                                .on_hover_text("Очистить список недавних книг")
+                            && icon_button(ui, Icon::Trash, t.clear_history)
+                                .on_hover_text(t.clear_history_tip)
                                 .clicked()
                         {
                             clear_recent = true;
@@ -224,7 +224,7 @@ impl Dialogs {
                     ui.add_space(20.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new("Список недавних книг пуст")
+                            RichText::new(t.history_empty)
                                 .italics()
                                 .color(Color32::from_gray(140)),
                         );
@@ -256,10 +256,13 @@ impl Dialogs {
                                             .file_name()
                                             .and_then(|n| n.to_str())
                                             .unwrap_or("");
+                                        let sec_info = t.section_x_of_y
+                                            .replacen("{}", &(book.chapter + 1).to_string(), 1)
+                                            .replacen("{}", "", 1);
                                         ui.label(
                                             RichText::new(format!(
-                                                "Раздел {} • {}",
-                                                book.chapter + 1,
+                                                "{} • {}",
+                                                sec_info.trim_end_matches(" / ").trim_end_matches(" of "),
                                                 file_name
                                             ))
                                             .size(12.0)
@@ -271,9 +274,9 @@ impl Dialogs {
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
                                             let btn_text = if is_current {
-                                                "Открыта"
+                                                t.book_open_now
                                             } else {
-                                                "Читать »"
+                                                t.read_now_btn
                                             };
                                             if ui.button(btn_text).clicked() {
                                                 book_to_open = Some(book.path.clone());

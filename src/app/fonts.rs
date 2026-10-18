@@ -89,6 +89,33 @@ pub fn apply_font_family(ctx: &egui::Context, font_name: &str) {
         );
     }
 
+    if let Some(bytes) = crate::platform::load_system_cjk_font_bytes() {
+        fonts.font_data.insert(
+            "system_cjk".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .push("system_cjk".to_owned());
+        fonts
+            .families
+            .entry(egui::FontFamily::Name(FONT_FAMILY_BOLD.into()))
+            .or_default()
+            .push("system_cjk".to_owned());
+        fonts
+            .families
+            .entry(egui::FontFamily::Name(FONT_FAMILY_ITALIC.into()))
+            .or_default()
+            .push("system_cjk".to_owned());
+        fonts
+            .families
+            .entry(egui::FontFamily::Name(FONT_FAMILY_BOLD_ITALIC.into()))
+            .or_default()
+            .push("system_cjk".to_owned());
+    }
+
     ctx.set_fonts(fonts);
 }
 

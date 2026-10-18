@@ -569,6 +569,7 @@ impl eframe::App for QuietReaderApp {
                 self.document.is_some(),
                 self.is_fullscreen,
                 self.show_toc,
+                self.settings.ui_language,
             );
             if actions.open_file {
                 self.open_file_dialog();
@@ -600,7 +601,7 @@ impl eframe::App for QuietReaderApp {
             if !self.tabs.is_empty() {
                 let mut tab_action = TabBarAction::None;
                 Panel::top("tabs_bar").show(ui, |ui| {
-                    tab_action = TabsBar::render(ui, &self.tabs, self.active_tab, &self.theme);
+                    tab_action = TabsBar::render(ui, &self.tabs, self.active_tab, &self.theme, self.settings.ui_language);
                 });
                 match tab_action {
                     TabBarAction::None => {}
@@ -637,6 +638,7 @@ impl eframe::App for QuietReaderApp {
             pdf_info,
             comic_info,
             text_info,
+            self.settings.ui_language,
         );
 
         if !self.is_fullscreen || self.show_toc {
@@ -653,6 +655,7 @@ impl eframe::App for QuietReaderApp {
                 current_page_ref,
                 &mut self.show_toc,
                 &self.theme,
+                self.settings.ui_language,
             );
             if view_kind == DocumentViewKind::Pdf && self.pdf_view.current_page != prev_pdf_page {
                 self.pdf_view.go_to_page(self.pdf_view.current_page);
@@ -699,26 +702,28 @@ impl eframe::App for QuietReaderApp {
                     ui.vertical_centered(|ui| {
                         ui.add_space(ui.available_height() * 0.35);
                         ui.spinner();
+                        let t = self.settings.ui_language.t();
                         ui.add_space(16.0);
                         ui.label(
-                            RichText::new(format!("Загрузка «{}»...", title))
+                            RichText::new(t.loading_doc.replace("{}", &title))
                                 .size(18.0)
                                 .color(self.theme.text_color()),
                         );
                         ui.add_space(8.0);
                         ui.label(
-                            RichText::new("Пожалуйста, подождите...")
+                            RichText::new(t.please_wait)
                                 .size(13.0)
                                 .color(self.theme.secondary_text_color()),
                         );
                     });
                 } else if let Some((false, _, Some(err))) = active_tab_info {
+                    let t = self.settings.ui_language.t();
                     ui.vertical_centered(|ui| {
                         ui.add_space(ui.available_height() * 0.35);
                         ui.add(
                             self::icons::IconLabel::new(
                                 self::icons::Icon::Warning,
-                                "Не удалось открыть документ",
+                                t.failed_open_doc,
                             )
                             .size(20.0)
                             .color(egui::Color32::RED)
@@ -727,7 +732,7 @@ impl eframe::App for QuietReaderApp {
                         ui.add_space(12.0);
                         ui.label(RichText::new(err).size(14.0).color(self.theme.text_color()));
                         ui.add_space(16.0);
-                        if ui.button("Закрыть вкладку").clicked() {
+                        if ui.button(t.close_tab).clicked() {
                             close_tab_action = true;
                         }
                     });
@@ -761,6 +766,7 @@ impl eframe::App for QuietReaderApp {
                                 &mut self.viewport_height,
                                 &mut self.max_scroll_y,
                                 &mut self.status_message,
+                                self.settings.ui_language,
                             );
                         }
                         DocumentViewKind::Comic => {
@@ -775,6 +781,7 @@ impl eframe::App for QuietReaderApp {
                                 &mut self.viewport_height,
                                 &mut self.max_scroll_y,
                                 &mut self.status_message,
+                                self.settings.ui_language,
                             );
                         }
                         DocumentViewKind::Text => {
@@ -871,13 +878,14 @@ impl eframe::App for QuietReaderApp {
                 &mut self.pending_scroll_y,
                 self.font_size,
                 &self.theme,
+                self.settings.ui_language,
             );
         }
 
         let has_text_content = self.document.as_ref().map(|d| d.text_content().is_some()).unwrap_or(false);
         let book_lang = self.document.as_deref().map(crate::core::ReaderCore::detect_document_language);
         let mut on_tts_play = false;
-        self.tts.render_panel(&ctx, &self.theme, has_text_content, book_lang, &mut on_tts_play);
+        self.tts.render_panel(&ctx, &self.theme, has_text_content, book_lang, &mut on_tts_play, self.settings.ui_language);
         if on_tts_play {
             let start_para = self.last_tts_paragraph.unwrap_or(0);
             self.start_tts_at_paragraph(start_para);

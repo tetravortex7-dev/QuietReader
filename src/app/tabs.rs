@@ -165,7 +165,9 @@ impl TabsBar {
         tabs: &[BookTab],
         active_tab: usize,
         theme: &ReaderTheme,
+        lang: crate::i18n::UiLanguage,
     ) -> TabBarAction {
+        let t = lang.t();
         let mut action = TabBarAction::None;
 
         ScrollArea::horizontal()
@@ -232,10 +234,13 @@ impl TabsBar {
                                 );
 
                                 let tooltip = format!(
-                                    "{}\nФормат: {}\nПуть: {}\n(СКМ по вкладке или × — закрыть)",
+                                    "{}\n{}: {}\n{}: {}\n({})",
                                     tab.title,
+                                    t.tab_format,
                                     tab.format_badge,
-                                    tab.file_path.display()
+                                    t.tab_path,
+                                    tab.file_path.display(),
+                                    t.tab_close_hint
                                 );
                                 let tab_btn = tab_btn.on_hover_text(tooltip);
 
@@ -282,7 +287,7 @@ impl TabsBar {
                                     );
                                 }
                                 let close_resp =
-                                    close_resp.on_hover_text("Закрыть вкладку (Ctrl+W)");
+                                    close_resp.on_hover_text(format!("{} (Ctrl+W)", t.close_tab));
                                 if close_resp.clicked() {
                                     action = TabBarAction::Close(idx);
                                 }
@@ -295,7 +300,7 @@ impl TabsBar {
                             egui::Button::new(RichText::new("+").size(15.0).strong())
                                 .min_size(egui::Vec2::new(26.0, 24.0)),
                         )
-                        .on_hover_text("Открыть ещё одну книгу в новой вкладке (Ctrl+O)");
+                        .on_hover_text(format!("{} (Ctrl+O)", t.open_file));
                     if add_btn.clicked() {
                         action = TabBarAction::OpenNewFile;
                     }
