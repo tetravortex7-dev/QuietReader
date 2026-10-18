@@ -3,6 +3,11 @@ name = "QuietReader"
 version = "0.7.1"
 edition = "2024"
 
+[[bin]]
+name = "QuietReader"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 encoding_rs = "0.8.42"

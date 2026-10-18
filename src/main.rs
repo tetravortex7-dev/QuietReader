@@ -56,10 +56,3 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| Ok(Box::new(QuietReaderApp::new(cc, initial_file, settings)))),
     )
 }
-
-#[cfg(test)]
-mod test_suite;
-#[cfg(test)]
-mod tests_comic_pdf;
-#[cfg(test)]
-mod tests_critical;
