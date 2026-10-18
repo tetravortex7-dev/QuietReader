@@ -846,5 +846,42 @@ fn test_tts_controller_engine_and_rate_switching() {
     assert_eq!(controller.status().engine, TtsEngineKind::System);
 }
 
+#[test]
+fn test_language_detection_and_voice_matching() {
+    use crate::core::ReaderCore;
+    use crate::app::tts::voice_matches_lang;
+
+    let ru_text = "Здоровье моего тела всегда улучшается и обновляется с каждым новым днем.";
+    assert_eq!(ReaderCore::detect_language_from_text(ru_text), "ru");
+
+    let uk_text = "Здоров'я мого тіла завжди покращується та оновлюється з кожним новим днем.";
+    assert_eq!(ReaderCore::detect_language_from_text(uk_text), "uk");
+
+    let en_text = "The quick brown fox jumps over the lazy dog and that is with great joy.";
+    assert_eq!(ReaderCore::detect_language_from_text(en_text), "en");
+
+    let de_text = "Die Gesundheit meines Körpers verbessert sich und das ist wunderbar für mich.";
+    assert_eq!(ReaderCore::detect_language_from_text(de_text), "de");
+
+    let fr_text = "La santé de mon corps s'améliore toujours avec le temps et c'est pour une vie saine.";
+    assert_eq!(ReaderCore::detect_language_from_text(fr_text), "fr");
+
+    let es_text = "La salud de mi cuerpo siempre mejora y se renueva con los días para vivir mejor.";
+    assert_eq!(ReaderCore::detect_language_from_text(es_text), "es");
+
+    assert!(voice_matches_lang("ru-RU", "ru"));
+    assert!(voice_matches_lang("Russian", "ru"));
+    assert!(voice_matches_lang("en-US", "en"));
+    assert!(voice_matches_lang("English", "en"));
+    assert!(voice_matches_lang("uk-UA", "uk"));
+    assert!(voice_matches_lang("de-DE", "de"));
+    assert!(voice_matches_lang("fr-FR", "fr"));
+    assert!(voice_matches_lang("es-ES", "es"));
+
+    assert!(!voice_matches_lang("ru-RU", "en"));
+    assert!(!voice_matches_lang("en-US", "ru"));
+    assert!(!voice_matches_lang("de-DE", "ru"));
+}
+
 
 

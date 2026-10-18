@@ -178,6 +178,109 @@ impl ReaderCore {
         (y - 60.0).max(0.0)
     }
 
+    pub fn detect_document_language(doc: &dyn Document) -> &'static str {
+        if let Some(tc) = doc.text_content() {
+            Self::detect_chapters_language(tc.chapters())
+        } else {
+            "ru"
+        }
+    }
+
+    pub fn detect_chapters_language(chapters: &[crate::document::BookChapter]) -> &'static str {
+        let mut sample = String::new();
+        for ch in chapters {
+            for p in &ch.paragraphs {
+                let clean = crate::document::strip_formatting_tags(p);
+                let trimmed = clean.trim();
+                if !trimmed.is_empty() {
+                    sample.push_str(trimmed);
+                    sample.push(' ');
+                    if sample.len() >= 3000 {
+                        break;
+                    }
+                }
+            }
+            if sample.len() >= 3000 {
+                break;
+            }
+        }
+        Self::detect_language_from_text(&sample)
+    }
+
+    pub fn detect_language_from_text(text: &str) -> &'static str {
+        let mut cyrillic = 0usize;
+        let mut latin = 0usize;
+        let mut ukrainian_specific = 0usize;
+
+        for c in text.chars() {
+            match c {
+                '\u{0400}'..='\u{04FF}' => {
+                    cyrillic += 1;
+                    if matches!(c, 'і' | 'І' | 'ї' | 'Ї' | 'є' | 'Є' | 'ґ' | 'Ґ') {
+                        ukrainian_specific += 1;
+                    }
+                }
+                'a'..='z' | 'A'..='Z' => {
+                    latin += 1;
+                }
+                _ => {}
+            }
+        }
+
+        if cyrillic > latin {
+            if ukrainian_specific >= 2 {
+                "uk"
+            } else {
+                "ru"
+            }
+        } else if latin > 0 {
+            let lower = text.to_lowercase();
+            let mut de_score = 0usize;
+            let mut fr_score = 0usize;
+            let mut es_score = 0usize;
+            let mut en_score = 0usize;
+
+            for word in lower.split(|c: char| !c.is_alphabetic()) {
+                if word.is_empty() {
+                    continue;
+                }
+                match word {
+                    "the" | "and" | "that" | "with" | "for" | "this" | "have" | "from" | "you" => en_score += 2,
+                    "der" | "die" | "das" | "und" | "nicht" | "ist" | "ein" | "eine" | "mit" => de_score += 2,
+                    "les" | "des" | "pour" | "dans" | "une" | "est" | "pas" | "sur" | "avec" => fr_score += 2,
+                    "que" | "para" | "como" | "los" | "las" | "una" | "por" | "con" | "del" => es_score += 2,
+                    _ => {}
+                }
+            }
+
+            for c in lower.chars() {
+                match c {
+                    'ä' | 'ö' | 'ü' | 'ß' => de_score += 2,
+                    'é' | 'è' | 'ê' | 'ë' | 'ç' | 'œ' => fr_score += 2,
+                    'ñ' | 'á' | 'í' | 'ó' | 'ú' => es_score += 1,
+                    _ => {}
+                }
+            }
+
+            let max_score = en_score.max(de_score).max(fr_score).max(es_score);
+            if max_score > 0 {
+                if de_score == max_score {
+                    "de"
+                } else if fr_score == max_score {
+                    "fr"
+                } else if es_score == max_score {
+                    "es"
+                } else {
+                    "en"
+                }
+            } else {
+                "en"
+            }
+        } else {
+            "ru"
+        }
+    }
+
     pub fn find_next_non_empty_chapter(
         doc: &dyn Document,
         current_chapter: usize,

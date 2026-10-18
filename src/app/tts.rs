@@ -40,15 +40,8 @@ pub struct TtsStatus {
 }
 
 pub enum TtsCommand {
-    PlayChapter {
-        chapter_index: usize,
-        paragraph_index: usize,
-        paragraphs: Vec<String>,
-    },
-    PlayNextChapter {
-        chapter_index: usize,
-        paragraphs: Vec<String>,
-    },
+    PlayChapter { chapter_index: usize, paragraph_index: usize, paragraphs: Vec<String> },
+    PlayNextChapter { chapter_index: usize, paragraphs: Vec<String> },
     Pause,
     Resume,
     Stop,
@@ -84,6 +77,23 @@ fn format_voice_name(name: &str) -> String {
         return s[..idx].trim().to_string();
     }
     s.trim().to_string()
+}
+
+pub fn voice_matches_lang(voice_lang: &str, book_lang: &str) -> bool {
+    let vl = voice_lang.to_ascii_lowercase();
+    let bl = book_lang.to_ascii_lowercase();
+    if vl.starts_with(&bl) || bl.starts_with(&vl) {
+        return true;
+    }
+    match bl.as_str() {
+        "ru" => vl.contains("ru") || vl.contains("rus"),
+        "en" => vl.contains("en") || vl.contains("eng"),
+        "uk" => vl.contains("uk") || vl.contains("ukr"),
+        "de" => vl.contains("de") || vl.contains("ger") || vl.contains("deu"),
+        "fr" => vl.contains("fr") || vl.contains("fre") || vl.contains("fra"),
+        "es" => vl.contains("es") || vl.contains("spa"),
+        _ => false,
+    }
 }
 
 pub struct TtsController {
@@ -127,27 +137,15 @@ impl TtsController {
         self.show_panel = !self.show_panel;
     }
 
-    pub fn play_chapter(
-        &mut self,
-        chapter_index: usize,
-        paragraph_index: usize,
-        paragraphs: Vec<String>,
-    ) {
+    pub fn play_chapter(&mut self, chapter_index: usize, paragraph_index: usize, paragraphs: Vec<String>) {
         if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::PlayChapter {
-                chapter_index,
-                paragraph_index,
-                paragraphs,
-            });
+            let _ = tx.send(TtsCommand::PlayChapter { chapter_index, paragraph_index, paragraphs });
         }
     }
 
     pub fn play_next_chapter(&mut self, chapter_index: usize, paragraphs: Vec<String>) {
         if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::PlayNextChapter {
-                chapter_index,
-                paragraphs,
-            });
+            let _ = tx.send(TtsCommand::PlayNextChapter { chapter_index, paragraphs });
         }
     }
 
@@ -172,30 +170,18 @@ impl TtsController {
     }
 
     pub fn set_rate(&mut self, rate: f32) {
-        if let Ok(mut st) = self.status.lock() {
-            st.rate = rate;
-        }
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::SetRate(rate));
-        }
+        if let Ok(mut st) = self.status.lock() { st.rate = rate; }
+        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::SetRate(rate)); }
     }
 
     pub fn set_voice(&mut self, voice_id: String) {
-        if let Ok(mut st) = self.status.lock() {
-            st.selected_voice_id = Some(voice_id.clone());
-        }
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::SetVoice(voice_id));
-        }
+        if let Ok(mut st) = self.status.lock() { st.selected_voice_id = Some(voice_id.clone()); }
+        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::SetVoice(voice_id)); }
     }
 
     pub fn set_engine(&mut self, engine: TtsEngineKind) {
-        if let Ok(mut st) = self.status.lock() {
-            st.engine = engine;
-        }
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::SetEngine(engine));
-        }
+        if let Ok(mut st) = self.status.lock() { st.engine = engine; }
+        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::SetEngine(engine)); }
     }
 
     fn worker_loop(rx: Receiver<TtsCommand>, status: Arc<Mutex<TtsStatus>>) {
@@ -275,17 +261,10 @@ impl TtsController {
 
                 if !mapped.is_empty() {
                     mapped.sort_by(|a, b| {
-                        let a_ru = a.language.starts_with("ru");
-                        let b_ru = b.language.starts_with("ru");
-                        if a_ru != b_ru {
-                            return b_ru.cmp(&a_ru);
-                        }
-                        let a_en = a.language.starts_with("en");
-                        let b_en = b.language.starts_with("en");
-                        if a_en != b_en {
-                            return b_en.cmp(&a_en);
-                        }
-                        a.language.cmp(&b.language).then_with(|| a.name.cmp(&b.name))
+                        b.language.starts_with("ru").cmp(&a.language.starts_with("ru"))
+                            .then_with(|| b.language.starts_with("en").cmp(&a.language.starts_with("en")))
+                            .then_with(|| a.language.cmp(&b.language))
+                            .then_with(|| a.name.cmp(&b.name))
                     });
 
                     if let Ok(mut st) = status_for_remote.lock() {
@@ -789,6 +768,7 @@ impl TtsController {
         ctx: &egui::Context,
         theme: &ReaderTheme,
         current_book_has_text: bool,
+        book_language: Option<&str>,
         on_play_requested: &mut bool,
     ) {
         if !self.show_panel {
@@ -920,15 +900,28 @@ impl TtsController {
                             }
                         }
 
-                        if !st.voices.is_empty() {
+                        let matched_voices: Vec<&TtsVoiceInfo> = if let Some(lang) = book_language {
+                            let m: Vec<&TtsVoiceInfo> = st.voices.iter().filter(|v| voice_matches_lang(&v.language, lang)).collect();
+                            if m.is_empty() { st.voices.iter().collect() } else { m }
+                        } else {
+                            st.voices.iter().collect()
+                        };
+
+                        if !matched_voices.is_empty() {
                             ui.add_space(6.0);
                             ui.separator();
                             ui.add_space(6.0);
 
+                            if !matched_voices.iter().any(|v| Some(&v.id) == st.selected_voice_id.as_ref()) {
+                                if let Some(first) = matched_voices.first() {
+                                    self.set_voice(first.id.clone());
+                                }
+                            }
+
                             let current_voice_name = st
                                 .selected_voice_id
                                 .as_ref()
-                                .and_then(|id| st.voices.iter().find(|v| v.id == *id))
+                                .and_then(|id| matched_voices.iter().find(|v| v.id == *id))
                                 .map(|v| format_voice_name(&v.name))
                                 .unwrap_or_else(|| "Выбор голоса".to_string());
 
@@ -936,7 +929,7 @@ impl TtsController {
                                 .selected_text(current_voice_name)
                                 .width(150.0)
                                 .show_ui(ui, |ui| {
-                                    for v in &st.voices {
+                                    for v in &matched_voices {
                                         let is_sel = st.selected_voice_id.as_deref() == Some(&v.id);
                                         let clean_name = format_voice_name(&v.name);
                                         let label = format!("{} ({})", clean_name, v.language);

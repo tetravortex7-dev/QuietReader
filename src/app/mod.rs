@@ -875,8 +875,9 @@ impl eframe::App for QuietReaderApp {
         }
 
         let has_text_content = self.document.as_ref().map(|d| d.text_content().is_some()).unwrap_or(false);
+        let book_lang = self.document.as_deref().map(crate::core::ReaderCore::detect_document_language);
         let mut on_tts_play = false;
-        self.tts.render_panel(&ctx, &self.theme, has_text_content, &mut on_tts_play);
+        self.tts.render_panel(&ctx, &self.theme, has_text_content, book_lang, &mut on_tts_play);
         if on_tts_play {
             let start_para = self.last_tts_paragraph.unwrap_or(0);
             self.start_tts_at_paragraph(start_para);
