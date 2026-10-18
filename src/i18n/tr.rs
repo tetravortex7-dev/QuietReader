@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "Dosya Aç (Ctrl+O)",
-    open_file_tooltip: "Bir veya daha fazla kitap ya da belgeyi yeni sekmelerde açın (Ctrl+O)",
-    open_folder: "Klasör Aç",
-    open_folder_tooltip: "Görseller içeren klasörü manga veya bölüm olarak açın",
+    open_file: "Dosya Aç (O)...",
+    open_file_tooltip: "Bir veya daha fazla kitap ya da belgeyi yeni sekmelerde açın (tuş: O veya Ctrl+O)",
+    open_folder: "Klasör (P)...",
+    open_folder_tooltip: "Görseller içeren klasörü manga veya bölüm olarak açın (tuş: P veya Ctrl+P)",
     recent_books: "Son Kitaplar",
     recent_books_tooltip: "Son açılan kitapların listesi ve okuma geçmişi",
     toc: "İçindekiler (B)",

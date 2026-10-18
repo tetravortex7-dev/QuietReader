@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "Apri file (Ctrl+O)",
-    open_file_tooltip: "Apri uno o più libri o documenti in nuove schede (Ctrl+O)",
-    open_folder: "Apri cartella",
-    open_folder_tooltip: "Apri una cartella di immagini come capitolo o manga",
+    open_file: "Apri (O)...",
+    open_file_tooltip: "Apri uno o più libri o documenti in nuove schede (tasto: O o Ctrl+O)",
+    open_folder: "Cartella (P)...",
+    open_folder_tooltip: "Apri una cartella di immagini come capitolo o manga (tasto: P o Ctrl+P)",
     recent_books: "Libri recenti",
     recent_books_tooltip: "Elenco dei libri aperti di recente e cronologia di lettura",
     toc: "Indice (B)",

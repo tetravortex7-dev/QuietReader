@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "Buka Berkas (Ctrl+O)",
-    open_file_tooltip: "Buka buku atau dokumen di tab baru (Ctrl+O)",
-    open_folder: "Buka Folder",
-    open_folder_tooltip: "Buka folder gambar sebagai bab atau manga",
+    open_file: "Buka Berkas (O)...",
+    open_file_tooltip: "Buka buku atau dokumen di tab baru (tombol: O atau Ctrl+O)",
+    open_folder: "Folder (P)...",
+    open_folder_tooltip: "Buka folder gambar sebagai bab atau manga (tombol: P atau Ctrl+P)",
     recent_books: "Buku Terbaru",
     recent_books_tooltip: "Daftar buku yang baru dibuka dan riwayat membaca",
     toc: "Daftar Isi (B)",

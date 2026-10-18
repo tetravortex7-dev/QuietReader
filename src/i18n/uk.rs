@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "Відкрити файл (Ctrl+O)",
-    open_file_tooltip: "Відкрити книги або документи у нових вкладках (Ctrl+O)",
-    open_folder: "Відкрити папку",
-    open_folder_tooltip: "Відкрити папку з зображеннями як розділ або манґу",
+    open_file: "Відкрити (O)...",
+    open_file_tooltip: "Відкрити книги або документи у нових вкладках (клавіша: O або Ctrl+O)",
+    open_folder: "Папка (P)...",
+    open_folder_tooltip: "Відкрити папку з зображеннями як розділ або манґу (клавіша: P або Ctrl+P)",
     recent_books: "Нещодавні книги",
     recent_books_tooltip: "Список нещодавно відкритих книг та історія читання",
     toc: "Зміст (B)",

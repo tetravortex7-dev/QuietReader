@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "開く...",
-    open_file_tooltip: "新しいタブでファイルを開く (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z)",
-    open_folder: "フォルダ...",
-    open_folder_tooltip: "マンガや画像のフォルダを新しいタブで開く",
+    open_file: "開く (O)...",
+    open_file_tooltip: "新しいタブでファイルを開く (キー: O または Ctrl+O)",
+    open_folder: "フォルダ (P)...",
+    open_folder_tooltip: "マンガや画像のフォルダを新しいタブで開く (キー: P または Ctrl+P)",
     recent_books: "履歴...",
     recent_books_tooltip: "最近開いた本の一覧",
     toc: "目次 (B)",

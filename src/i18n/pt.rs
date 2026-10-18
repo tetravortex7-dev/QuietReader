@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "Abrir...",
-    open_file_tooltip: "Abrir um ou mais arquivos em novas abas (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z)",
-    open_folder: "Pasta...",
-    open_folder_tooltip: "Abrir pasta com imagens de mangá ou quadrinhos em uma nova aba",
+    open_file: "Abrir (O)...",
+    open_file_tooltip: "Abrir um ou mais arquivos em novas abas (tecla: O ou Ctrl+O)",
+    open_folder: "Pasta (P)...",
+    open_folder_tooltip: "Abrir pasta com imagens de mangá ou quadrinhos em uma nova aba (tecla: P ou Ctrl+P)",
     recent_books: "Recentes...",
     recent_books_tooltip: "Lista de livros abertos recentemente",
     toc: "Sumário (B)",

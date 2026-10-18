@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "فتح ملف (Ctrl+O)",
-    open_file_tooltip: "فتح كتب أو مستندات في علامات تبويب جديدة (Ctrl+O)",
-    open_folder: "فتح مجلد",
-    open_folder_tooltip: "فتح مجلد صور كفصل أو مانغا",
+    open_file: "فتح ملف (O)...",
+    open_file_tooltip: "فتح كتب أو مستندات في علامات تبويب جديدة (مفتاح: O أو Ctrl+O)",
+    open_folder: "مجلد (P)...",
+    open_folder_tooltip: "فتح مجلد صور كفصل أو مانغا (مفتاح: P أو Ctrl+P)",
     recent_books: "الكتب الأخيرة",
     recent_books_tooltip: "قائمة الكتب المفتوحة مؤخراً وسجل القراءة",
     toc: "الفهرس (B)",

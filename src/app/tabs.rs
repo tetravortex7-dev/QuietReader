@@ -300,7 +300,7 @@ impl TabsBar {
                             egui::Button::new(RichText::new("+").size(15.0).strong())
                                 .min_size(egui::Vec2::new(26.0, 24.0)),
                         )
-                        .on_hover_text(format!("{} (Ctrl+O)", t.open_file));
+                        .on_hover_text(t.open_file);
                     if add_btn.clicked() {
                         action = TabBarAction::OpenNewFile;
                     }

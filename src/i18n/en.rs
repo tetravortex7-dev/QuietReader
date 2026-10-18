@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "Open...",
-    open_file_tooltip: "Open one or more files in new tabs (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z)",
-    open_folder: "Folder...",
-    open_folder_tooltip: "Open directory with manga or comic images in a new tab",
+    open_file: "Open (O)...",
+    open_file_tooltip: "Open one or more files in new tabs (hotkey: O or Ctrl+O)",
+    open_folder: "Folder (P)...",
+    open_folder_tooltip: "Open directory with manga or comic images in a new tab (hotkey: P or Ctrl+P)",
     recent_books: "Recent...",
     recent_books_tooltip: "List of recently opened books",
     toc: "Table of Contents (B)",

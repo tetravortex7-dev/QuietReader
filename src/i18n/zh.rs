@@ -1,10 +1,10 @@
 use super::Translations;
 
 pub const TRANSLATIONS: Translations = Translations {
-    open_file: "打开...",
-    open_file_tooltip: "在新标签页中打开一个或多个文件 (PDF, FB2, EPUB, TXT, MD, LOG, CBZ, CBR, CB7, ZIP, RAR, 7Z)",
-    open_folder: "文件夹...",
-    open_folder_tooltip: "在新标签页中打开包含漫画图片的目录",
+    open_file: "打开 (O)...",
+    open_file_tooltip: "在新标签页中打开一个或多个文件 (按键: O 或 Ctrl+O)",
+    open_folder: "文件夹 (P)...",
+    open_folder_tooltip: "在新标签页中打开包含漫画图片的目录 (按键: P 或 Ctrl+P)",
     recent_books: "最近阅读...",
     recent_books_tooltip: "最近打开的书籍列表",
     toc: "目录 (B)",
