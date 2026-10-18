@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "Font size:",
     font_decrease_tip: "Decrease font size (Ctrl+-)",
     font_increase_tip: "Increase font size (Ctrl+=)",
+    bionic_reading_title: "Bionic Reading",
+    bionic_reading_desc: "Bolds the initial letters of each word to guide the eye and improve focus for dyslexia and ADHD.",
     live_preview: "Live text preview:",
     sample_text: "— In the stillness of pages, worlds awaken. Reading is not just letters on a screen, but a living dialogue with timeless wisdom.\n\nBe calm, see clearly, read with pleasure.",
 

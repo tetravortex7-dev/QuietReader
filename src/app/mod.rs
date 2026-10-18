@@ -1,5 +1,6 @@
 pub mod autoscroll;
 pub mod bars;
+pub mod bionic;
 pub mod comic_view;
 pub mod commands;
 pub mod dialogs;

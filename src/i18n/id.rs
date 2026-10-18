@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "Ukuran font:",
     font_decrease_tip: "Perkecil font (Ctrl+-)",
     font_increase_tip: "Perbesar font (Ctrl+=)",
+    bionic_reading_title: "Membaca Bionik (Bionic Reading)",
+    bionic_reading_desc: "Menebalkan huruf-huruf awal setiap kata untuk memandu pandangan dan meningkatkan fokus membaca.",
     live_preview: "Pratinjau teks langsung:",
     sample_text: "— Dalam keheningan halaman, dunia baru terbangun. Membaca bukan sekadar melihat huruf di layar, melainkan dialog hidup dengan kebijaksanaan masa lalu.\n\nTenang, pandang jernih, dan nikmati membaca.",
 

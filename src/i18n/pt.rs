@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "Tamanho da fonte:",
     font_decrease_tip: "Diminuir fonte (Ctrl+-)",
     font_increase_tip: "Aumentar fonte (Ctrl+=)",
+    bionic_reading_title: "Leitura biônica (Bionic Reading)",
+    bionic_reading_desc: "Destaca em negrito as primeiras letras de cada palavra para guiar o olhar e facilitar o foco.",
     live_preview: "Pré-visualização do texto:",
     sample_text: "— Na quietude das páginas, novos mundos despertam. Ler não é apenas ver letras em uma tela, mas um diálogo vivo com a sabedoria das eras passadas.\n\nEstar sereno, enxergar com clareza, ler com prazer.",
 

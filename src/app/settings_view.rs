@@ -192,7 +192,7 @@ impl SettingsView {
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
-                                RichText::new(font_info.badge)
+                                RichText::new(font_info.badge_for_lang(settings.ui_language))
                                     .size(11.5)
                                     .color(theme.accent_color()),
                             );
@@ -200,7 +200,7 @@ impl SettingsView {
                     });
                     ui.add_space(2.0);
                     ui.label(
-                        RichText::new(font_info.description)
+                        RichText::new(font_info.desc_for_lang(settings.ui_language))
                             .size(12.0)
                             .color(text_color.gamma_multiply(0.75)),
                     );
@@ -247,6 +247,46 @@ impl SettingsView {
             }
         });
 
+        ui.add_space(8.0);
+        egui::Frame::new()
+            .fill(if settings.bionic_reading {
+                theme.panel_bg_color()
+            } else {
+                theme.bg_color()
+            })
+            .stroke(egui::Stroke::new(
+                if settings.bionic_reading { 1.5 } else { 1.0 },
+                if settings.bionic_reading {
+                    theme.accent_color()
+                } else {
+                    Color32::from_gray(120).gamma_multiply(0.3)
+                },
+            ))
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .checkbox(
+                            &mut settings.bionic_reading,
+                            RichText::new(t.bionic_reading_title)
+                                .strong()
+                                .size(15.0)
+                                .color(text_color),
+                        )
+                        .changed()
+                    {
+                        *on_save_settings = true;
+                    }
+                });
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(t.bionic_reading_desc)
+                        .size(12.0)
+                        .color(text_color.gamma_multiply(0.75)),
+                );
+            });
+
         ui.add_space(10.0);
         egui::Frame::new()
             .fill(theme.bg_color())
@@ -256,7 +296,14 @@ impl SettingsView {
             .show(ui, |ui| {
                 ui.label(RichText::new(t.live_preview).italics().size(12.0).color(text_color.gamma_multiply(0.65)));
                 ui.add_space(6.0);
-                ui.label(RichText::new(t.sample_text).size(*font_size).color(text_color));
+                let preview_job = super::text_view::create_sample_preview_job(
+                    t.sample_text,
+                    *font_size,
+                    text_color,
+                    settings.bionic_reading,
+                    settings.ui_language.is_rtl(),
+                );
+                ui.label(preview_job);
             });
     }
 

@@ -153,7 +153,7 @@ pub struct FontOptionInfo {
     pub description: &'static str,
 }
 
-pub const AVAILABLE_FONTS: [FontOptionInfo; 5] = [
+pub const AVAILABLE_FONTS: [FontOptionInfo; 8] = [
     FontOptionInfo {
         id: "Georgia",
         name: "Georgia",
@@ -184,4 +184,58 @@ pub const AVAILABLE_FONTS: [FontOptionInfo; 5] = [
         badge: "Экранный гротеск",
         description: "Шрифт с увеличенным межбуквенным интервалом и открытыми знаками. Создан специально для идеального чтения без усталости глаз.",
     },
+    FontOptionInfo {
+        id: "Comic Sans MS",
+        name: "Comic Sans MS",
+        badge: "Доступность • Дислексия",
+        description: "Рекомендован ассоциациями дислексии. Несимметричные, уникальные формы букв исключают зеркальную путаницу. Полная поддержка кириллицы и латиницы.",
+    },
+    FontOptionInfo {
+        id: "Sitka",
+        name: "Sitka",
+        badge: "Оптическая разборчивость",
+        description: "Шрифт Microsoft, созданный совместно с исследователями чтения для улучшения распознавания слов и снижения утомления глаз.",
+    },
+    FontOptionInfo {
+        id: "OpenDyslexic",
+        name: "OpenDyslexic",
+        badge: "Специализированный",
+        description: "Специальный шрифт с утяжелённым основанием букв против дислексии. Используется системная или пользовательская версия при наличии.",
+    },
 ];
+
+impl FontOptionInfo {
+    pub fn badge_for_lang(&self, lang: crate::i18n::UiLanguage) -> &'static str {
+        if matches!(lang, crate::i18n::UiLanguage::Ru | crate::i18n::UiLanguage::Uk) {
+            return self.badge;
+        }
+        match self.id {
+            "Georgia" => "Serif • Default",
+            "Palatino Linotype" => "Book Classic",
+            "Calibri" => "Humanist Sans",
+            "Segoe UI" => "UI Sans",
+            "Verdana" => "Screen Sans",
+            "Comic Sans MS" => "Accessibility • Dyslexia",
+            "Sitka" => "Optical Legibility",
+            "OpenDyslexic" => "Specialized Dyslexia",
+            _ => self.badge,
+        }
+    }
+
+    pub fn desc_for_lang(&self, lang: crate::i18n::UiLanguage) -> &'static str {
+        if matches!(lang, crate::i18n::UiLanguage::Ru | crate::i18n::UiLanguage::Uk) {
+            return self.description;
+        }
+        match self.id {
+            "Georgia" => "Classic book serif with gentle serifs designed for comfortable long-form screen reading.",
+            "Palatino Linotype" => "Literary benchmark serif with harmonious open forms and superb readability.",
+            "Calibri" => "Modern warm sans-serif with rounded lines, easy on the eyes.",
+            "Segoe UI" => "Crisp, clean system sans-serif with sharp outlines for high-DPI displays.",
+            "Verdana" => "Wide letter spacing and open apertures designed for fatigue-free screen reading.",
+            "Comic Sans MS" => "Recommended by dyslexia associations. Distinct, non-mirrored letterforms prevent visual confusion. Full Latin and Cyrillic support.",
+            "Sitka" => "Microsoft font designed with reading researchers to enhance word recognition and reduce eye fatigue.",
+            "OpenDyslexic" => "Specialized typeface with weighted bottoms to prevent letter inversion. Uses system or user installation if available.",
+            _ => self.description,
+        }
+    }
+}

@@ -247,6 +247,8 @@ pub struct Translations {
     pub font_size: &'static str,
     pub font_decrease_tip: &'static str,
     pub font_increase_tip: &'static str,
+    pub bionic_reading_title: &'static str,
+    pub bionic_reading_desc: &'static str,
     pub live_preview: &'static str,
     pub sample_text: &'static str,
 

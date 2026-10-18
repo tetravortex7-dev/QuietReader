@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "Dimensione del carattere:",
     font_decrease_tip: "Riduci carattere (Ctrl+-)",
     font_increase_tip: "Aumenta carattere (Ctrl+=)",
+    bionic_reading_title: "Lettura bionica (Bionic Reading)",
+    bionic_reading_desc: "Evidenzia in grassetto le prime lettere di ogni parola per guidare lo sguardo e migliorare la concentrazione.",
     live_preview: "Anteprima del testo:",
     sample_text: "— Nella quiete delle pagine si risvegliano nuovi mondi. La lettura non è solo lettere su uno schermo, ma un dialogo vivo con la saggezza dei secoli passati.\n\nSii sereno, vedi chiaramente, leggi con piacere.",
 

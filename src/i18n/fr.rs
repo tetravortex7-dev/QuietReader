@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "Taille de police :",
     font_decrease_tip: "Diminuer la police (Ctrl+-)",
     font_increase_tip: "Augmenter la police (Ctrl+=)",
+    bionic_reading_title: "Lecture bionique (Bionic Reading)",
+    bionic_reading_desc: "Met en gras les premières lettres de chaque mot pour guider le regard et faciliter la lecture.",
     live_preview: "Aperçu en direct du texte :",
     sample_text: "— Dans le silence des pages, des mondes s'éveillent. La lecture n'est pas faite que de lettres sur un écran, mais d'un dialogue vivant avec la sagesse des siècles passés.\n\nÊtre serein, voir clair, lire avec plaisir.",
 

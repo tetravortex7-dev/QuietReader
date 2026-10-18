@@ -160,6 +160,8 @@ pub struct AppSettings {
     pub ui_language: crate::i18n::UiLanguage,
     #[serde(default = "default_check_updates_on_startup")]
     pub check_updates_on_startup: bool,
+    #[serde(default)]
+    pub bionic_reading: bool,
 }
 
 impl Default for AppSettings {
@@ -184,6 +186,7 @@ impl Default for AppSettings {
             pdf: PdfSettings::default(),
             ui_language: default_ui_language(),
             check_updates_on_startup: true,
+            bionic_reading: false,
         }
     }
 }

@@ -135,6 +135,7 @@ impl TextView {
                                     query_str,
                                     is_active_para,
                                     is_rtl,
+                                    settings.bionic_reading,
                                 );
                                 let resp = ui.add(
                                     egui::Label::new(layout_job).wrap().selectable(allow_select),
@@ -387,6 +388,7 @@ fn create_paragraph_layout_job(
     query: &str,
     is_active_hit: bool,
     is_rtl: bool,
+    bionic_reading: bool,
 ) -> egui::text::LayoutJob {
     let spans = crate::document::parse_formatted_spans(paragraph);
     let mut job = egui::text::LayoutJob::default();
@@ -406,40 +408,99 @@ fn create_paragraph_layout_job(
         if text.is_empty() {
             continue;
         }
-        let family = match (span.bold, span.italic) {
-            (true, true) => {
-                egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
+
+        if bionic_reading && !span.bold {
+            let chunks = crate::app::bionic::split_bionic_spans(&text);
+            for (chunk, is_bold) in chunks {
+                let family = match (is_bold, span.italic) {
+                    (true, true) => {
+                        egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
+                    }
+                    (true, false) => {
+                        egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into())
+                    }
+                    (false, true) => {
+                        egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into())
+                    }
+                    (false, false) => egui::FontFamily::Proportional,
+                };
+                let format = egui::TextFormat {
+                    font_id: egui::FontId::new(font_size, family),
+                    color: text_color,
+                    italics: span.italic,
+                    ..Default::default()
+                };
+                append_with_highlight(&mut job, chunk, &format, query, is_active_hit);
             }
-            (true, false) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into()),
-            (false, true) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into()),
-            (false, false) => egui::FontFamily::Proportional,
-        };
-        let format = egui::TextFormat {
-            font_id: egui::FontId::new(font_size, family),
-            color: text_color,
-            italics: span.italic,
-            ..Default::default()
-        };
-        append_with_highlight(&mut job, &text, &format, query, is_active_hit);
+        } else {
+            let family = match (span.bold, span.italic) {
+                (true, true) => {
+                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
+                }
+                (true, false) => {
+                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into())
+                }
+                (false, true) => {
+                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into())
+                }
+                (false, false) => egui::FontFamily::Proportional,
+            };
+            let format = egui::TextFormat {
+                font_id: egui::FontId::new(font_size, family),
+                color: text_color,
+                italics: span.italic,
+                ..Default::default()
+            };
+            append_with_highlight(&mut job, &text, &format, query, is_active_hit);
+        }
     }
     if job.sections.is_empty() {
-        let format = egui::TextFormat {
-            font_id: egui::FontId::proportional(font_size),
-            color: text_color,
-            ..Default::default()
-        };
         let text = if is_rtl {
             format!("{paragraph}    ")
         } else {
             format!("    {paragraph}")
         };
-        append_with_highlight(
-            &mut job,
-            &text,
-            &format,
-            query,
-            is_active_hit,
-        );
+        if bionic_reading {
+            let chunks = crate::app::bionic::split_bionic_spans(&text);
+            for (chunk, is_bold) in chunks {
+                let family = if is_bold {
+                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into())
+                } else {
+                    egui::FontFamily::Proportional
+                };
+                let format = egui::TextFormat {
+                    font_id: egui::FontId::new(font_size, family),
+                    color: text_color,
+                    ..Default::default()
+                };
+                append_with_highlight(&mut job, chunk, &format, query, is_active_hit);
+            }
+        } else {
+            let format = egui::TextFormat {
+                font_id: egui::FontId::proportional(font_size),
+                color: text_color,
+                ..Default::default()
+            };
+            append_with_highlight(&mut job, &text, &format, query, is_active_hit);
+        }
     }
     job
+}
+
+pub fn create_sample_preview_job(
+    sample_text: &str,
+    font_size: f32,
+    text_color: Color32,
+    bionic_reading: bool,
+    is_rtl: bool,
+) -> egui::text::LayoutJob {
+    create_paragraph_layout_job(
+        sample_text,
+        font_size,
+        text_color,
+        "",
+        false,
+        is_rtl,
+        bionic_reading,
+    )
 }

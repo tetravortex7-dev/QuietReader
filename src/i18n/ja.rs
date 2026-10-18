@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "フォントサイズ：",
     font_decrease_tip: "文字を小さく (Ctrl+-)",
     font_increase_tip: "文字を大きく (Ctrl+=)",
+    bionic_reading_title: "バイオニック・リーディング (Bionic Reading)",
+    bionic_reading_desc: "単語や漢字の先頭を太字で強調し、視線移動をスムーズにして集中力を高めます。",
     live_preview: "プレビュー：",
     sample_text: "—— 静寂のページの中に、新たな世界が目覚める。読書とは単なる画面上の文字ではなく、時を超えた先人たちの知恵との対話である。\n\n心を静め、澄んだ目で、読む喜びを味わう。",
 

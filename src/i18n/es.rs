@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "Tamaño de fuente:",
     font_decrease_tip: "Disminuir fuente (Ctrl+-)",
     font_increase_tip: "Aumentar fuente (Ctrl+=)",
+    bionic_reading_title: "Lectura biónica (Bionic Reading)",
+    bionic_reading_desc: "Resalta en negrita las primeras letras de cada palabra para guiar la mirada y mejorar la concentración.",
     live_preview: "Vista previa del texto en vivo:",
     sample_text: "— En la calma de las páginas cobran vida los mundos. La lectura no son solo letras en una pantalla, sino un diálogo vivo con la sabiduría de épocas pasadas.\n\nEstar en calma, ver claro, leer con deleite.",
 

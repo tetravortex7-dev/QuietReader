@@ -590,6 +590,21 @@ mod platform_fonts {
             ("Verdana", false, true) => "verdanai.ttf",
             ("Verdana", true, true) => "verdanaz.ttf",
 
+            ("Comic Sans MS", false, false) => "comic.ttf",
+            ("Comic Sans MS", true, false) => "comicbd.ttf",
+            ("Comic Sans MS", false, true) => "comici.ttf",
+            ("Comic Sans MS", true, true) => "comicz.ttf",
+
+            ("Sitka", false, false) => "SitkaVF.ttf",
+            ("Sitka", true, false) => "SitkaVF.ttf",
+            ("Sitka", false, true) => "SitkaVF-Italic.ttf",
+            ("Sitka", true, true) => "SitkaVF-Italic.ttf",
+
+            ("OpenDyslexic", false, false) => "OpenDyslexic-Regular.otf",
+            ("OpenDyslexic", true, false) => "OpenDyslexic-Bold.otf",
+            ("OpenDyslexic", false, true) => "OpenDyslexic-Italic.otf",
+            ("OpenDyslexic", true, true) => "OpenDyslexic-BoldItalic.otf",
+
             _ => {
                 if bold && italic {
                     "georgiaz.ttf"
@@ -609,8 +624,33 @@ mod platform_fonts {
                 return Some(bytes);
             }
         }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let p = PathBuf::from(local)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts")
+                .join(filename);
+            if let Ok(bytes) = std::fs::read(&p) {
+                return Some(bytes);
+            }
+        }
         let fallback = PathBuf::from(r"C:\Windows\Fonts").join(filename);
-        std::fs::read(fallback).ok()
+        if let Ok(bytes) = std::fs::read(&fallback) {
+            return Some(bytes);
+        }
+        if font_name == "OpenDyslexic" {
+            let comic_fn = if bold && italic {
+                "comicz.ttf"
+            } else if bold {
+                "comicbd.ttf"
+            } else if italic {
+                "comici.ttf"
+            } else {
+                "comic.ttf"
+            };
+            return std::fs::read(PathBuf::from(r"C:\Windows\Fonts").join(comic_fn)).ok();
+        }
+        None
     }
 
     pub fn load_cjk_font() -> Option<Vec<u8>> {

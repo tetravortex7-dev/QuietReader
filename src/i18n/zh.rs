@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "字体大小：",
     font_decrease_tip: "减小字体 (Ctrl+-)",
     font_increase_tip: "增大字体 (Ctrl+=)",
+    bionic_reading_title: "仿生阅读 (Bionic Reading)",
+    bionic_reading_desc: "加粗词首或关键汉字锚点，引导视觉焦点，提升阅读速度与专注力。",
     live_preview: "实时文本预览：",
     sample_text: "—— 在书页的宁静中，世界悄然苏醒。阅读不仅是屏幕上的文字，更是与古往今来智慧的心灵对话。\n\n心静神清，明理通达，欣然品读。",
 

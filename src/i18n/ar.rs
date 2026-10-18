@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "حجم الخط:",
     font_decrease_tip: "تصغير الخط (Ctrl+-)",
     font_increase_tip: "تكبير الخط (Ctrl+=)",
+    bionic_reading_title: "القراءة الإلكترونية الحيوية (Bionic Reading)",
+    bionic_reading_desc: "تمييز أوائل الكلمات بخط عريض لتوجيه حركة العين وتحسين التركيز أثناء القراءة.",
     live_preview: "معاينة مباشرة للنص:",
     sample_text: "— في سكون الصفحات تستيقظ عوالم جديدة. القراءة ليست مجرد حروف على شاشة، بل حوار حي مع حكمة العصور الغابرة.\n\nكن مطمئناً، انظر بوضوح، واقرأ بسرور.",
 

@@ -52,6 +52,8 @@ pub const TRANSLATIONS: Translations = Translations {
     font_size: "Yazı boyutu:",
     font_decrease_tip: "Yazı boyutunu küçült (Ctrl+-)",
     font_increase_tip: "Yazı boyutunu büyüt (Ctrl+=)",
+    bionic_reading_title: "Biyonik Okuma (Bionic Reading)",
+    bionic_reading_desc: "Gözü yönlendirmek ve odaklanmayı artırmak için her kelimenin ilk harflerini kalınlaştırır.",
     live_preview: "Canlı metin önizleme:",
     sample_text: "— Sayfaların sessizliğinde yeni dünyalar uyanır. Okumak sadece ekrandaki harfler değil, geçmiş çağların bilgeliğiyle yaşayan bir sohbettir.\n\nSakin ol, net gör, keyifle oku.",
 
