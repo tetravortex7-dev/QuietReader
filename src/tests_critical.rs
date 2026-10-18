@@ -936,5 +936,42 @@ fn test_hotkeys_b_v_j() {
     assert!(cmds_typing.is_empty());
 }
 
+#[test]
+fn test_hotkey_l_reading_ruler() {
+    use crate::app::input::process_keyboard_events;
+    use crate::core::Command;
+    use eframe::egui::{Key, Modifiers};
 
+    let cmds_l = process_keyboard_events(false, |k| k == Key::L, Modifiers::default(), false);
+    assert_eq!(cmds_l, vec![Command::ToggleReadingRuler]);
 
+    let mut ctrl_mod = Modifiers::default();
+    ctrl_mod.ctrl = true;
+    let cmds_ctrl_l = process_keyboard_events(false, |k| k == Key::L, ctrl_mod, false);
+    assert!(cmds_ctrl_l.is_empty());
+
+    let cmds_typing = process_keyboard_events(true, |k| k == Key::L, Modifiers::default(), false);
+    assert!(cmds_typing.is_empty());
+}
+
+#[test]
+fn test_reading_ruler_settings_and_translations() {
+    use crate::settings::AppSettings;
+    use crate::i18n::UiLanguage;
+
+    let settings = AppSettings::default();
+    assert!(!settings.reading_ruler);
+    assert_eq!(settings.reading_ruler_lines, 2);
+    assert!((settings.reading_ruler_opacity - 0.50).abs() < f32::EPSILON);
+
+    for lang in UiLanguage::CONCRETE {
+        let t = lang.t();
+        assert!(!t.reading_ruler.is_empty());
+        assert!(!t.hide_reading_ruler.is_empty());
+        assert!(!t.reading_ruler_tooltip.is_empty());
+        assert!(!t.reading_ruler_title.is_empty());
+        assert!(!t.reading_ruler_desc.is_empty());
+        assert!(!t.reading_ruler_height_label.is_empty());
+        assert!(!t.reading_ruler_dim_label.is_empty());
+    }
+}

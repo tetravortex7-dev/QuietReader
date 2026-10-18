@@ -27,7 +27,7 @@ pub enum Icon {
     ChevronUp,
     ChevronDown,
     Speech,
-    Question,
+    Ruler,
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
@@ -300,20 +300,19 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
             ];
             painter.add(egui::Shape::line(wave2, Stroke::new(1.6, color)));
         }
-        Icon::Question => {
-            let center = p(0.50, 0.50);
-            painter.circle_stroke(center, w * 0.40, stroke);
-            let curve = vec![
-                p(0.36, 0.38),
-                p(0.42, 0.28),
-                p(0.58, 0.28),
-                p(0.64, 0.38),
-                p(0.56, 0.48),
-                p(0.50, 0.54),
-                p(0.50, 0.62),
+        Icon::Ruler => {
+            let outline = vec![
+                p(0.12, 0.32),
+                p(0.88, 0.32),
+                p(0.88, 0.68),
+                p(0.12, 0.68),
             ];
-            painter.add(egui::Shape::line(curve, Stroke::new(1.4, color)));
-            painter.circle_filled(p(0.50, 0.74), 1.2, color);
+            painter.add(egui::Shape::closed_line(outline, stroke));
+            painter.line_segment([p(0.24, 0.32), p(0.24, 0.52)], thin_stroke);
+            painter.line_segment([p(0.38, 0.32), p(0.38, 0.46)], thin_stroke);
+            painter.line_segment([p(0.52, 0.32), p(0.52, 0.52)], thin_stroke);
+            painter.line_segment([p(0.66, 0.32), p(0.66, 0.46)], thin_stroke);
+            painter.line_segment([p(0.78, 0.32), p(0.78, 0.52)], thin_stroke);
         }
     }
 }

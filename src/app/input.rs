@@ -41,6 +41,8 @@ pub fn process_keyboard_events(
         cmds.push(Command::ToggleToc);
     } else if !ctrl && key_pressed(egui::Key::J) {
         cmds.push(Command::ToggleSettings);
+    } else if !ctrl && key_pressed(egui::Key::L) {
+        cmds.push(Command::ToggleReadingRuler);
     } else if key_pressed(egui::Key::Escape) {
         cmds.push(Command::ExitFullscreen);
     }

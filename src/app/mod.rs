@@ -12,6 +12,7 @@ pub mod paged_common;
 pub mod pdf_toolbar;
 pub mod pdf_view;
 pub mod search_view;
+pub mod settings_system;
 pub mod settings_view;
 pub mod tabs;
 pub mod text_view;
@@ -586,6 +587,7 @@ impl eframe::App for QuietReaderApp {
                 self.document.is_some(),
                 self.is_fullscreen,
                 self.show_toc,
+                self.settings.reading_ruler,
                 self.settings.ui_language,
                 update_tag.as_deref(),
             );
@@ -608,6 +610,10 @@ impl eframe::App for QuietReaderApp {
             }
             if actions.toggle_tts {
                 self.tts.toggle_panel();
+            }
+            if actions.toggle_reading_ruler {
+                self.settings.reading_ruler = !self.settings.reading_ruler;
+                self.mark_settings_dirty();
             }
             if actions.toggle_fullscreen {
                 self.set_fullscreen_mode(&ctx, !self.is_fullscreen);

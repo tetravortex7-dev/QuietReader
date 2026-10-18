@@ -13,6 +13,7 @@ pub struct TopBarActions {
     pub toggle_tts: bool,
     pub toggle_fullscreen: bool,
     pub toggle_settings: bool,
+    pub toggle_reading_ruler: bool,
     pub open_update: bool,
 }
 
@@ -21,6 +22,7 @@ pub fn render_top_bar(
     has_document: bool,
     is_fullscreen: bool,
     show_toc: bool,
+    reading_ruler: bool,
     lang: crate::i18n::UiLanguage,
     update_available_version: Option<&str>,
 ) -> TopBarActions {
@@ -34,6 +36,7 @@ pub fn render_top_bar(
         toggle_tts: false,
         toggle_fullscreen: false,
         toggle_settings: false,
+        toggle_reading_ruler: false,
         open_update: false,
     };
 
@@ -71,6 +74,10 @@ pub fn render_top_bar(
                 }
                 if icon_button(ui, Icon::Speech, t.speech).on_hover_text(t.speech_tooltip).clicked() {
                     actions.toggle_tts = true;
+                }
+                let ruler_text = if reading_ruler { t.hide_reading_ruler } else { t.reading_ruler };
+                if icon_button(ui, Icon::Ruler, ruler_text).on_hover_text(t.reading_ruler_tooltip).clicked() {
+                    actions.toggle_reading_ruler = true;
                 }
             }
             ui.with_layout(secondary_layout, |ui| {

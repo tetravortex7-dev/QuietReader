@@ -110,3 +110,63 @@ pub fn split_bionic_spans(text: &str) -> Vec<(&str, bool)> {
 
     result
 }
+
+pub fn render_reading_ruler(
+    ui: &eframe::egui::Ui,
+    viewport: eframe::egui::Rect,
+    font_size: f32,
+    theme: &crate::app::theme::ReaderTheme,
+    settings: &crate::settings::AppSettings,
+) {
+    let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+    let pointer_y = match pointer_pos {
+        Some(pos) if viewport.contains(pos) => pos.y,
+        Some(pos) => pos.y.clamp(viewport.min.y + 40.0, viewport.max.y - 40.0),
+        None => viewport.center().y,
+    };
+
+    let line_height = font_size * 1.5;
+    let lines_count = settings.reading_ruler_lines.clamp(1, 5) as f32;
+    let ruler_height = (line_height * lines_count).max(32.0);
+
+    let half = ruler_height * 0.5;
+    let band_top = (pointer_y - half).clamp(viewport.min.y, viewport.max.y);
+    let band_bot = (pointer_y + half).clamp(viewport.min.y, viewport.max.y);
+
+    let dim_alpha = ((settings.reading_ruler_opacity.clamp(0.1, 0.85)) * 255.0) as u8;
+    let dim_color = if theme.is_dark() {
+        eframe::egui::Color32::from_black_alpha(dim_alpha)
+    } else {
+        eframe::egui::Color32::from_rgba_unmultiplied(20, 20, 25, dim_alpha)
+    };
+
+    let painter = ui.painter();
+
+    if band_top > viewport.min.y {
+        let top_rect =
+            eframe::egui::Rect::from_min_max(viewport.min, eframe::egui::pos2(viewport.max.x, band_top));
+        painter.rect_filled(top_rect, 0.0, dim_color);
+    }
+
+    if band_bot < viewport.max.y {
+        let bot_rect =
+            eframe::egui::Rect::from_min_max(eframe::egui::pos2(viewport.min.x, band_bot), viewport.max);
+        painter.rect_filled(bot_rect, 0.0, dim_color);
+    }
+
+    let guide_stroke = eframe::egui::Stroke::new(1.5, theme.accent_color().gamma_multiply(0.75));
+    painter.line_segment(
+        [
+            eframe::egui::pos2(viewport.min.x, band_top),
+            eframe::egui::pos2(viewport.max.x, band_top),
+        ],
+        guide_stroke,
+    );
+    painter.line_segment(
+        [
+            eframe::egui::pos2(viewport.min.x, band_bot),
+            eframe::egui::pos2(viewport.max.x, band_bot),
+        ],
+        guide_stroke,
+    );
+}

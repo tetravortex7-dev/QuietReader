@@ -69,6 +69,10 @@ impl QuietReaderApp {
             Command::ToggleSettings => {
                 self.show_settings_dialog = !self.show_settings_dialog;
             }
+            Command::ToggleReadingRuler => {
+                self.settings.reading_ruler = !self.settings.reading_ruler;
+                self.mark_settings_dirty();
+            }
             Command::ExitFullscreen => {
                 if self.search.is_open {
                     self.search.close();

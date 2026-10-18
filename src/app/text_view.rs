@@ -236,6 +236,16 @@ impl TextView {
             *max_scroll_y =
                 (scroll_output.content_size.y - scroll_output.inner_rect.height()).max(0.0);
 
+            if settings.reading_ruler {
+                crate::app::bionic::render_reading_ruler(
+                    ui,
+                    scroll_output.inner_rect,
+                    font_size,
+                    theme,
+                    settings,
+                );
+            }
+
             if let Some(path) = current_file_path {
                 let meta = doc.metadata();
                 settings.record_book_progress(

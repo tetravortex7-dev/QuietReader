@@ -134,6 +134,14 @@ fn default_check_updates_on_startup() -> bool {
     true
 }
 
+fn default_reading_ruler_lines() -> u32 {
+    3
+}
+
+fn default_reading_ruler_opacity() -> f32 {
+    0.45
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppSettings {
@@ -162,6 +170,12 @@ pub struct AppSettings {
     pub check_updates_on_startup: bool,
     #[serde(default)]
     pub bionic_reading: bool,
+    #[serde(default)]
+    pub reading_ruler: bool,
+    #[serde(default = "default_reading_ruler_lines")]
+    pub reading_ruler_lines: u32,
+    #[serde(default = "default_reading_ruler_opacity")]
+    pub reading_ruler_opacity: f32,
 }
 
 impl Default for AppSettings {
@@ -187,6 +201,9 @@ impl Default for AppSettings {
             ui_language: default_ui_language(),
             check_updates_on_startup: true,
             bionic_reading: false,
+            reading_ruler: false,
+            reading_ruler_lines: 3,
+            reading_ruler_opacity: 0.45,
         }
     }
 }
@@ -499,3 +516,30 @@ impl AppSettings {
         self.window.maximized = maximized;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reading_ruler_settings_defaults() {
+        let s = AppSettings::default();
+        assert!(!s.reading_ruler);
+        assert_eq!(s.reading_ruler_lines, 3);
+        assert!((s.reading_ruler_opacity - 0.45).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_reading_ruler_settings_serde() {
+        let json = r#"{
+            "reading_ruler": true,
+            "reading_ruler_lines": 4,
+            "reading_ruler_opacity": 0.65
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(s.reading_ruler);
+        assert_eq!(s.reading_ruler_lines, 4);
+        assert!((s.reading_ruler_opacity - 0.65).abs() < 1e-4);
+    }
+}
+

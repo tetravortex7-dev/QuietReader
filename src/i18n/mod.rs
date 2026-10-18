@@ -208,6 +208,9 @@ pub struct Translations {
     pub search_tooltip: &'static str,
     pub speech: &'static str,
     pub speech_tooltip: &'static str,
+    pub reading_ruler: &'static str,
+    pub hide_reading_ruler: &'static str,
+    pub reading_ruler_tooltip: &'static str,
     pub fullscreen: &'static str,
     pub fullscreen_tooltip: &'static str,
     pub windowed: &'static str,
@@ -249,6 +252,10 @@ pub struct Translations {
     pub font_increase_tip: &'static str,
     pub bionic_reading_title: &'static str,
     pub bionic_reading_desc: &'static str,
+    pub reading_ruler_title: &'static str,
+    pub reading_ruler_desc: &'static str,
+    pub reading_ruler_height_label: &'static str,
+    pub reading_ruler_dim_label: &'static str,
     pub live_preview: &'static str,
     pub sample_text: &'static str,
 
@@ -578,4 +585,19 @@ mod tests {
         let s2: crate::settings::AppSettings = serde_json::from_str(json_with_ja).unwrap();
         assert_eq!(s2.ui_language, UiLanguage::Ja);
     }
+
+    #[test]
+    fn test_reading_ruler_translations() {
+        for lang in UiLanguage::CONCRETE {
+            let t = lang.t();
+            assert!(!t.reading_ruler.is_empty());
+            assert!(!t.hide_reading_ruler.is_empty());
+            assert!(!t.reading_ruler_tooltip.is_empty());
+            assert!(!t.reading_ruler_title.is_empty());
+            assert!(!t.reading_ruler_desc.is_empty());
+            assert!(!t.reading_ruler_height_label.is_empty());
+            assert!(!t.reading_ruler_dim_label.is_empty());
+        }
+    }
 }
+

@@ -30,6 +30,7 @@ pub enum Command {
     ToggleTTS,
     ToggleToc,
     ToggleSettings,
+    ToggleReadingRuler,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
