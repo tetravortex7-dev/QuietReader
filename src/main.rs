@@ -7,11 +7,13 @@ mod document;
 pub mod i18n;
 mod platform;
 mod settings;
+pub mod updater;
 
 use app::QuietReaderApp;
 use settings::AppSettings;
 
 fn main() -> eframe::Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let initial_file = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     let Some(_instance_guard) = platform::acquire_single_instance(&initial_file) else {
         return Ok(());

@@ -78,6 +78,7 @@ pub struct QuietReaderApp {
     pub tts: TtsController,
     pub last_tts_paragraph: Option<usize>,
     pub last_applied_theme: Option<ReaderTheme>,
+    pub updater: crate::updater::UpdateChecker,
 }
 
 impl Default for QuietReaderApp {
@@ -113,6 +114,11 @@ impl QuietReaderApp {
         let show_association_dialog =
             crate::platform::supports_file_association() && !is_already_associated && !dismissed;
 
+        let updater = crate::updater::UpdateChecker::new();
+        if settings.check_updates_on_startup {
+            updater.check_now();
+        }
+
         Self {
             tabs: Vec::new(),
             active_tab: 0,
@@ -147,6 +153,7 @@ impl QuietReaderApp {
             tts: TtsController::new(),
             last_tts_paragraph: None,
             last_applied_theme: None,
+            updater,
         }
     }
 
@@ -563,6 +570,10 @@ impl eframe::App for QuietReaderApp {
         let ptr_top = ctx
             .input(|i| i.pointer.latest_pos().map(|p| p.y < 72.0))
             .unwrap_or(false);
+        let update_tag = match self.updater.status() {
+            crate::updater::UpdateStatus::UpdateAvailable(ref info) => Some(info.latest_version.clone()),
+            _ => None,
+        };
         if !self.is_fullscreen || ptr_top || self.show_settings_dialog {
             let actions = render_top_bar(
                 ui,
@@ -570,6 +581,7 @@ impl eframe::App for QuietReaderApp {
                 self.is_fullscreen,
                 self.show_toc,
                 self.settings.ui_language,
+                update_tag.as_deref(),
             );
             if actions.open_file {
                 self.open_file_dialog();
@@ -596,6 +608,11 @@ impl eframe::App for QuietReaderApp {
             }
             if actions.toggle_settings {
                 self.show_settings_dialog = !self.show_settings_dialog;
+            }
+            if actions.open_update {
+                if let crate::updater::UpdateStatus::UpdateAvailable(ref info) = self.updater.status() {
+                    ctx.open_url(egui::OpenUrl::new_tab(&info.release_url));
+                }
             }
 
             if !self.tabs.is_empty() {
@@ -697,6 +714,7 @@ impl eframe::App for QuietReaderApp {
                         &mut toggle_autoscroll_action,
                         &mut save_settings_action,
                         &mut register_assoc_action,
+                        &self.updater,
                     );
                 } else if let Some((true, title, _)) = active_tab_info {
                     ui.vertical_centered(|ui| {

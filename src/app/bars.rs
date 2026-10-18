@@ -13,6 +13,7 @@ pub struct TopBarActions {
     pub toggle_tts: bool,
     pub toggle_fullscreen: bool,
     pub toggle_settings: bool,
+    pub open_update: bool,
 }
 
 pub fn render_top_bar(
@@ -21,6 +22,7 @@ pub fn render_top_bar(
     is_fullscreen: bool,
     show_toc: bool,
     lang: crate::i18n::UiLanguage,
+    update_available_version: Option<&str>,
 ) -> TopBarActions {
     let t = lang.t();
     let mut actions = TopBarActions {
@@ -32,6 +34,7 @@ pub fn render_top_bar(
         toggle_tts: false,
         toggle_fullscreen: false,
         toggle_settings: false,
+        open_update: false,
     };
 
     Panel::top("top_bar").show(ui, |ui| {
@@ -71,6 +74,9 @@ pub fn render_top_bar(
                 }
             }
             ui.with_layout(secondary_layout, |ui| {
+                if icon_button(ui, Icon::Settings, t.settings).on_hover_text(t.settings_tooltip).clicked() {
+                    actions.toggle_settings = true;
+                }
                 let (fs_icon, fs_text) = if is_fullscreen {
                     (Icon::Windowed, t.windowed)
                 } else {
@@ -79,8 +85,15 @@ pub fn render_top_bar(
                 if icon_button(ui, fs_icon, fs_text).on_hover_text(t.fullscreen_tooltip).clicked() {
                     actions.toggle_fullscreen = true;
                 }
-                if icon_button(ui, Icon::Settings, t.settings).on_hover_text(t.settings_tooltip).clicked() {
-                    actions.toggle_settings = true;
+                if let Some(tag) = update_available_version {
+                    let label = format!("⬆ v{tag}");
+                    if ui
+                        .add(egui::Button::new(RichText::new(label).color(egui::Color32::from_rgb(220, 140, 20)).strong()))
+                        .on_hover_text(t.update_available_tip)
+                        .clicked()
+                    {
+                        actions.open_update = true;
+                    }
                 }
             });
         });

@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "{} 分钟前",
     date_hours_ago: "{} 小时前",
     date_days_ago: "{} 天前",
+
+    update_title: "检查更新",
+    update_current_version: "当前版本",
+    update_check_btn: "检查更新",
+    update_checking: "正在检查更新...",
+    update_up_to_date: "已是最新版本",
+    update_available: "发现新版本",
+    update_available_tip: "发现新版本！点击打开下载页面",
+    update_download: "下载 / 详情",
+    update_error: "检查更新失败",
+    update_auto_check: "启动时自动检查更新",
 };

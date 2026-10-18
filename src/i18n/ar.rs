@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "منذ {} دقيقة",
     date_hours_ago: "منذ {} ساعة",
     date_days_ago: "منذ {} يوم",
+
+    update_title: "التحديثات",
+    update_current_version: "الإصدار الحالي",
+    update_check_btn: "التحقق من التحديثات",
+    update_checking: "جارٍ التحقق من التحديثات...",
+    update_up_to_date: "لديك أحدث إصدار بالفعل",
+    update_available: "يتوفر إصدار جديد",
+    update_available_tip: "يتوفر إصدار جديد من البرنامج! انقر لفتح صفحة التنزيل",
+    update_download: "تنزيل / تفاصيل",
+    update_error: "تعذر التحقق من وجود تحديثات",
+    update_auto_check: "التحقق من التحديثات عند بدء التشغيل",
 };

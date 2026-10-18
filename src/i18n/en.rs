@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "{} min ago",
     date_hours_ago: "{} hr ago",
     date_days_ago: "{} d ago",
+
+    update_title: "Updates",
+    update_current_version: "Current version",
+    update_check_btn: "Check for Updates",
+    update_checking: "Checking for updates...",
+    update_up_to_date: "You have the latest version",
+    update_available: "New version available",
+    update_available_tip: "A new version of QuietReader is available! Click to open download page",
+    update_download: "Download / Details",
+    update_error: "Failed to check for updates",
+    update_auto_check: "Check for updates on startup",
 };

@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "{}分前",
     date_hours_ago: "{}時間前",
     date_days_ago: "{}日前",
+
+    update_title: "アップデート",
+    update_current_version: "現在のバージョン",
+    update_check_btn: "アップデートを確認",
+    update_checking: "アップデートを確認中...",
+    update_up_to_date: "最新バージョンです",
+    update_available: "新しいバージョンがあります",
+    update_available_tip: "新しいバージョンが利用可能です！クリックしてダウンロードページを開く",
+    update_download: "ダウンロード / 詳細",
+    update_error: "アップデートの確認に失敗しました",
+    update_auto_check: "起動時にアップデートを確認する",
 };

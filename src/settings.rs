@@ -130,6 +130,10 @@ fn default_ui_language() -> crate::i18n::UiLanguage {
     crate::i18n::UiLanguage::Auto
 }
 
+fn default_check_updates_on_startup() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppSettings {
@@ -154,6 +158,8 @@ pub struct AppSettings {
     pub pdf: PdfSettings,
     #[serde(default = "default_ui_language")]
     pub ui_language: crate::i18n::UiLanguage,
+    #[serde(default = "default_check_updates_on_startup")]
+    pub check_updates_on_startup: bool,
 }
 
 impl Default for AppSettings {
@@ -177,6 +183,7 @@ impl Default for AppSettings {
             comic: ComicSettings::default(),
             pdf: PdfSettings::default(),
             ui_language: default_ui_language(),
+            check_updates_on_startup: true,
         }
     }
 }

@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "{} menit lalu",
     date_hours_ago: "{} jam lalu",
     date_days_ago: "{} hari lalu",
+
+    update_title: "Pembaruan",
+    update_current_version: "Versi saat ini",
+    update_check_btn: "Periksa Pembaruan",
+    update_checking: "Memeriksa pembaruan...",
+    update_up_to_date: "Anda sudah memiliki versi terbaru",
+    update_available: "Versi baru tersedia",
+    update_available_tip: "Versi baru tersedia! Klik untuk membuka halaman unduhan",
+    update_download: "Unduh / Detail",
+    update_error: "Gagal memeriksa pembaruan",
+    update_auto_check: "Periksa pembaruan saat mulai",
 };

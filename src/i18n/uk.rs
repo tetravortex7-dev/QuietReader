@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "{} хв тому",
     date_hours_ago: "{} год тому",
     date_days_ago: "{} дн тому",
+
+    update_title: "Оновлення",
+    update_current_version: "Поточна версія",
+    update_check_btn: "Перевірити оновлення",
+    update_checking: "Перевірка оновлень...",
+    update_up_to_date: "У вас встановлена остання версія",
+    update_available: "Доступна нова версія",
+    update_available_tip: "Доступна нова версія програми! Натисніть, щоб відкрити сторінку завантаження",
+    update_download: "Завантажити / Деталі",
+    update_error: "Не вдалося перевірити оновлення",
+    update_auto_check: "Перевіряти оновлення під час запуску",
 };

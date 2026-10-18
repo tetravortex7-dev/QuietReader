@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "Il y a {} min",
     date_hours_ago: "Il y a {} h",
     date_days_ago: "Il y a {} j",
+
+    update_title: "Mises à jour",
+    update_current_version: "Version actuelle",
+    update_check_btn: "Vérifier les mises à jour",
+    update_checking: "Vérification des mises à jour...",
+    update_up_to_date: "Vous disposez de la dernière version",
+    update_available: "Nouvelle version disponible",
+    update_available_tip: "Une nouvelle version est disponible ! Cliquez pour ouvrir la page de téléchargement",
+    update_download: "Télécharger / Détails",
+    update_error: "Impossible de vérifier les mises à jour",
+    update_auto_check: "Vérifier les mises à jour au démarrage",
 };

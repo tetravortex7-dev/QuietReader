@@ -799,6 +799,7 @@ fn test_pdf_outline_resolve_dest_clamping() {
 
 #[test]
 fn test_edge_tts_synth() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let config = msedge_tts::tts::SpeechConfig {
         voice_name: "ru-RU-SvetlanaNeural".to_string(),
         audio_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),

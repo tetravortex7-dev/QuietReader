@@ -21,6 +21,7 @@ impl SettingsView {
         on_toggle_autoscroll: &mut bool,
         on_save_settings: &mut bool,
         on_register_association: &mut bool,
+        updater: &crate::updater::UpdateChecker,
     ) {
         let text_color = theme.text_color();
         let accent_color = theme.accent_color();
@@ -128,6 +129,7 @@ impl SettingsView {
                                 on_register_association,
                                 on_save_settings,
                                 theme,
+                                updater,
                             ),
                         });
                 });
@@ -680,6 +682,7 @@ impl SettingsView {
         on_register_association: &mut bool,
         on_save_settings: &mut bool,
         theme: &ReaderTheme,
+        updater: &crate::updater::UpdateChecker,
     ) {
         let t = settings.ui_language.t();
         let text_color = theme.text_color();
@@ -692,6 +695,70 @@ impl SettingsView {
                 .color(text_color),
         );
         ui.add_space(6.0);
+
+        egui::Frame::new()
+            .fill(theme.bg_color())
+            .stroke(card_stroke)
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(t.update_title)
+                        .strong()
+                        .color(text_color),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!("{}: v{}", t.update_current_version, crate::updater::CURRENT_VERSION))
+                        .size(12.0)
+                        .color(text_color.gamma_multiply(0.8)),
+                );
+                ui.add_space(6.0);
+                if ui
+                    .checkbox(&mut settings.check_updates_on_startup, t.update_auto_check)
+                    .changed()
+                {
+                    *on_save_settings = true;
+                }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(t.update_check_btn).clicked() {
+                        updater.check_now();
+                    }
+                    match updater.status() {
+                        crate::updater::UpdateStatus::Idle => {}
+                        crate::updater::UpdateStatus::Checking => {
+                            ui.label(RichText::new(t.update_checking).color(theme.accent_color()));
+                        }
+                        crate::updater::UpdateStatus::UpToDate { version } => {
+                            ui.label(
+                                RichText::new(format!("{} (v{})", t.update_up_to_date, version))
+                                    .color(Color32::from_rgb(46, 139, 87))
+                                    .strong(),
+                            );
+                        }
+                        crate::updater::UpdateStatus::UpdateAvailable(ref info) => {
+                            let msg = format!("{} v{}!", t.update_available, info.latest_version);
+                            ui.label(
+                                RichText::new(msg)
+                                    .color(Color32::from_rgb(220, 140, 20))
+                                    .strong(),
+                            );
+                            if ui.button(t.update_download).clicked() {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(&info.release_url));
+                            }
+                        }
+                        crate::updater::UpdateStatus::Error(ref err) => {
+                            ui.label(
+                                RichText::new(format!("{}: {}", t.update_error, err))
+                                    .color(Color32::RED)
+                                    .size(11.0),
+                            );
+                        }
+                    }
+                });
+            });
+        ui.add_space(8.0);
 
         if crate::platform::supports_file_association() {
             egui::Frame::new()

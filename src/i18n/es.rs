@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "Hace {} min",
     date_hours_ago: "Hace {} h",
     date_days_ago: "Hace {} d",
+
+    update_title: "Actualizaciones",
+    update_current_version: "Versión actual",
+    update_check_btn: "Buscar actualizaciones",
+    update_checking: "Buscando actualizaciones...",
+    update_up_to_date: "Tienes la última versión",
+    update_available: "Nueva versión disponible",
+    update_available_tip: "¡Hay una nueva versión disponible! Haga clic para abrir la página de descarga",
+    update_download: "Descargar / Detalles",
+    update_error: "Error al buscar actualizaciones",
+    update_auto_check: "Buscar actualizaciones al iniciar",
 };

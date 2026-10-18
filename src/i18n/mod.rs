@@ -435,6 +435,17 @@ pub struct Translations {
     pub date_minutes_ago: &'static str,
     pub date_hours_ago: &'static str,
     pub date_days_ago: &'static str,
+
+    pub update_title: &'static str,
+    pub update_current_version: &'static str,
+    pub update_check_btn: &'static str,
+    pub update_checking: &'static str,
+    pub update_up_to_date: &'static str,
+    pub update_available: &'static str,
+    pub update_available_tip: &'static str,
+    pub update_download: &'static str,
+    pub update_error: &'static str,
+    pub update_auto_check: &'static str,
 }
 
 #[cfg(test)]

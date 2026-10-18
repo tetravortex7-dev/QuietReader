@@ -240,4 +240,15 @@ pub const TRANSLATIONS: Translations = Translations {
     date_minutes_ago: "{} dakika önce",
     date_hours_ago: "{} saat önce",
     date_days_ago: "{} gün önce",
+
+    update_title: "Güncellemeler",
+    update_current_version: "Mevcut sürüm",
+    update_check_btn: "Güncellemeleri Kontrol Et",
+    update_checking: "Güncellemeler kontrol ediliyor...",
+    update_up_to_date: "En son sürüme sahipsiniz",
+    update_available: "Yeni sürüm mevcut",
+    update_available_tip: "Yeni bir sürüm mevcut! İndirme sayfasını açmak için tıklayın",
+    update_download: "İndir / Detaylar",
+    update_error: "Güncellemeler kontrol edilemedi",
+    update_auto_check: "Başlangıçta güncellemeleri kontrol et",
 };
