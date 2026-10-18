@@ -6,17 +6,20 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub fn format_document_error(err: &DocumentError) -> String {
-    match err {
-        DocumentError::Io(msg) => format!("Ошибка ввода-вывода: {msg}"),
-        DocumentError::Unsupported(msg) => format!("Неподдерживаемый формат: {msg}"),
-        DocumentError::Corrupted(msg) => format!("Повреждённый документ: {msg}"),
-        DocumentError::LimitExceeded(msg) => format!("Превышен лимит безопасности: {msg}"),
-    }
+    crate::i18n::format::format_document_error(err, crate::i18n::UiLanguage::Auto)
+}
+
+pub fn format_document_error_with_lang(
+    err: &DocumentError,
+    lang: crate::i18n::UiLanguage,
+) -> String {
+    crate::i18n::format::format_document_error(err, lang)
 }
 
 pub struct DocumentLoadRequest {
     pub request_id: u64,
     pub path: PathBuf,
+    pub lang: crate::i18n::UiLanguage,
     pub ctx: Option<egui::Context>,
 }
 
@@ -51,15 +54,16 @@ fn spawn_loader_worker(
         .spawn(move || {
             while let Ok(req) = req_rx.recv() {
                 let path = req.path.clone();
+                let lang = req.lang;
                 let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     crate::document::open_document(&path)
                         .map(Arc::from)
-                        .map_err(|e| format_document_error(&e))
+                        .map_err(|e| crate::i18n::format::format_document_error(&e, lang))
                 }));
 
                 let result = match load_res {
                     Ok(res) => res,
-                    Err(_) => Err("Аварийный сбой при открытии документа".to_string()),
+                    Err(_) => Err(lang.t().err_unknown.to_string()),
                 };
 
                 let _ = resp_tx.send(DocumentLoadResponse {
@@ -97,12 +101,13 @@ impl DocumentLoader {
         }
     }
 
-    pub fn request_load(&mut self, path: PathBuf) -> u64 {
+    pub fn request_load(&mut self, path: PathBuf, lang: crate::i18n::UiLanguage) -> u64 {
         self.request_counter = self.request_counter.wrapping_add(1);
         let request_id = self.request_counter;
         let _ = self.req_tx.send(DocumentLoadRequest {
             request_id,
             path,
+            lang,
             ctx: self.ctx.clone(),
         });
         request_id
@@ -200,8 +205,10 @@ impl DocumentLoader {
         path: PathBuf,
         settings: &mut AppSettings,
     ) -> Result<LoadedBookState, String> {
+        let lang = settings.ui_language;
         let doc: Arc<dyn Document> = Arc::from(
-            crate::document::open_document(&path).map_err(|e| format_document_error(&e))?,
+            crate::document::open_document(&path)
+                .map_err(|e| crate::i18n::format::format_document_error(&e, lang))?,
         );
         Ok(Self::finalize_loaded_document(doc, path, settings))
     }

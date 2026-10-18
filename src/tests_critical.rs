@@ -201,8 +201,8 @@ fn test_async_loader_cancellation_and_generation_switch() {
     let path_a = PathBuf::from("nonexistent_book_a.epub");
     let path_b = PathBuf::from("nonexistent_book_b.pdf");
 
-    let req_a = loader.request_load(path_a.clone());
-    let req_b = loader.request_load(path_b.clone());
+    let req_a = loader.request_load(path_a.clone(), crate::i18n::UiLanguage::Ru);
+    let req_b = loader.request_load(path_b.clone(), crate::i18n::UiLanguage::Ru);
 
     assert!(req_a > 0);
     assert!(req_b > req_a);

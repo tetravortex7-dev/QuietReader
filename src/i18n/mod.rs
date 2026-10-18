@@ -1,12 +1,20 @@
 use serde::{Deserialize, Serialize};
 
+pub mod ar;
 pub mod en;
 pub mod es;
+pub mod format;
 pub mod fr;
+pub mod id;
+pub mod it;
 pub mod ja;
 pub mod pt;
 pub mod ru;
+pub mod tr;
+pub mod uk;
 pub mod zh;
+
+pub use format::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -20,10 +28,15 @@ pub enum UiLanguage {
     Zh,
     Ja,
     Pt,
+    It,
+    Tr,
+    Uk,
+    Ar,
+    Id,
 }
 
 impl UiLanguage {
-    pub const ALL: [UiLanguage; 8] = [
+    pub const ALL: [UiLanguage; 13] = [
         UiLanguage::Auto,
         UiLanguage::Ru,
         UiLanguage::En,
@@ -32,9 +45,14 @@ impl UiLanguage {
         UiLanguage::Zh,
         UiLanguage::Ja,
         UiLanguage::Pt,
+        UiLanguage::It,
+        UiLanguage::Tr,
+        UiLanguage::Uk,
+        UiLanguage::Ar,
+        UiLanguage::Id,
     ];
 
-    pub const CONCRETE: [UiLanguage; 7] = [
+    pub const CONCRETE: [UiLanguage; 12] = [
         UiLanguage::Ru,
         UiLanguage::En,
         UiLanguage::Fr,
@@ -42,31 +60,50 @@ impl UiLanguage {
         UiLanguage::Zh,
         UiLanguage::Ja,
         UiLanguage::Pt,
+        UiLanguage::It,
+        UiLanguage::Tr,
+        UiLanguage::Uk,
+        UiLanguage::Ar,
+        UiLanguage::Id,
     ];
+
+    pub fn is_rtl(&self) -> bool {
+        self.resolve() == Self::Ar
+    }
 
     pub fn code(&self) -> &'static str {
         match self {
             Self::Auto => "auto",
-            Self::En => "en",
             Self::Ru => "ru",
+            Self::En => "en",
             Self::Fr => "fr",
             Self::Es => "es",
             Self::Zh => "zh",
             Self::Ja => "ja",
             Self::Pt => "pt",
+            Self::It => "it",
+            Self::Tr => "tr",
+            Self::Uk => "uk",
+            Self::Ar => "ar",
+            Self::Id => "id",
         }
     }
 
     pub fn native_name(&self) -> &'static str {
         match self {
             Self::Auto => "Auto",
-            Self::En => "English",
             Self::Ru => "Русский",
+            Self::En => "English",
             Self::Fr => "Français",
             Self::Es => "Español",
             Self::Zh => "简体中文",
             Self::Ja => "日本語",
             Self::Pt => "Português",
+            Self::It => "Italiano",
+            Self::Tr => "Türkçe",
+            Self::Uk => "Українська",
+            Self::Ar => "العربية",
+            Self::Id => "Bahasa Indonesia",
         }
     }
 
@@ -83,13 +120,18 @@ impl UiLanguage {
     pub fn from_code(code: &str) -> Self {
         match code.trim().to_lowercase().as_str() {
             "auto" => Self::Auto,
-            "en" => Self::En,
             "ru" => Self::Ru,
+            "en" => Self::En,
             "fr" => Self::Fr,
             "es" => Self::Es,
             "zh" | "zh-cn" | "zh-hans" => Self::Zh,
             "ja" => Self::Ja,
             "pt" | "pt-br" | "pt-pt" => Self::Pt,
+            "it" => Self::It,
+            "tr" => Self::Tr,
+            "uk" => Self::Uk,
+            "ar" => Self::Ar,
+            "id" | "in" => Self::Id,
             _ => Self::Auto,
         }
     }
@@ -98,13 +140,18 @@ impl UiLanguage {
         let clean = locale.trim().to_lowercase().replace('_', "-");
         let prefix = clean.split(&['-', '.'][..]).next().unwrap_or("");
         match prefix {
-            "ru" | "be" | "uk" | "kk" => Self::Ru,
+            "ru" | "be" | "kk" => Self::Ru,
+            "uk" => Self::Uk,
             "en" => Self::En,
             "fr" => Self::Fr,
             "es" => Self::Es,
             "zh" => Self::Zh,
             "ja" => Self::Ja,
             "pt" => Self::Pt,
+            "it" => Self::It,
+            "tr" => Self::Tr,
+            "ar" => Self::Ar,
+            "id" | "in" => Self::Id,
             _ => Self::En,
         }
     }
@@ -133,6 +180,11 @@ impl UiLanguage {
             Self::Zh => &zh::TRANSLATIONS,
             Self::Ja => &ja::TRANSLATIONS,
             Self::Pt => &pt::TRANSLATIONS,
+            Self::It => &it::TRANSLATIONS,
+            Self::Tr => &tr::TRANSLATIONS,
+            Self::Uk => &uk::TRANSLATIONS,
+            Self::Ar => &ar::TRANSLATIONS,
+            Self::Id => &id::TRANSLATIONS,
             Self::Auto => &en::TRANSLATIONS,
         }
     }
@@ -318,6 +370,71 @@ pub struct Translations {
     pub assoc_dialog_text: &'static str,
     pub remind_later: &'static str,
     pub apply_assoc: &'static str,
+
+    pub format_all_supported: &'static str,
+    pub format_word: &'static str,
+    pub format_rtf: &'static str,
+    pub format_pdf: &'static str,
+    pub format_djvu: &'static str,
+    pub format_comics: &'static str,
+    pub format_epub: &'static str,
+    pub format_fb2: &'static str,
+    pub format_txt: &'static str,
+    pub format_desc_fb2: &'static str,
+    pub format_desc_epub: &'static str,
+    pub format_desc_txt: &'static str,
+    pub format_desc_doc: &'static str,
+    pub format_desc_docx: &'static str,
+    pub format_desc_rtf: &'static str,
+    pub format_desc_pdf: &'static str,
+    pub format_desc_djvu: &'static str,
+    pub format_desc_cbz: &'static str,
+    pub format_desc_cbr: &'static str,
+    pub format_desc_cb7: &'static str,
+    pub format_desc_md: &'static str,
+    pub choose_manga_folder_title: &'static str,
+
+    pub err_io: &'static str,
+    pub err_unsupported: &'static str,
+    pub err_corrupted: &'static str,
+    pub err_limit_exceeded: &'static str,
+    pub err_unknown: &'static str,
+
+    pub theme_sepia: &'static str,
+    pub theme_twilight: &'static str,
+    pub theme_warm: &'static str,
+    pub theme_mint: &'static str,
+    pub theme_light: &'static str,
+    pub theme_dark: &'static str,
+    pub theme_oled: &'static str,
+
+    pub theme_sepia_desc: &'static str,
+    pub theme_twilight_desc: &'static str,
+    pub theme_warm_desc: &'static str,
+    pub theme_mint_desc: &'static str,
+    pub theme_light_desc: &'static str,
+    pub theme_dark_desc: &'static str,
+    pub theme_oled_desc: &'static str,
+
+    pub word_pages_one: &'static str,
+    pub word_pages_few: &'static str,
+    pub word_pages_many: &'static str,
+    pub word_chapters_one: &'static str,
+    pub word_chapters_few: &'static str,
+    pub word_chapters_many: &'static str,
+    pub word_matches_one: &'static str,
+    pub word_matches_few: &'static str,
+    pub word_matches_many: &'static str,
+    pub word_books_one: &'static str,
+    pub word_books_few: &'static str,
+    pub word_books_many: &'static str,
+
+    pub date_today: &'static str,
+    pub date_yesterday: &'static str,
+    pub date_just_now: &'static str,
+    pub date_minutes_ago: &'static str,
+    pub date_hours_ago: &'static str,
+    pub date_days_ago: &'static str,
 }
 
 #[cfg(test)]
@@ -326,8 +443,8 @@ mod tests {
 
     #[test]
     fn test_ui_languages_all() {
-        assert_eq!(UiLanguage::ALL.len(), 8);
-        assert_eq!(UiLanguage::CONCRETE.len(), 7);
+        assert_eq!(UiLanguage::ALL.len(), 13);
+        assert_eq!(UiLanguage::CONCRETE.len(), 12);
         for &lang in &UiLanguage::ALL {
             assert!(!lang.code().is_empty());
             assert!(!lang.native_name().is_empty());
@@ -356,7 +473,11 @@ mod tests {
         assert_eq!(UiLanguage::from_locale_str("ru_RU.UTF-8"), UiLanguage::Ru);
         assert_eq!(UiLanguage::from_locale_str("ru-RU"), UiLanguage::Ru);
         assert_eq!(UiLanguage::from_locale_str("be_BY"), UiLanguage::Ru);
-        assert_eq!(UiLanguage::from_locale_str("uk_UA"), UiLanguage::Ru);
+        assert_eq!(UiLanguage::from_locale_str("uk_UA"), UiLanguage::Uk);
+        assert_eq!(UiLanguage::from_locale_str("it_IT"), UiLanguage::It);
+        assert_eq!(UiLanguage::from_locale_str("tr_TR"), UiLanguage::Tr);
+        assert_eq!(UiLanguage::from_locale_str("ar_SA"), UiLanguage::Ar);
+        assert_eq!(UiLanguage::from_locale_str("id_ID"), UiLanguage::Id);
         assert_eq!(UiLanguage::from_locale_str("en-US"), UiLanguage::En);
         assert_eq!(UiLanguage::from_locale_str("en_GB.UTF-8"), UiLanguage::En);
         assert_eq!(UiLanguage::from_locale_str("fr-FR"), UiLanguage::Fr);
@@ -365,6 +486,53 @@ mod tests {
         assert_eq!(UiLanguage::from_locale_str("ja_JP"), UiLanguage::Ja);
         assert_eq!(UiLanguage::from_locale_str("pt-BR"), UiLanguage::Pt);
         assert_eq!(UiLanguage::from_locale_str("de-DE"), UiLanguage::En);
+    }
+
+    #[test]
+    fn test_rtl_detection() {
+        assert!(UiLanguage::Ar.is_rtl());
+        assert!(!UiLanguage::Ru.is_rtl());
+        assert!(!UiLanguage::En.is_rtl());
+        assert!(!UiLanguage::Zh.is_rtl());
+    }
+
+    #[test]
+    fn test_formatting_and_plurals() {
+        assert_eq!(plural_pages(1, UiLanguage::Ru), "1 страница");
+        assert_eq!(plural_pages(3, UiLanguage::Ru), "3 страницы");
+        assert_eq!(plural_pages(5, UiLanguage::Ru), "5 страниц");
+
+        assert_eq!(plural_pages(1, UiLanguage::Uk), "1 сторінка");
+        assert_eq!(plural_pages(3, UiLanguage::Uk), "3 сторінки");
+        assert_eq!(plural_pages(5, UiLanguage::Uk), "5 сторінок");
+
+        assert_eq!(plural_pages(1, UiLanguage::En), "1 page");
+        assert_eq!(plural_pages(5, UiLanguage::En), "5 pages");
+
+        assert_eq!(plural_pages(1, UiLanguage::It), "1 pagina");
+        assert_eq!(plural_pages(5, UiLanguage::It), "5 pagine");
+
+        assert_eq!(plural_pages(1, UiLanguage::Tr), "1 sayfa");
+        assert_eq!(plural_pages(5, UiLanguage::Tr), "5 sayfa");
+
+        assert_eq!(plural_pages(1, UiLanguage::Id), "1 halaman");
+        assert_eq!(plural_pages(5, UiLanguage::Id), "5 halaman");
+
+        assert_eq!(format_number(1234567, UiLanguage::Ru), "1 234 567");
+        assert_eq!(format_number(1234567, UiLanguage::En), "1,234,567");
+
+        assert_eq!(format_float(19.5, 1, UiLanguage::Ru), "19,5");
+        assert_eq!(format_float(19.5, 1, UiLanguage::En), "19.5");
+
+        assert_eq!(format_date(2026, 10, 19, UiLanguage::Ru), "19.10.2026");
+        assert_eq!(format_date(2026, 10, 19, UiLanguage::En), "10/19/2026");
+
+        let err = crate::document::DocumentError::Corrupted("test".to_string());
+        assert!(format_document_error(&err, UiLanguage::Ru).contains("Повреждённый документ"));
+        assert!(format_document_error(&err, UiLanguage::En).contains("Corrupted Document"));
+
+        assert!(!format_extension_description("fb2", UiLanguage::Ru).is_empty());
+        assert!(!format_extension_description("fb2", UiLanguage::En).is_empty());
     }
 
     #[test]

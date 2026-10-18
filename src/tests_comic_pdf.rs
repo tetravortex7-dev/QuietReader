@@ -721,7 +721,7 @@ fn test_document_loader_async_request_and_response() {
 
     let mut loader = DocumentLoader::default();
     let test_path = PathBuf::from("nonexistent_test_document_12345.epub");
-    let req_id = loader.request_load(test_path.clone());
+    let req_id = loader.request_load(test_path.clone(), crate::i18n::UiLanguage::Ru);
     assert!(req_id > 0);
 
     let start = Instant::now();

@@ -282,7 +282,7 @@ impl QuietReaderApp {
     }
 
     pub fn open_file_dialog(&mut self) {
-        if let Some(paths) = Dialogs::pick_document_files() {
+        if let Some(paths) = Dialogs::pick_document_files(self.settings.ui_language) {
             for path in paths {
                 self.load_file(path);
             }
@@ -290,7 +290,7 @@ impl QuietReaderApp {
     }
 
     pub fn open_folder_dialog(&mut self) {
-        if let Some(path) = Dialogs::pick_comic_folder() {
+        if let Some(path) = Dialogs::pick_comic_folder(self.settings.ui_language) {
             self.load_file(path);
         }
     }
@@ -304,7 +304,7 @@ impl QuietReaderApp {
         self.flush_settings_now();
         self.autoscroll.stop();
 
-        let request_id = self.document_loader.request_load(path.clone());
+        let request_id = self.document_loader.request_load(path.clone(), self.settings.ui_language);
         let tab = BookTab::new_loading(path, request_id);
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;

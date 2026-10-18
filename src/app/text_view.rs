@@ -30,6 +30,7 @@ impl TextView {
         on_start_tts: &mut Option<usize>,
     ) {
         let t = settings.ui_language.t();
+        let is_rtl = settings.ui_language.is_rtl();
         if let Some(doc) = document {
             let total_chapters = doc.chapters().len();
             let chapter = doc.chapters().get(*current_chapter);
@@ -58,6 +59,9 @@ impl TextView {
                         if !clean_title.is_empty() {
                             let is_active_title = active_para.is_none() && !query_str.is_empty();
                             let mut title_job = egui::text::LayoutJob::default();
+                            if is_rtl {
+                                title_job.halign = egui::Align::RIGHT;
+                            }
                             let base_title_fmt = egui::TextFormat {
                                 font_id: egui::FontId::new(
                                     font_size * 1.35,
@@ -130,6 +134,7 @@ impl TextView {
                                     theme.text_color(),
                                     query_str,
                                     is_active_para,
+                                    is_rtl,
                                 );
                                 let resp = ui.add(
                                     egui::Label::new(layout_job).wrap().selectable(allow_select),
@@ -171,7 +176,19 @@ impl TextView {
 
                         ui.add_space(40.0);
 
-                        ui.horizontal(|ui| {
+                        let (first_layout, second_layout) = if is_rtl {
+                            (
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                            )
+                        } else {
+                            (
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                egui::Layout::right_to_left(egui::Align::Center),
+                            )
+                        };
+
+                        ui.with_layout(first_layout, |ui| {
                             let prev_chapter_idx = (0..*current_chapter).rev().find(|&idx| {
                                 doc.chapters()
                                     .get(idx)
@@ -196,19 +213,16 @@ impl TextView {
                                 *last_rendered_chapter = *current_chapter;
                             }
 
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if let Some(next_idx) = next_chapter_idx
-                                        && ui.button(t.next_section).clicked()
-                                    {
-                                        *current_chapter = next_idx;
-                                        *pending_scroll_y = Some(0.0);
-                                        *current_scroll_y = 0.0;
-                                        *last_rendered_chapter = *current_chapter;
-                                    }
-                                },
-                            );
+                            ui.with_layout(second_layout, |ui| {
+                                if let Some(next_idx) = next_chapter_idx
+                                    && ui.button(t.next_section).clicked()
+                                {
+                                    *current_chapter = next_idx;
+                                    *pending_scroll_y = Some(0.0);
+                                    *current_scroll_y = 0.0;
+                                    *last_rendered_chapter = *current_chapter;
+                                }
+                            });
                         });
 
                         ui.add_space(30.0);
@@ -372,12 +386,20 @@ fn create_paragraph_layout_job(
     text_color: Color32,
     query: &str,
     is_active_hit: bool,
+    is_rtl: bool,
 ) -> egui::text::LayoutJob {
     let spans = crate::document::parse_formatted_spans(paragraph);
     let mut job = egui::text::LayoutJob::default();
+    if is_rtl {
+        job.halign = egui::Align::RIGHT;
+    }
     for (idx, span) in spans.iter().enumerate() {
         let text = if idx == 0 {
-            format!("    {}", span.text)
+            if is_rtl {
+                format!("{}    ", span.text)
+            } else {
+                format!("    {}", span.text)
+            }
         } else {
             span.text.to_string()
         };
@@ -406,9 +428,14 @@ fn create_paragraph_layout_job(
             color: text_color,
             ..Default::default()
         };
+        let text = if is_rtl {
+            format!("{paragraph}    ")
+        } else {
+            format!("    {paragraph}")
+        };
         append_with_highlight(
             &mut job,
-            &format!("    {paragraph}"),
+            &text,
             &format,
             query,
             is_active_hit,

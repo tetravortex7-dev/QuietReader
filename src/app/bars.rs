@@ -35,7 +35,19 @@ pub fn render_top_bar(
     };
 
     Panel::top("top_bar").show(ui, |ui| {
-        ui.horizontal(|ui| {
+        let is_rtl = lang.is_rtl();
+        let main_layout = if is_rtl {
+            egui::Layout::right_to_left(egui::Align::Center)
+        } else {
+            egui::Layout::left_to_right(egui::Align::Center)
+        };
+        let secondary_layout = if is_rtl {
+            egui::Layout::left_to_right(egui::Align::Center)
+        } else {
+            egui::Layout::right_to_left(egui::Align::Center)
+        };
+
+        ui.with_layout(main_layout, |ui| {
             if icon_button(ui, Icon::OpenFile, t.open_file).on_hover_text(t.open_file_tooltip).clicked() {
                 actions.open_file = true;
             }
@@ -58,7 +70,7 @@ pub fn render_top_bar(
                     actions.toggle_tts = true;
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.with_layout(secondary_layout, |ui| {
                 let (fs_icon, fs_text) = if is_fullscreen {
                     (Icon::Windowed, t.windowed)
                 } else {
@@ -90,7 +102,19 @@ pub fn render_bottom_bar(
 ) {
     let t = lang.t();
     Panel::bottom("bottom_bar").show(ui, |ui| {
-        ui.horizontal(|ui| {
+        let is_rtl = lang.is_rtl();
+        let main_layout = if is_rtl {
+            egui::Layout::right_to_left(egui::Align::Center)
+        } else {
+            egui::Layout::left_to_right(egui::Align::Center)
+        };
+        let secondary_layout = if is_rtl {
+            egui::Layout::left_to_right(egui::Align::Center)
+        } else {
+            egui::Layout::right_to_left(egui::Align::Center)
+        };
+
+        ui.with_layout(main_layout, |ui| {
             if let Some(doc) = document {
                 let meta = doc.metadata();
                 let book_info = if meta.author.is_empty() {
@@ -127,7 +151,10 @@ pub fn render_bottom_bar(
                     } else {
                         0.0
                     };
-                    (format!("{} {cur}/{total}", t.page_prefix), format!("{pct:.1}%"))
+                    (
+                        format!("{} {cur}/{total}", t.page_prefix),
+                        crate::i18n::format::format_percent(pct, lang),
+                    )
                 }
                 DocumentViewKind::Comic => {
                     let (cur_idx, total) = comic_page;
@@ -141,7 +168,10 @@ pub fn render_bottom_bar(
                     } else {
                         0.0
                     };
-                    (format!("{} {cur}/{total}", t.page_prefix), format!("{pct:.1}%"))
+                    (
+                        format!("{} {cur}/{total}", t.page_prefix),
+                        crate::i18n::format::format_percent(pct, lang),
+                    )
                 }
                 DocumentViewKind::Text => {
                     if let Some(doc) = document {
@@ -157,14 +187,14 @@ pub fn render_bottom_bar(
                         } else {
                             page_info
                         };
-                        (cur_str, format!("{pct:.1}%"))
+                        (cur_str, crate::i18n::format::format_percent(pct, lang))
                     } else {
                         (String::new(), String::new())
                     }
                 }
             };
             if !cur_str.is_empty() {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(secondary_layout, |ui| {
                     ui.label(RichText::new(format!("{cur_str}  •  {pct_str}")).strong());
                 });
             }

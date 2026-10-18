@@ -555,6 +555,10 @@ pub fn load_system_cjk_font_bytes() -> Option<Vec<u8>> {
     platform_fonts::load_cjk_font()
 }
 
+pub fn load_system_arabic_font_bytes() -> Option<Vec<u8>> {
+    platform_fonts::load_arabic_font()
+}
+
 #[cfg(windows)]
 mod platform_fonts {
     use std::path::PathBuf;
@@ -611,6 +615,26 @@ mod platform_fonts {
 
     pub fn load_cjk_font() -> Option<Vec<u8>> {
         let candidates = ["msyh.ttc", "msyh.ttf", "simsun.ttc", "YuGothR.ttc", "msgothic.ttc"];
+        if let Some(windir) = std::env::var_os("WINDIR") {
+            let fonts_dir = PathBuf::from(windir).join("Fonts");
+            for cand in candidates {
+                let p = fonts_dir.join(cand);
+                if let Ok(bytes) = std::fs::read(&p) {
+                    return Some(bytes);
+                }
+            }
+        }
+        for cand in candidates {
+            let fallback = PathBuf::from(r"C:\Windows\Fonts").join(cand);
+            if let Ok(bytes) = std::fs::read(fallback) {
+                return Some(bytes);
+            }
+        }
+        None
+    }
+
+    pub fn load_arabic_font() -> Option<Vec<u8>> {
+        let candidates = ["tahoma.ttf", "segoeui.ttf", "arial.ttf", "times.ttf"];
         if let Some(windir) = std::env::var_os("WINDIR") {
             let fonts_dir = PathBuf::from(windir).join("Fonts");
             for cand in candidates {
@@ -713,6 +737,30 @@ mod platform_fonts {
         }
         None
     }
+
+    pub fn load_arabic_font() -> Option<Vec<u8>> {
+        let candidates = [
+            "NotoSansArabic-Regular.ttf",
+            "NotoSansArabic-Regular.otf",
+            "DejaVuSans.ttf",
+            "amiri-regular.ttf",
+            "Scheherazade-Regular.ttf",
+        ];
+        let mut dirs = vec![
+            PathBuf::from("/usr/share/fonts"),
+            PathBuf::from("/usr/local/share/fonts"),
+        ];
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(&home).join(".local/share/fonts"));
+            dirs.push(PathBuf::from(home).join(".fonts"));
+        }
+        for dir in dirs {
+            if let Some(bytes) = find_font_in_dir(&dir, &candidates, 0) {
+                return Some(bytes);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -775,6 +823,34 @@ mod platform_fonts {
         }
         None
     }
+
+    pub fn load_arabic_font() -> Option<Vec<u8>> {
+        let candidates = [
+            "GeezaPro.ttc",
+            "Geeza Pro.ttf",
+            "Arial.ttf",
+            "Times.ttc",
+            "SFNS.ttf",
+        ];
+        let mut dirs = vec![
+            PathBuf::from("/System/Library/Fonts"),
+            PathBuf::from("/System/Library/Fonts/Supplemental"),
+            PathBuf::from("/Library/Fonts"),
+        ];
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(home).join("Library/Fonts"));
+        }
+
+        for dir in dirs {
+            for &cand in &candidates {
+                let p = dir.join(cand);
+                if let Ok(bytes) = std::fs::read(&p) {
+                    return Some(bytes);
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
@@ -784,6 +860,10 @@ mod platform_fonts {
     }
 
     pub fn load_cjk_font() -> Option<Vec<u8>> {
+        None
+    }
+
+    pub fn load_arabic_font() -> Option<Vec<u8>> {
         None
     }
 }
@@ -798,7 +878,12 @@ pub fn detect_system_ui_language() -> Option<String> {
         let langid = unsafe { GetUserDefaultUILanguage() };
         let primary = langid & 0x3ff;
         match primary {
-            0x19 | 0x22 | 0x23 | 0x3f => return Some("ru".to_string()),
+            0x19 | 0x23 | 0x3f => return Some("ru".to_string()),
+            0x22 => return Some("uk".to_string()),
+            0x10 => return Some("it".to_string()),
+            0x1f => return Some("tr".to_string()),
+            0x01 => return Some("ar".to_string()),
+            0x21 => return Some("id".to_string()),
             0x09 => return Some("en".to_string()),
             0x0c => return Some("fr".to_string()),
             0x0a => return Some("es".to_string()),

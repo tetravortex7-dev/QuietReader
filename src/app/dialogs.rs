@@ -17,35 +17,37 @@ pub enum SettingsTab {
 pub struct Dialogs;
 
 impl Dialogs {
-    pub fn pick_document_files() -> Option<Vec<PathBuf>> {
+    pub fn pick_document_files(lang: crate::i18n::UiLanguage) -> Option<Vec<PathBuf>> {
+        let t = lang.t();
         rfd::FileDialog::new()
             .add_filter(
-                "Все поддерживаемые документы",
+                t.format_all_supported,
                 &[
                     "pdf", "djvu", "djv", "fb2", "epub", "docx", "doc", "rtf", "txt", "md",
                     "markdown", "log", "cbz", "cbr", "cb7", "zip", "rar", "7z", "xml",
                 ],
             )
-            .add_filter("Документы Word (*.docx, *.doc)", &["docx", "doc", "dot"])
-            .add_filter("Документы RTF (*.rtf)", &["rtf"])
-            .add_filter("Документы PDF (*.pdf)", &["pdf"])
-            .add_filter("Документы DjVu (*.djvu, *.djv)", &["djvu", "djv"])
+            .add_filter(t.format_word, &["docx", "doc", "dot"])
+            .add_filter(t.format_rtf, &["rtf"])
+            .add_filter(t.format_pdf, &["pdf"])
+            .add_filter(t.format_djvu, &["djvu", "djv"])
             .add_filter(
-                "Комиксы и манга (*.cbz, *.cbr, *.cb7, *.zip)",
+                t.format_comics,
                 &["cbz", "cbr", "cb7", "zip", "rar", "7z"],
             )
-            .add_filter("Книги EPUB (*.epub)", &["epub"])
-            .add_filter("Книги FB2 (*.fb2)", &["fb2", "xml"])
+            .add_filter(t.format_epub, &["epub"])
+            .add_filter(t.format_fb2, &["fb2", "xml"])
             .add_filter(
-                "Текстовые файлы (*.txt, *.md, *.log)",
+                t.format_txt,
                 &["txt", "md", "markdown", "log"],
             )
             .pick_files()
     }
 
-    pub fn pick_comic_folder() -> Option<PathBuf> {
+    pub fn pick_comic_folder(lang: crate::i18n::UiLanguage) -> Option<PathBuf> {
+        let t = lang.t();
         rfd::FileDialog::new()
-            .set_title("Выберите папку с изображениями комикса или манги")
+            .set_title(t.choose_manga_folder_title)
             .pick_folder()
     }
 
@@ -115,7 +117,8 @@ impl Dialogs {
                         egui::ScrollArea::vertical()
                             .max_height(210.0)
                             .show(ui, |ui| {
-                                for &(ext, label) in crate::platform::SUPPORTED_EXTENSIONS_INFO {
+                                for &(ext, _) in crate::platform::SUPPORTED_EXTENSIONS_INFO {
+                                    let label = crate::i18n::format::format_extension_description(ext, settings.ui_language);
                                     let mut is_checked = settings
                                         .associated_extensions
                                         .iter()
