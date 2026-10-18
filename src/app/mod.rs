@@ -8,12 +8,15 @@ pub mod fonts;
 pub mod icons;
 pub mod input;
 pub mod paged_common;
+pub mod pdf_toolbar;
 pub mod pdf_view;
+pub mod search_view;
 pub mod settings_view;
 pub mod tabs;
 pub mod text_view;
 pub mod theme;
 pub mod toc_view;
+pub mod tts;
 
 use crate::core::ReaderCore;
 use crate::document::{Document, DocumentViewKind};
@@ -30,11 +33,13 @@ pub use self::document_loader::DocumentLoader;
 pub use self::fonts::apply_font_family;
 pub use self::input::poll_keyboard_commands;
 pub use self::pdf_view::PdfViewState;
+pub use self::search_view::{SearchState, SearchView};
 pub use self::settings_view::SettingsView;
 pub use self::tabs::{BookTab, TabBarAction, TabsBar};
 pub use self::text_view::TextView;
 pub use self::theme::ReaderTheme;
 pub use self::toc_view::TocView;
+pub use self::tts::TtsController;
 
 pub struct QuietReaderApp {
     pub tabs: Vec<BookTab>,
@@ -69,7 +74,9 @@ pub struct QuietReaderApp {
     pub comic_view: ComicViewState,
     pub pdf_view: PdfViewState,
     pub document_loader: DocumentLoader,
-    pub core: ReaderCore,
+    pub search: SearchState,
+    pub tts: TtsController,
+    pub last_tts_paragraph: Option<usize>,
     pub last_applied_theme: Option<ReaderTheme>,
 }
 
@@ -136,7 +143,9 @@ impl QuietReaderApp {
             comic_view: ComicViewState::default(),
             pdf_view: PdfViewState::default(),
             document_loader: DocumentLoader::default(),
-            core: ReaderCore::default(),
+            search: SearchState::default(),
+            tts: TtsController::new(),
+            last_tts_paragraph: None,
             last_applied_theme: None,
         }
     }
@@ -195,30 +204,7 @@ impl QuietReaderApp {
         self.view_kind() == DocumentViewKind::Pdf
     }
 
-    pub fn save_active_to_tab(&mut self) {
-        let cur_page = match self.view_kind() {
-            DocumentViewKind::Pdf => self.pdf_view.current_page,
-            _ => self.comic_view.current_page,
-        };
-        if let Some(tab) = self.tabs.get_mut(self.active_tab)
-            && self.document.is_some()
-        {
-            tab.current_chapter = self.current_chapter;
-            tab.last_rendered_chapter = self.last_rendered_chapter;
-            tab.current_scroll_y = self.current_scroll_y;
-            tab.viewport_height = self.viewport_height;
-            tab.max_scroll_y = self.max_scroll_y;
-            tab.comic_page = cur_page;
-        }
-        ReaderCore::record_progress(
-            &mut self.settings,
-            &self.document,
-            &self.current_file_path,
-            self.current_chapter,
-            cur_page,
-            self.current_scroll_y,
-        );
-    }
+
 
     pub fn mark_settings_dirty(&mut self) {
         self.settings_dirty = true;
@@ -260,94 +246,22 @@ impl QuietReaderApp {
         .to_string();
     }
 
-    pub fn activate_tab(&mut self, idx: usize) {
-        if idx >= self.tabs.len() {
-            return;
-        }
-        self.flush_settings_now();
-        self.autoscroll.stop();
-        self.apply_tab_state(idx);
-    }
 
-    fn apply_tab_state(&mut self, idx: usize) {
-        if let Some(tab) = self.tabs.get(idx).cloned() {
-            self.active_tab = idx;
-            self.document = tab.document;
-            self.current_file_path = Some(tab.file_path.clone());
-            self.current_chapter = tab.current_chapter;
-            self.last_rendered_chapter = tab.current_chapter;
-            self.pending_scroll_y = Some(tab.current_scroll_y);
-            self.current_scroll_y = tab.current_scroll_y;
-            self.viewport_height = tab.viewport_height;
-            self.max_scroll_y = tab.max_scroll_y;
-            self.comic_view.clear_cache();
-            self.comic_view.current_page = tab.comic_page;
-            self.pdf_view.clear_cache();
-            self.pdf_view.current_page = tab.comic_page;
-            self.settings.last_opened_book = Some(tab.file_path);
-            self.settings.active_tab_index = idx;
-            if tab.is_loading {
-                self.status_message =
-                    Some(format!("Загрузка [{}]: {}...", tab.format_badge, tab.title));
-            } else if let Some(ref err) = tab.load_error {
-                self.status_message = Some(format!("Ошибка [{}]: {err}", tab.format_badge));
-            } else {
-                self.status_message =
-                    Some(format!("Вкладка [{}]: {}", tab.format_badge, tab.title));
+
+    pub fn start_tts_at_paragraph(&mut self, paragraph_idx: usize) {
+        if let Some(doc) = &self.document {
+            if let Some(text_content) = doc.text_content() {
+                if let Some(ch) = text_content.chapters().get(self.current_chapter) {
+                    self.tts.show_panel = true;
+                    self.tts.play_chapter(
+                        self.current_chapter,
+                        paragraph_idx,
+                        ch.paragraphs.clone(),
+                    );
+                    self.last_tts_paragraph = Some(paragraph_idx);
+                }
             }
         }
-    }
-
-    pub fn close_tab(&mut self, idx: usize) {
-        if idx >= self.tabs.len() {
-            return;
-        }
-        self.save_active_to_tab();
-        self.tabs.remove(idx);
-
-        if self.tabs.is_empty() {
-            self.active_tab = 0;
-            self.document = None;
-            self.current_file_path = None;
-            self.current_chapter = 0;
-            self.last_rendered_chapter = 0;
-            self.pending_scroll_y = None;
-            self.current_scroll_y = 0.0;
-            self.max_scroll_y = 0.0;
-            self.comic_view.clear_cache();
-            self.pdf_view.clear_cache();
-            self.autoscroll.stop();
-            self.status_message = Some("Все вкладки закрыты".to_string());
-        } else {
-            let next_idx = if idx < self.active_tab {
-                self.active_tab - 1
-            } else {
-                self.active_tab.min(self.tabs.len() - 1)
-            };
-            self.apply_tab_state(next_idx);
-        }
-        self.flush_settings_now();
-    }
-
-    pub fn next_tab(&mut self) {
-        if self.tabs.len() > 1 {
-            self.activate_tab((self.active_tab + 1) % self.tabs.len());
-        }
-    }
-
-    pub fn prev_tab(&mut self) {
-        if self.tabs.len() > 1 {
-            let prev = if self.active_tab == 0 {
-                self.tabs.len() - 1
-            } else {
-                self.active_tab - 1
-            };
-            self.activate_tab(prev);
-        }
-    }
-
-    pub fn sync_and_save_settings(&mut self) {
-        self.flush_settings_now();
     }
 
     pub fn register_file_association(&mut self) {
@@ -668,6 +582,14 @@ impl eframe::App for QuietReaderApp {
             if actions.toggle_toc {
                 self.show_toc = !self.show_toc;
             }
+            if actions.toggle_search {
+                if self.view_kind() == DocumentViewKind::Text && self.document.is_some() {
+                    self.search.toggle();
+                }
+            }
+            if actions.toggle_tts {
+                self.tts.toggle_panel();
+            }
             if actions.toggle_fullscreen {
                 self.set_fullscreen_mode(&ctx, !self.is_fullscreen);
             }
@@ -856,6 +778,59 @@ impl eframe::App for QuietReaderApp {
                             );
                         }
                         DocumentViewKind::Text => {
+                            let tts_st = self.tts.status();
+                            if tts_st.is_playing && !tts_st.is_paused {
+                                if self.current_chapter != tts_st.current_chapter {
+                                    self.current_chapter = tts_st.current_chapter;
+                                    self.last_rendered_chapter = tts_st.current_chapter;
+                                }
+                                if self.last_tts_paragraph != Some(tts_st.current_paragraph) {
+                                    if let Some(doc) = &self.document {
+                                        let scroll_y = crate::core::ReaderCore::estimate_paragraph_scroll_y(
+                                            doc.as_ref(),
+                                            tts_st.current_chapter,
+                                            Some(tts_st.current_paragraph),
+                                            self.font_size,
+                                        );
+                                        self.pending_scroll_y = Some(scroll_y);
+                                    }
+                                    self.last_tts_paragraph = Some(tts_st.current_paragraph);
+                                }
+                            }
+                            if tts_st.needs_next_chapter {
+                                if let Some(doc) = &self.document {
+                                    let next_ch = tts_st.current_chapter + 1;
+                                    if let Some(text_content) = doc.text_content() {
+                                        if let Some(ch) = text_content.chapters().get(next_ch) {
+                                            self.current_chapter = next_ch;
+                                            self.last_rendered_chapter = next_ch;
+                                            self.pending_scroll_y = Some(0.0);
+                                            self.tts.play_next_chapter(next_ch, ch.paragraphs.clone());
+                                        } else {
+                                            self.tts.stop();
+                                        }
+                                    }
+                                }
+                            }
+
+                            let search_highlight = if self.search.is_open && !self.search.query.trim().is_empty() {
+                                let active_para = self
+                                    .search
+                                    .current_hit()
+                                    .filter(|h| h.chapter_index == self.current_chapter)
+                                    .and_then(|h| h.paragraph_index);
+                                Some((self.search.query.as_str(), active_para))
+                            } else {
+                                None
+                            };
+
+                            let tts_highlight = if (tts_st.is_playing || tts_st.is_paused) && tts_st.current_chapter == self.current_chapter {
+                                Some(tts_st.current_paragraph)
+                            } else {
+                                None
+                            };
+                            let mut on_start_tts = None;
+
                             TextView::render(
                                 ui,
                                 &ctx,
@@ -870,15 +845,42 @@ impl eframe::App for QuietReaderApp {
                                 self.font_size,
                                 &self.theme,
                                 &mut self.settings,
-                                &mut self.status_message,
                                 &mut on_open_file,
                                 &mut on_open_folder,
                                 &mut on_load_recent,
+                                search_highlight,
+                                tts_highlight,
+                                &mut on_start_tts,
                             );
+
+                            if let Some(para_idx) = on_start_tts {
+                                self.start_tts_at_paragraph(para_idx);
+                            }
                         }
                     }
                 }
             });
+
+        if self.view_kind() == DocumentViewKind::Text && self.document.is_some() {
+            SearchView::render(
+                &ctx,
+                &mut self.search,
+                self.document.as_deref(),
+                &mut self.current_chapter,
+                &mut self.last_rendered_chapter,
+                &mut self.pending_scroll_y,
+                self.font_size,
+                &self.theme,
+            );
+        }
+
+        let has_text_content = self.document.as_ref().map(|d| d.text_content().is_some()).unwrap_or(false);
+        let mut on_tts_play = false;
+        self.tts.render_panel(&ctx, &self.theme, has_text_content, &mut on_tts_play);
+        if on_tts_play {
+            let start_para = self.last_tts_paragraph.unwrap_or(0);
+            self.start_tts_at_paragraph(start_para);
+        }
 
         if close_tab_action {
             self.close_tab(self.active_tab);

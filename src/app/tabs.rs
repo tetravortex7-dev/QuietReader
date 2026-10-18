@@ -1,5 +1,6 @@
 use super::theme::ReaderTheme;
-use crate::document::Document;
+use crate::core::ReaderCore;
+use crate::document::{Document, DocumentViewKind};
 use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -187,7 +188,7 @@ impl TabsBar {
                         let border_stroke = if is_active {
                             Stroke::new(1.5, theme.accent_color())
                         } else {
-                            Stroke::new(1.0, Color32::TRANSPARENT)
+                            Stroke::NONE
                         };
 
                         let frame = egui::Frame::default()
@@ -302,5 +303,123 @@ impl TabsBar {
             });
 
         action
+    }
+}
+
+impl super::QuietReaderApp {
+    pub fn save_active_to_tab(&mut self) {
+        let cur_page = match self.view_kind() {
+            DocumentViewKind::Pdf => self.pdf_view.current_page,
+            _ => self.comic_view.current_page,
+        };
+        if let Some(tab) = self.tabs.get_mut(self.active_tab)
+            && self.document.is_some()
+        {
+            tab.current_chapter = self.current_chapter;
+            tab.last_rendered_chapter = self.last_rendered_chapter;
+            tab.current_scroll_y = self.current_scroll_y;
+            tab.viewport_height = self.viewport_height;
+            tab.max_scroll_y = self.max_scroll_y;
+            tab.comic_page = cur_page;
+        }
+        ReaderCore::record_progress(
+            &mut self.settings,
+            &self.document,
+            &self.current_file_path,
+            self.current_chapter,
+            cur_page,
+            self.current_scroll_y,
+        );
+    }
+
+    pub fn activate_tab(&mut self, idx: usize) {
+        if idx >= self.tabs.len() {
+            return;
+        }
+        self.flush_settings_now();
+        self.autoscroll.stop();
+        self.apply_tab_state(idx);
+    }
+
+    pub(crate) fn apply_tab_state(&mut self, idx: usize) {
+        if let Some(tab) = self.tabs.get(idx).cloned() {
+            self.active_tab = idx;
+            self.document = tab.document;
+            self.current_file_path = Some(tab.file_path.clone());
+            self.current_chapter = tab.current_chapter;
+            self.last_rendered_chapter = tab.current_chapter;
+            self.pending_scroll_y = Some(tab.current_scroll_y);
+            self.current_scroll_y = tab.current_scroll_y;
+            self.viewport_height = tab.viewport_height;
+            self.max_scroll_y = tab.max_scroll_y;
+            self.comic_view.clear_cache();
+            self.comic_view.current_page = tab.comic_page;
+            self.pdf_view.clear_cache();
+            self.pdf_view.current_page = tab.comic_page;
+            self.search.last_searched_query.clear();
+            self.tts.stop();
+            self.last_tts_paragraph = None;
+            self.settings.last_opened_book = Some(tab.file_path);
+            self.settings.active_tab_index = idx;
+            if tab.is_loading {
+                self.status_message =
+                    Some(format!("Загрузка [{}]: {}...", tab.format_badge, tab.title));
+            } else if let Some(ref err) = tab.load_error {
+                self.status_message = Some(format!("Ошибка [{}]: {err}", tab.format_badge));
+            } else {
+                self.status_message =
+                    Some(format!("Вкладка [{}]: {}", tab.format_badge, tab.title));
+            }
+        }
+    }
+
+    pub fn close_tab(&mut self, idx: usize) {
+        if idx >= self.tabs.len() {
+            return;
+        }
+        self.tts.stop();
+        self.last_tts_paragraph = None;
+        self.save_active_to_tab();
+        self.tabs.remove(idx);
+
+        if self.tabs.is_empty() {
+            self.active_tab = 0;
+            self.document = None;
+            self.current_file_path = None;
+            self.current_chapter = 0;
+            self.last_rendered_chapter = 0;
+            self.pending_scroll_y = None;
+            self.current_scroll_y = 0.0;
+            self.max_scroll_y = 0.0;
+            self.comic_view.clear_cache();
+            self.pdf_view.clear_cache();
+            self.autoscroll.stop();
+            self.status_message = Some("Все вкладки закрыты".to_string());
+        } else {
+            let next_idx = if idx < self.active_tab {
+                self.active_tab - 1
+            } else {
+                self.active_tab.min(self.tabs.len() - 1)
+            };
+            self.apply_tab_state(next_idx);
+        }
+        self.flush_settings_now();
+    }
+
+    pub fn next_tab(&mut self) {
+        if self.tabs.len() > 1 {
+            self.activate_tab((self.active_tab + 1) % self.tabs.len());
+        }
+    }
+
+    pub fn prev_tab(&mut self) {
+        if self.tabs.len() > 1 {
+            let prev = if self.active_tab == 0 {
+                self.tabs.len() - 1
+            } else {
+                self.active_tab - 1
+            };
+            self.activate_tab(prev);
+        }
     }
 }

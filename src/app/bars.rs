@@ -9,6 +9,8 @@ pub struct TopBarActions {
     pub open_folder: bool,
     pub toggle_recent: bool,
     pub toggle_toc: bool,
+    pub toggle_search: bool,
+    pub toggle_tts: bool,
     pub toggle_fullscreen: bool,
     pub toggle_settings: bool,
 }
@@ -24,6 +26,8 @@ pub fn render_top_bar(
         open_folder: false,
         toggle_recent: false,
         toggle_toc: false,
+        toggle_search: false,
+        toggle_tts: false,
         toggle_fullscreen: false,
         toggle_settings: false,
     };
@@ -44,6 +48,12 @@ pub fn render_top_bar(
                 let toc_text = if show_toc { "Скрыть оглавление" } else { "Оглавление" };
                 if icon_button(ui, Icon::Toc, toc_text).clicked() {
                     actions.toggle_toc = true;
+                }
+                if icon_button(ui, Icon::Search, "Поиск (Ctrl+F)").on_hover_text("Поиск по тексту книги (Ctrl+F)").clicked() {
+                    actions.toggle_search = true;
+                }
+                if icon_button(ui, Icon::Speech, "Озвучить").on_hover_text("Озвучивание текста вслух (TTS)").clicked() {
+                    actions.toggle_tts = true;
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

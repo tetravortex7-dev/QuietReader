@@ -71,6 +71,10 @@ impl ReaderTheme {
         }
     }
 
+    pub fn button_stroke_color(&self) -> Option<Color32> {
+        None
+    }
+
     pub fn create_visuals(&self) -> eframe::egui::Visuals {
         use eframe::egui;
         let mut visuals = if self.is_dark() {
@@ -83,6 +87,12 @@ impl ReaderTheme {
         visuals.window_stroke = egui::Stroke::new(1.0, self.accent_color().gamma_multiply(0.4));
         visuals.override_text_color = Some(self.text_color());
 
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.open.bg_stroke = egui::Stroke::NONE;
+        visuals.selection.stroke = egui::Stroke::new(1.0, self.accent_color());
+
         match self {
             ReaderTheme::Oled => {
                 visuals.extreme_bg_color = Color32::from_rgb(0, 0, 0);
@@ -93,31 +103,43 @@ impl ReaderTheme {
                 visuals.widgets.inactive.bg_fill = Color32::from_rgb(14, 14, 18);
             }
             ReaderTheme::Sepia => {
-                visuals.widgets.hovered.fg_stroke.color = Color32::from_rgb(20, 15, 10);
-                visuals.widgets.active.fg_stroke.color = Color32::from_rgb(0, 0, 0);
+                visuals.widgets.hovered.fg_stroke.color = self.text_color();
+                visuals.widgets.active.fg_stroke.color = self.text_color();
+                visuals.widgets.open.fg_stroke.color = self.text_color();
+                visuals.widgets.inactive.fg_stroke.color = self.text_color();
+                visuals.widgets.noninteractive.fg_stroke.color = self.text_color();
                 visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(228, 220, 203);
-                visuals.widgets.noninteractive.bg_stroke =
-                    egui::Stroke::new(1.0, Color32::from_rgb(210, 200, 180));
+                visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
                 visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(228, 220, 203);
                 visuals.widgets.inactive.bg_fill = Color32::from_rgb(228, 220, 203);
+                visuals.widgets.hovered.bg_fill = Color32::from_rgb(220, 210, 192);
+                visuals.widgets.active.bg_fill = Color32::from_rgb(212, 200, 180);
             }
             ReaderTheme::Warm => {
-                visuals.widgets.hovered.fg_stroke.color = Color32::from_rgb(30, 20, 10);
-                visuals.widgets.active.fg_stroke.color = Color32::from_rgb(10, 5, 0);
+                visuals.widgets.hovered.fg_stroke.color = self.text_color();
+                visuals.widgets.active.fg_stroke.color = self.text_color();
+                visuals.widgets.open.fg_stroke.color = self.text_color();
+                visuals.widgets.inactive.fg_stroke.color = self.text_color();
+                visuals.widgets.noninteractive.fg_stroke.color = self.text_color();
                 visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(236, 224, 200);
-                visuals.widgets.noninteractive.bg_stroke =
-                    egui::Stroke::new(1.0, Color32::from_rgb(218, 204, 178));
+                visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
                 visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(236, 224, 200);
                 visuals.widgets.inactive.bg_fill = Color32::from_rgb(236, 224, 200);
+                visuals.widgets.hovered.bg_fill = Color32::from_rgb(228, 214, 188);
+                visuals.widgets.active.bg_fill = Color32::from_rgb(220, 204, 176);
             }
             ReaderTheme::Mint => {
-                visuals.widgets.hovered.fg_stroke.color = Color32::from_rgb(15, 30, 20);
-                visuals.widgets.active.fg_stroke.color = Color32::from_rgb(0, 20, 10);
+                visuals.widgets.hovered.fg_stroke.color = self.text_color();
+                visuals.widgets.active.fg_stroke.color = self.text_color();
+                visuals.widgets.open.fg_stroke.color = self.text_color();
+                visuals.widgets.inactive.fg_stroke.color = self.text_color();
+                visuals.widgets.noninteractive.fg_stroke.color = self.text_color();
                 visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(220, 230, 220);
-                visuals.widgets.noninteractive.bg_stroke =
-                    egui::Stroke::new(1.0, Color32::from_rgb(200, 215, 200));
+                visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
                 visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(220, 230, 220);
                 visuals.widgets.inactive.bg_fill = Color32::from_rgb(220, 230, 220);
+                visuals.widgets.hovered.bg_fill = Color32::from_rgb(210, 222, 210);
+                visuals.widgets.active.bg_fill = Color32::from_rgb(200, 214, 200);
             }
             ReaderTheme::Twilight => {
                 visuals.widgets.hovered.fg_stroke.color = Color32::from_rgb(250, 240, 225);
@@ -129,10 +151,17 @@ impl ReaderTheme {
                 visuals.widgets.inactive.bg_fill = Color32::from_rgb(46, 40, 36);
             }
             ReaderTheme::Light => {
+                visuals.widgets.inactive.fg_stroke.color = self.text_color();
+                visuals.widgets.hovered.fg_stroke.color = self.text_color();
+                visuals.widgets.active.fg_stroke.color = self.text_color();
+                visuals.widgets.open.fg_stroke.color = self.text_color();
+                visuals.widgets.noninteractive.fg_stroke.color = self.text_color();
                 visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(244, 245, 248);
-                visuals.widgets.noninteractive.bg_stroke =
-                    egui::Stroke::new(1.0, Color32::from_rgb(220, 224, 230));
-                visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(244, 245, 248);
+                visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+                visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(238, 240, 244);
+                visuals.widgets.inactive.bg_fill = Color32::from_rgb(238, 240, 244);
+                visuals.widgets.hovered.bg_fill = Color32::from_rgb(226, 230, 236);
+                visuals.widgets.active.bg_fill = Color32::from_rgb(216, 222, 230);
             }
             ReaderTheme::Dark => {}
         }

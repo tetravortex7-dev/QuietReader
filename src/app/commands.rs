@@ -53,8 +53,18 @@ impl QuietReaderApp {
             Command::ToggleFullscreen => {
                 self.set_fullscreen_mode(ctx, !self.is_fullscreen);
             }
+            Command::ToggleSearch => {
+                if view_kind == DocumentViewKind::Text && self.document.is_some() {
+                    self.search.toggle();
+                }
+            }
+            Command::ToggleTTS => {
+                self.tts.toggle_panel();
+            }
             Command::ExitFullscreen => {
-                if self.autoscroll.is_active() {
+                if self.search.is_open {
+                    self.search.close();
+                } else if self.autoscroll.is_active() {
                     self.autoscroll.stop();
                 } else if self.is_fullscreen {
                     self.set_fullscreen_mode(ctx, false);

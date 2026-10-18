@@ -26,6 +26,8 @@ pub enum Command {
     ZoomIn,
     ZoomOut,
     ResetZoom,
+    ToggleSearch,
+    ToggleTTS,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,6 +80,22 @@ impl ReaderCore {
         self.bookmarks.retain(|b| b.book_path != book_path);
     }
 
+    pub fn make_safe_snippet(text: &str, byte_pos: usize, match_len: usize) -> String {
+        let safe_pos = text.floor_char_boundary(byte_pos.min(text.len()));
+        let start = text.floor_char_boundary(safe_pos.saturating_sub(30));
+        let end = text.ceil_char_boundary((safe_pos + match_len + 30).min(text.len()));
+        let slice = text[start..end].trim().replace('\n', " ");
+        let mut snippet = String::new();
+        if start > 0 {
+            snippet.push_str("...");
+        }
+        snippet.push_str(&slice);
+        if end < text.len() {
+            snippet.push_str("...");
+        }
+        snippet
+    }
+
     pub fn search_in_document(doc: &dyn Document, query: &str) -> Vec<SearchHit> {
         let q = query.trim().to_lowercase();
         if q.is_empty() {
@@ -85,24 +103,79 @@ impl ReaderCore {
         }
         let mut hits = Vec::new();
         for (ch_idx, chapter) in doc.chapters().iter().enumerate() {
+            let clean_title = crate::document::strip_formatting_tags(&chapter.title);
+            let lower_title = clean_title.to_lowercase();
+            if lower_title.contains(&q) {
+                hits.push(SearchHit {
+                    chapter_index: ch_idx,
+                    paragraph_index: None,
+                    snippet: clean_title.clone(),
+                });
+                if hits.len() >= 200 {
+                    return hits;
+                }
+            }
+
             for (p_idx, para) in chapter.paragraphs.iter().enumerate() {
                 let clean = crate::document::strip_formatting_tags(para);
-                if let Some(pos) = clean.to_lowercase().find(&q) {
-                    let start = pos.saturating_sub(30);
-                    let end = (pos + q.len() + 30).min(clean.len());
-                    let snippet = clean[start..end].trim().to_string();
+                let lower_para = clean.to_lowercase();
+                let mut search_from = 0;
+                while let Some(found_idx) = lower_para[search_from..].find(&q) {
+                    let abs_pos = search_from + found_idx;
+                    let snippet = Self::make_safe_snippet(&clean, abs_pos, q.len());
                     hits.push(SearchHit {
                         chapter_index: ch_idx,
                         paragraph_index: Some(p_idx),
                         snippet,
                     });
-                    if hits.len() >= 100 {
+                    if hits.len() >= 200 {
                         return hits;
+                    }
+                    search_from = abs_pos + q.len().max(1);
+                    if search_from >= lower_para.len() {
+                        break;
                     }
                 }
             }
         }
         hits
+    }
+
+    pub fn estimate_paragraph_scroll_y(
+        doc: &dyn Document,
+        chapter_idx: usize,
+        paragraph_idx: Option<usize>,
+        font_size: f32,
+    ) -> f32 {
+        let Some(p_idx) = paragraph_idx else {
+            return 0.0;
+        };
+        let Some(chapter) = doc.chapters().get(chapter_idx) else {
+            return 0.0;
+        };
+        let line_height = font_size * 1.45;
+        let para_spacing = font_size * 0.4;
+        let chars_per_line = (760.0 / (font_size * 0.52)).max(10.0);
+
+        let clean_title = crate::document::strip_formatting_tags(&chapter.title);
+        let mut y = if clean_title.is_empty() {
+            20.0
+        } else {
+            20.0 + font_size * 1.35 + 24.0
+        };
+
+        for para in chapter.paragraphs.iter().take(p_idx) {
+            if para.is_empty() {
+                y += font_size * 0.7;
+            } else {
+                let clean = crate::document::strip_formatting_tags(para);
+                let char_count = clean.chars().count();
+                let num_lines = (char_count as f32 / chars_per_line).ceil().max(1.0);
+                y += num_lines * line_height + para_spacing;
+            }
+        }
+
+        (y - 60.0).max(0.0)
     }
 
     pub fn find_next_non_empty_chapter(

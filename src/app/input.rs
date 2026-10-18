@@ -28,8 +28,12 @@ pub fn process_keyboard_events(
     } else if cmd_mod && key_pressed(egui::Key::Num0) {
         cmds.push(Command::ResetZoom);
     }
-    if !ctrl && key_pressed(egui::Key::F) {
+    if cmd_mod && key_pressed(egui::Key::F) {
+        cmds.push(Command::ToggleSearch);
+    } else if !ctrl && key_pressed(egui::Key::F) {
         cmds.push(Command::ToggleFullscreen);
+    } else if key_pressed(egui::Key::F4) || (cmd_mod && shift && key_pressed(egui::Key::S)) {
+        cmds.push(Command::ToggleTTS);
     } else if key_pressed(egui::Key::Escape) {
         cmds.push(Command::ExitFullscreen);
     }

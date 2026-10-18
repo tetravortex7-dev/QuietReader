@@ -602,3 +602,249 @@ fn test_twilight_evening_theme() {
         Color32::from_rgb(224, 150, 68)
     );
 }
+
+#[test]
+fn test_text_search_multi_chapter_and_title() {
+    use crate::core::ReaderCore;
+    use crate::document::txt::TxtDocument;
+
+    let text = "Chapter 1\nIntroductory text here\n\nChapter 2\nSecond section with target keyword\n\nSpecial Title\nFinal content";
+    let doc = TxtDocument::from_text(text, "SearchDoc");
+
+    let hits = ReaderCore::search_in_document(&doc, "target");
+    assert!(!hits.is_empty());
+    assert_eq!(hits[0].chapter_index, 0);
+    assert!(hits[0].snippet.contains("target"));
+
+    let title_hits = ReaderCore::search_in_document(&doc, "SearchDoc");
+    assert!(!title_hits.is_empty());
+    assert_eq!(title_hits[0].paragraph_index, None);
+}
+
+#[test]
+fn test_search_state_cycle_and_scroll_estimate() {
+    use crate::app::search_view::SearchState;
+    use crate::core::ReaderCore;
+    use crate::document::txt::TxtDocument;
+
+    let mut state = SearchState::default();
+    assert!(!state.is_open);
+    state.open();
+    assert!(state.is_open);
+    assert!(state.should_focus);
+
+    let doc = TxtDocument::from_text("Alpha\n\nBeta\n\nGamma\n\nDelta", "Doc");
+    let y0 = ReaderCore::estimate_paragraph_scroll_y(&doc, 0, None, 18.0);
+    assert_eq!(y0, 0.0);
+
+    let y_para = ReaderCore::estimate_paragraph_scroll_y(&doc, 0, Some(2), 18.0);
+    assert!(y_para >= 0.0);
+
+    state.hits = ReaderCore::search_in_document(&doc, "Beta");
+    state.hits.extend(ReaderCore::search_in_document(&doc, "Delta"));
+    assert_eq!(state.hits.len(), 2);
+    let first = state.current_hit().cloned();
+    let second = state.next_hit().cloned();
+    assert_ne!(first, second);
+    let wrapped = state.prev_hit().cloned();
+    assert_eq!(first, wrapped);
+}
+
+#[test]
+fn test_make_safe_snippet_utf8_boundaries() {
+    use crate::core::ReaderCore;
+
+    let cyrillic = "Строка с кириллицей и множеством многобайтовых символов UTF-8 для проверки";
+    for i in 0..cyrillic.len() {
+        let snippet = ReaderCore::make_safe_snippet(cyrillic, i, 4);
+        assert!(!snippet.is_empty());
+    }
+}
+
+#[test]
+fn test_light_themes_button_borders() {
+    use crate::app::theme::ReaderTheme;
+
+    let light_themes = [
+        ReaderTheme::Light,
+        ReaderTheme::Sepia,
+        ReaderTheme::Warm,
+        ReaderTheme::Mint,
+    ];
+
+    for theme in light_themes {
+        assert!(!theme.is_dark());
+        assert!(theme.button_stroke_color().is_none());
+
+        let visuals = theme.create_visuals();
+        assert_eq!(visuals.widgets.inactive.bg_stroke.width, 0.0);
+        assert_eq!(visuals.widgets.inactive.fg_stroke.color, theme.text_color());
+        assert_eq!(visuals.widgets.hovered.fg_stroke.color, theme.text_color());
+        assert_eq!(visuals.widgets.active.fg_stroke.color, theme.text_color());
+        assert_eq!(visuals.override_text_color, Some(theme.text_color()));
+    }
+
+    let dark_themes = [
+        ReaderTheme::Dark,
+        ReaderTheme::Oled,
+        ReaderTheme::Twilight,
+    ];
+
+    for theme in dark_themes {
+        assert!(theme.is_dark());
+        assert!(theme.button_stroke_color().is_none());
+    }
+}
+
+#[test]
+fn test_tts_engine_init() {
+    let tts_res = tts::Tts::default();
+    if let Ok(mut tts) = tts_res {
+        let features = tts.supported_features();
+        let _ = tts.normal_rate();
+        let _ = tts.min_rate();
+        let _ = tts.max_rate();
+        let _ = tts.voices();
+        if features.utterance_callbacks {
+            let _ = tts.on_utterance_end(Some(Box::new(|u| {
+                let _ = u;
+            })));
+        }
+        let _ = tts.stop();
+    }
+}
+
+#[test]
+fn test_pdf_reading_order_two_columns_and_gutter() {
+    use crate::document::pdf::text::{GlyphEntry, group_and_sort_glyphs};
+    let mut glyphs = Vec::new();
+    for (i, c) in "Left1".chars().enumerate() {
+        glyphs.push(GlyphEntry {
+            c,
+            x: 50.0 + i as f64 * 10.0,
+            y: 300.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
+    }
+    for (i, c) in "Right1".chars().enumerate() {
+        glyphs.push(GlyphEntry {
+            c,
+            x: 450.0 + i as f64 * 10.0,
+            y: 300.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
+    }
+    for (i, c) in "Left2".chars().enumerate() {
+        glyphs.push(GlyphEntry {
+            c,
+            x: 50.0 + i as f64 * 10.0,
+            y: 350.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
+    }
+    for (i, c) in "Right2".chars().enumerate() {
+        glyphs.push(GlyphEntry {
+            c,
+            x: 450.0 + i as f64 * 10.0,
+            y: 350.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
+    }
+    for (i, c) in "Left3".chars().enumerate() {
+        glyphs.push(GlyphEntry {
+            c,
+            x: 50.0 + i as f64 * 10.0,
+            y: 400.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
+    }
+    for (i, c) in "Right3".chars().enumerate() {
+        glyphs.push(GlyphEntry {
+            c,
+            x: 450.0 + i as f64 * 10.0,
+            y: 400.0,
+            font_size: 14.0,
+            width: 10.0,
+        });
+    }
+
+    let spans = group_and_sort_glyphs(glyphs, 800.0, 1000.0);
+    assert_eq!(spans.len(), 6);
+    let texts: Vec<&str> = spans.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec!["Left1", "Left2", "Left3", "Right1", "Right2", "Right3"]
+    );
+}
+
+#[test]
+fn test_pdf_outline_resolve_dest_clamping() {
+    use hayro::hayro_syntax::object::{Array, FromBytes};
+    use std::collections::HashMap;
+
+    let dest_data = b"[ 5 /XYZ 0 792 1.0 ]";
+    if let Some(arr) = Array::from_bytes(dest_data) {
+        let page_map = HashMap::new();
+        let page_count = 3;
+        let resolved =
+            crate::document::pdf::outline::resolve_dest_array(&arr, &page_map, page_count);
+        assert_eq!(resolved, Some(2));
+    }
+}
+
+#[test]
+fn test_edge_tts_synth() {
+    let config = msedge_tts::tts::SpeechConfig {
+        voice_name: "ru-RU-SvetlanaNeural".to_string(),
+        audio_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),
+        pitch: 0,
+        rate: 0,
+        volume: 0,
+    };
+    if let Ok(mut client) = msedge_tts::tts::client::connect() {
+        if let Ok(audio) = client.synthesize("Привет", &config) {
+            assert!(!audio.audio_bytes.is_empty());
+            let cursor = std::io::Cursor::new(audio.audio_bytes);
+            let decoder = rodio::Decoder::new(cursor);
+            assert!(decoder.is_ok());
+        }
+    }
+}
+
+#[test]
+fn test_tts_controller_engine_and_rate_switching() {
+    use crate::app::tts::{TtsController, TtsEngineKind};
+
+    let mut controller = TtsController::new();
+    let initial_status = controller.status();
+    assert_eq!(initial_status.rate, 1.0);
+
+    controller.set_rate(1.5);
+    assert_eq!(controller.status().rate, 1.5);
+
+    controller.set_engine(TtsEngineKind::Edge);
+    assert_eq!(controller.status().engine, TtsEngineKind::Edge);
+
+    controller.set_voice("ru-RU-DmitryNeural".to_string());
+    assert_eq!(
+        controller.status().selected_voice_id.as_deref(),
+        Some("ru-RU-DmitryNeural")
+    );
+
+    controller.set_voice("ru-RU-SvetlanaNeural".to_string());
+    assert_eq!(
+        controller.status().selected_voice_id.as_deref(),
+        Some("ru-RU-SvetlanaNeural")
+    );
+
+    controller.set_engine(TtsEngineKind::System);
+    assert_eq!(controller.status().engine, TtsEngineKind::System);
+}
+
+
+

@@ -23,6 +23,11 @@ pub enum Icon {
     Play,
     Pause,
     Check,
+    Search,
+    ChevronUp,
+    ChevronDown,
+    Speech,
+    Question,
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
@@ -253,6 +258,63 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
             let check = vec![p(0.18, 0.52), p(0.38, 0.74), p(0.82, 0.26)];
             painter.add(egui::Shape::line(check, Stroke::new(1.8, color)));
         }
+        Icon::Search => {
+            let center = p(0.42, 0.42);
+            let r = w * 0.24;
+            painter.circle_stroke(center, r, stroke);
+            let handle = vec![p(0.59, 0.59), p(0.82, 0.82)];
+            painter.add(egui::Shape::line(handle, Stroke::new(1.8, color)));
+        }
+        Icon::ChevronUp => {
+            let chev = vec![p(0.24, 0.62), p(0.50, 0.36), p(0.76, 0.62)];
+            painter.add(egui::Shape::line(chev, bold_stroke));
+        }
+        Icon::ChevronDown => {
+            let chev = vec![p(0.24, 0.38), p(0.50, 0.64), p(0.76, 0.38)];
+            painter.add(egui::Shape::line(chev, bold_stroke));
+        }
+        Icon::Speech => {
+            let cone = vec![
+                p(0.14, 0.38),
+                p(0.32, 0.38),
+                p(0.52, 0.22),
+                p(0.52, 0.78),
+                p(0.32, 0.62),
+                p(0.14, 0.62),
+            ];
+            painter.add(egui::Shape::convex_polygon(cone, color, Stroke::NONE));
+            let wave1 = vec![
+                p(0.64, 0.37),
+                p(0.70, 0.43),
+                p(0.72, 0.50),
+                p(0.70, 0.57),
+                p(0.64, 0.63),
+            ];
+            painter.add(egui::Shape::line(wave1, Stroke::new(1.6, color)));
+            let wave2 = vec![
+                p(0.78, 0.26),
+                p(0.86, 0.37),
+                p(0.89, 0.50),
+                p(0.86, 0.63),
+                p(0.78, 0.74),
+            ];
+            painter.add(egui::Shape::line(wave2, Stroke::new(1.6, color)));
+        }
+        Icon::Question => {
+            let center = p(0.50, 0.50);
+            painter.circle_stroke(center, w * 0.40, stroke);
+            let curve = vec![
+                p(0.36, 0.38),
+                p(0.42, 0.28),
+                p(0.58, 0.28),
+                p(0.64, 0.38),
+                p(0.56, 0.48),
+                p(0.50, 0.54),
+                p(0.50, 0.62),
+            ];
+            painter.add(egui::Shape::line(curve, Stroke::new(1.4, color)));
+            painter.circle_filled(p(0.50, 0.74), 1.2, color);
+        }
     }
 }
 
@@ -309,9 +371,10 @@ impl<'a> Widget for IconButton<'a> {
             Some(sz) => egui::FontId::proportional(sz),
             None => egui::TextStyle::Button.resolve(ui.style()),
         };
+        let initial_text_color = ui.visuals().override_text_color.unwrap_or_else(|| ui.visuals().text_color());
         let galley = ui
             .painter()
-            .layout_no_wrap(self.text.to_string(), font_id, Color32::WHITE);
+            .layout_no_wrap(self.text.to_string(), font_id.clone(), initial_text_color);
         let text_size = if has_text { galley.size() } else { Vec2::ZERO };
 
         let mut desired_size = Vec2::new(
@@ -331,6 +394,13 @@ impl<'a> Widget for IconButton<'a> {
                 ui.style().interact_selectable(&response, true)
             } else {
                 *ui.style().interact(&response)
+            };
+
+            let item_color = visuals.text_color();
+            let galley = if item_color != initial_text_color && has_text {
+                ui.painter().layout_no_wrap(self.text.to_string(), font_id, item_color)
+            } else {
+                galley
             };
 
             ui.painter().rect(
@@ -356,14 +426,14 @@ impl<'a> Widget for IconButton<'a> {
                 Pos2::new(start_x + icon_size * 0.5, rect.center().y),
                 Vec2::splat(icon_size),
             );
-            paint_icon(ui.painter(), self.icon, icon_rect, visuals.text_color());
+            paint_icon(ui.painter(), self.icon, icon_rect, item_color);
 
             if has_text {
                 let text_pos = Pos2::new(
                     start_x + icon_size + gap,
                     rect.center().y - text_size.y * 0.5,
                 );
-                ui.painter().galley(text_pos, galley, visuals.text_color());
+                ui.painter().galley(text_pos, galley, item_color);
             }
         }
 
