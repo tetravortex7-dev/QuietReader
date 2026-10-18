@@ -446,22 +446,27 @@ impl eframe::App for QuietReaderApp {
             }
         }
 
-        let (ctrl_o, ctrl_w, next_tab_key, prev_tab_key) = if ctx.egui_wants_keyboard_input() {
-            (false, false, false, false)
+        let (key_o, key_p, ctrl_w, next_tab_key, prev_tab_key) = if ctx.egui_wants_keyboard_input() {
+            (false, false, false, false, false)
         } else {
             ctx.input(|i| {
                 let cmd_mod = i.modifiers.ctrl || i.modifiers.command;
+                let no_alt = !i.modifiers.alt;
                 let shift = i.modifiers.shift;
                 (
-                    cmd_mod && i.key_pressed(egui::Key::O),
+                    (cmd_mod || no_alt) && i.key_pressed(egui::Key::O),
+                    (cmd_mod || no_alt) && i.key_pressed(egui::Key::P),
                     cmd_mod && i.key_pressed(egui::Key::W),
                     cmd_mod && !shift && i.key_pressed(egui::Key::Tab),
                     cmd_mod && shift && i.key_pressed(egui::Key::Tab),
                 )
             })
         };
-        if ctrl_o {
+        if key_o {
             self.open_file_dialog();
+        }
+        if key_p {
+            self.open_folder_dialog();
         }
         if ctrl_w && !self.tabs.is_empty() {
             self.close_tab(self.active_tab);
