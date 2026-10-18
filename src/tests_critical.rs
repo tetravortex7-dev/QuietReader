@@ -883,5 +883,29 @@ fn test_language_detection_and_voice_matching() {
     assert!(!voice_matches_lang("de-DE", "ru"));
 }
 
+#[test]
+fn test_hotkeys_b_v_j() {
+    use crate::app::input::process_keyboard_events;
+    use crate::core::Command;
+    use eframe::egui::{Key, Modifiers};
+
+    let cmds_b = process_keyboard_events(false, |k| k == Key::B, Modifiers::default(), false);
+    assert_eq!(cmds_b, vec![Command::ToggleToc]);
+
+    let cmds_v = process_keyboard_events(false, |k| k == Key::V, Modifiers::default(), false);
+    assert_eq!(cmds_v, vec![Command::ToggleTTS]);
+
+    let cmds_j = process_keyboard_events(false, |k| k == Key::J, Modifiers::default(), false);
+    assert_eq!(cmds_j, vec![Command::ToggleSettings]);
+
+    let mut ctrl_mod = Modifiers::default();
+    ctrl_mod.ctrl = true;
+    let cmds_ctrl_v = process_keyboard_events(false, |k| k == Key::V, ctrl_mod, false);
+    assert!(cmds_ctrl_v.is_empty());
+
+    let cmds_typing = process_keyboard_events(true, |k| k == Key::B || k == Key::V || k == Key::J, Modifiers::default(), false);
+    assert!(cmds_typing.is_empty());
+}
+
 
 

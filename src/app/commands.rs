@@ -61,15 +61,25 @@ impl QuietReaderApp {
             Command::ToggleTTS => {
                 self.tts.toggle_panel();
             }
+            Command::ToggleToc => {
+                if self.document.is_some() {
+                    self.show_toc = !self.show_toc;
+                }
+            }
+            Command::ToggleSettings => {
+                self.show_settings_dialog = !self.show_settings_dialog;
+            }
             Command::ExitFullscreen => {
                 if self.search.is_open {
                     self.search.close();
                 } else if self.autoscroll.is_active() {
                     self.autoscroll.stop();
-                } else if self.is_fullscreen {
-                    self.set_fullscreen_mode(ctx, false);
                 } else if self.show_settings_dialog {
                     self.show_settings_dialog = false;
+                } else if self.show_toc {
+                    self.show_toc = false;
+                } else if self.is_fullscreen {
+                    self.set_fullscreen_mode(ctx, false);
                 }
             }
             nav_cmd => {

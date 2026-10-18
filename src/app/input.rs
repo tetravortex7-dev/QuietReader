@@ -32,8 +32,15 @@ pub fn process_keyboard_events(
         cmds.push(Command::ToggleSearch);
     } else if !ctrl && key_pressed(egui::Key::F) {
         cmds.push(Command::ToggleFullscreen);
-    } else if key_pressed(egui::Key::F4) || (cmd_mod && shift && key_pressed(egui::Key::S)) {
+    } else if (!ctrl && key_pressed(egui::Key::V))
+        || key_pressed(egui::Key::F4)
+        || (cmd_mod && shift && key_pressed(egui::Key::S))
+    {
         cmds.push(Command::ToggleTTS);
+    } else if !ctrl && key_pressed(egui::Key::B) {
+        cmds.push(Command::ToggleToc);
+    } else if !ctrl && key_pressed(egui::Key::J) {
+        cmds.push(Command::ToggleSettings);
     } else if key_pressed(egui::Key::Escape) {
         cmds.push(Command::ExitFullscreen);
     }

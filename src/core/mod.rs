@@ -28,6 +28,8 @@ pub enum Command {
     ResetZoom,
     ToggleSearch,
     ToggleTTS,
+    ToggleToc,
+    ToggleSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
