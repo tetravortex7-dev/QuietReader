@@ -213,6 +213,9 @@ impl ReaderCore {
         let mut cyrillic = 0usize;
         let mut latin = 0usize;
         let mut ukrainian_specific = 0usize;
+        let mut arabic = 0usize;
+        let mut cjk = 0usize;
+        let mut kana = 0usize;
 
         for c in text.chars() {
             match c {
@@ -222,11 +225,31 @@ impl ReaderCore {
                         ukrainian_specific += 1;
                     }
                 }
+                '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{08A0}'..='\u{08FF}' => {
+                    arabic += 1;
+                }
+                '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}' => {
+                    kana += 1;
+                    cjk += 1;
+                }
+                '\u{4E00}'..='\u{9FFF}' => {
+                    cjk += 1;
+                }
                 'a'..='z' | 'A'..='Z' => {
                     latin += 1;
                 }
                 _ => {}
             }
+        }
+
+        if arabic > 5 && arabic > cyrillic && arabic > latin && arabic > cjk {
+            return "ar";
+        }
+        if cjk > 5 && cjk > cyrillic && cjk > latin && cjk > arabic {
+            if kana > 0 {
+                return "ja";
+            }
+            return "zh";
         }
 
         if cyrillic > latin {
@@ -240,6 +263,10 @@ impl ReaderCore {
             let mut de_score = 0usize;
             let mut fr_score = 0usize;
             let mut es_score = 0usize;
+            let mut it_score = 0usize;
+            let mut pt_score = 0usize;
+            let mut tr_score = 0usize;
+            let mut id_score = 0usize;
             let mut en_score = 0usize;
 
             for word in lower.split(|c: char| !c.is_alphabetic()) {
@@ -250,7 +277,11 @@ impl ReaderCore {
                     "the" | "and" | "that" | "with" | "for" | "this" | "have" | "from" | "you" => en_score += 2,
                     "der" | "die" | "das" | "und" | "nicht" | "ist" | "ein" | "eine" | "mit" => de_score += 2,
                     "les" | "des" | "pour" | "dans" | "une" | "est" | "pas" | "sur" | "avec" => fr_score += 2,
-                    "que" | "para" | "como" | "los" | "las" | "una" | "por" | "con" | "del" => es_score += 2,
+                    "para" | "como" | "los" | "las" | "una" | "por" | "con" | "del" => es_score += 2,
+                    "della" | "dello" | "degli" | "delle" | "sono" | "anche" | "questo" | "questa" | "dopo" => it_score += 2,
+                    "não" | "mais" | "mas" | "foi" | "ao" | "dos" | "pelo" | "pela" | "muito" => pt_score += 2,
+                    "bir" | "bu" | "ile" | "için" | "olan" | "olarak" | "daha" | "kadar" | "sonra" => tr_score += 2,
+                    "yang" | "dan" | "di" | "dari" | "ini" | "itu" | "dengan" | "untuk" | "pada" | "adalah" => id_score += 2,
                     _ => {}
                 }
             }
@@ -260,11 +291,21 @@ impl ReaderCore {
                     'ä' | 'ö' | 'ü' | 'ß' => de_score += 2,
                     'é' | 'è' | 'ê' | 'ë' | 'ç' | 'œ' => fr_score += 2,
                     'ñ' | 'á' | 'í' | 'ó' | 'ú' => es_score += 1,
+                    'ã' | 'õ' => pt_score += 2,
+                    'ğ' | 'ı' | 'ş' => tr_score += 2,
                     _ => {}
                 }
             }
 
-            let max_score = en_score.max(de_score).max(fr_score).max(es_score);
+            let max_score = en_score
+                .max(de_score)
+                .max(fr_score)
+                .max(es_score)
+                .max(it_score)
+                .max(pt_score)
+                .max(tr_score)
+                .max(id_score);
+
             if max_score > 0 {
                 if de_score == max_score {
                     "de"
@@ -272,6 +313,14 @@ impl ReaderCore {
                     "fr"
                 } else if es_score == max_score {
                     "es"
+                } else if it_score == max_score {
+                    "it"
+                } else if pt_score == max_score {
+                    "pt"
+                } else if tr_score == max_score {
+                    "tr"
+                } else if id_score == max_score {
+                    "id"
                 } else {
                     "en"
                 }
