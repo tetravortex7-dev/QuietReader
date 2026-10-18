@@ -806,18 +806,21 @@ impl TtsController {
                     if ui.selectable_label(is_sys, "Системный").on_hover_text("Локальный офлайн-синтезатор Windows (Ирина, Павел)").clicked() && !is_sys {
                         self.set_engine(TtsEngineKind::System);
                     }
-                    if ui.selectable_label(is_edge, "Edge Нейро").on_hover_text("Облачные нейросетевые голоса Microsoft Edge (Светлана, Дмитрий...)").clicked() && !is_edge {
+                    if ui.selectable_label(is_edge, "Edge Нейро").clicked() && !is_edge {
                         self.set_engine(TtsEngineKind::Edge);
                     }
 
-                    let (q_rect, q_resp) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), egui::Sense::hover());
+                    let (q_rect, q_resp) = ui.allocate_exact_size(Vec2::new(18.0, 20.0), egui::Sense::hover());
+                    let icon_rect = egui::Rect::from_center_size(q_rect.center(), Vec2::splat(14.0));
                     let q_color = if q_resp.hovered() {
                         theme.accent_color()
                     } else {
                         theme.secondary_text_color().gamma_multiply(0.7)
                     };
-                    paint_icon(ui.painter(), Icon::Question, q_rect, q_color);
-                    q_resp.on_hover_text("Нейро требует подключения к интернету");
+                    paint_icon(ui.painter(), Icon::Question, icon_rect, q_color);
+                    q_resp
+                        .on_hover_cursor(egui::CursorIcon::Help)
+                        .on_hover_text("Для качественного нейросетевого озвучивания требуется подключение к интернету");
 
                     ui.add_space(6.0);
                     ui.separator();
