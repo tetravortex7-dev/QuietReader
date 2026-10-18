@@ -58,6 +58,7 @@ pub const TRANSLATIONS: Translations = Translations {
     theme_title: "カラーテーマ",
     interface_language: "表示言語",
     interface_language_desc: "操作パネル、メニュー、ヒントの表示言語を選択します",
+    language_auto: "自動 (システム)",
     keep_screen_on: "読書中に画面をスリープさせない",
     keep_screen_on_desc: "読書中のスリープモード移行やスクリーンセーバー起動を防ぎます。",
 

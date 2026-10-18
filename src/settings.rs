@@ -127,7 +127,7 @@ fn default_associated_extensions() -> Vec<String> {
 }
 
 fn default_ui_language() -> crate::i18n::UiLanguage {
-    crate::i18n::UiLanguage::Ru
+    crate::i18n::UiLanguage::Auto
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

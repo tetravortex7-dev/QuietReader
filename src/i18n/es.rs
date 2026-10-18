@@ -58,6 +58,7 @@ pub const TRANSLATIONS: Translations = Translations {
     theme_title: "Tema de color del lector",
     interface_language: "Idioma de la interfaz",
     interface_language_desc: "Selecciona el idioma de los controles, menús y sugerencias del lector",
+    language_auto: "Auto (Sistema)",
     keep_screen_on: "Mantener pantalla encendida mientras lees",
     keep_screen_on_desc: "Evita que la pantalla se apague o active el salvapantallas durante la lectura.",
 

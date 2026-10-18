@@ -788,8 +788,47 @@ mod platform_fonts {
     }
 }
 
+pub fn detect_system_ui_language() -> Option<String> {
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetUserDefaultUILanguage() -> u16;
+            fn GetUserDefaultLocaleName(lpLocaleName: *mut u16, cchLocaleName: i32) -> i32;
+        }
+        let langid = unsafe { GetUserDefaultUILanguage() };
+        let primary = langid & 0x3ff;
+        match primary {
+            0x19 | 0x22 | 0x23 | 0x3f => return Some("ru".to_string()),
+            0x09 => return Some("en".to_string()),
+            0x0c => return Some("fr".to_string()),
+            0x0a => return Some("es".to_string()),
+            0x04 => return Some("zh".to_string()),
+            0x11 => return Some("ja".to_string()),
+            0x16 => return Some("pt".to_string()),
+            _ => {}
+        }
+        let mut buffer = [0u16; 85];
+        let len = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+        if len > 1 {
+            let name = String::from_utf16_lossy(&buffer[..len as usize - 1]);
+            return Some(name);
+        }
+    }
+
+    for var in &["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(val) = std::env::var(var) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() && trimmed != "C" && trimmed != "POSIX" {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub mod single_instance;
 pub mod window;
 
 pub use single_instance::*;
 pub use window::*;
+

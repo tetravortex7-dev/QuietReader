@@ -58,6 +58,7 @@ pub const TRANSLATIONS: Translations = Translations {
     theme_title: "Цветовая тема читалки",
     interface_language: "Язык интерфейса",
     interface_language_desc: "Выберите язык элементов управления, меню и подсказок читалки",
+    language_auto: "Авто (Системный)",
     keep_screen_on: "Не выключать экран во время чтения",
     keep_screen_on_desc: "Предотвращает переход монитора в спящий режим и запуск экранной заставки при чтении.",
 

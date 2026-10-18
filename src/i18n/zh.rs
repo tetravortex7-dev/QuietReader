@@ -58,6 +58,7 @@ pub const TRANSLATIONS: Translations = Translations {
     theme_title: "阅读器色彩主题",
     interface_language: "界面语言",
     interface_language_desc: "选择阅读器控制项、菜单及提示的显示语言",
+    language_auto: "自动 (系统)",
     keep_screen_on: "阅读时保持屏幕常亮",
     keep_screen_on_desc: "防止阅读过程中显示器进入睡眠状态或启动屏幕保护程序。",
 

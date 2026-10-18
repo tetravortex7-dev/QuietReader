@@ -12,6 +12,7 @@ pub mod zh;
 #[serde(rename_all = "lowercase")]
 pub enum UiLanguage {
     #[default]
+    Auto,
     Ru,
     En,
     Fr,
@@ -22,9 +23,20 @@ pub enum UiLanguage {
 }
 
 impl UiLanguage {
-    pub const ALL: [UiLanguage; 7] = [
-        UiLanguage::En,
+    pub const ALL: [UiLanguage; 8] = [
+        UiLanguage::Auto,
         UiLanguage::Ru,
+        UiLanguage::En,
+        UiLanguage::Fr,
+        UiLanguage::Es,
+        UiLanguage::Zh,
+        UiLanguage::Ja,
+        UiLanguage::Pt,
+    ];
+
+    pub const CONCRETE: [UiLanguage; 7] = [
+        UiLanguage::Ru,
+        UiLanguage::En,
         UiLanguage::Fr,
         UiLanguage::Es,
         UiLanguage::Zh,
@@ -34,6 +46,7 @@ impl UiLanguage {
 
     pub fn code(&self) -> &'static str {
         match self {
+            Self::Auto => "auto",
             Self::En => "en",
             Self::Ru => "ru",
             Self::Fr => "fr",
@@ -46,6 +59,7 @@ impl UiLanguage {
 
     pub fn native_name(&self) -> &'static str {
         match self {
+            Self::Auto => "Auto",
             Self::En => "English",
             Self::Ru => "Русский",
             Self::Fr => "Français",
@@ -56,8 +70,19 @@ impl UiLanguage {
         }
     }
 
+    pub fn label(&self, t: &Translations) -> String {
+        match self {
+            Self::Auto => {
+                let detected = Self::detect_system();
+                format!("{} ({})", t.language_auto, detected.native_name())
+            }
+            concrete => concrete.native_name().to_string(),
+        }
+    }
+
     pub fn from_code(code: &str) -> Self {
         match code.trim().to_lowercase().as_str() {
+            "auto" => Self::Auto,
             "en" => Self::En,
             "ru" => Self::Ru,
             "fr" => Self::Fr,
@@ -65,12 +90,42 @@ impl UiLanguage {
             "zh" | "zh-cn" | "zh-hans" => Self::Zh,
             "ja" => Self::Ja,
             "pt" | "pt-br" | "pt-pt" => Self::Pt,
-            _ => Self::Ru,
+            _ => Self::Auto,
+        }
+    }
+
+    pub fn from_locale_str(locale: &str) -> Self {
+        let clean = locale.trim().to_lowercase().replace('_', "-");
+        let prefix = clean.split(&['-', '.'][..]).next().unwrap_or("");
+        match prefix {
+            "ru" | "be" | "uk" | "kk" => Self::Ru,
+            "en" => Self::En,
+            "fr" => Self::Fr,
+            "es" => Self::Es,
+            "zh" => Self::Zh,
+            "ja" => Self::Ja,
+            "pt" => Self::Pt,
+            _ => Self::En,
+        }
+    }
+
+    pub fn detect_system() -> Self {
+        if let Some(locale) = crate::platform::detect_system_ui_language() {
+            Self::from_locale_str(&locale)
+        } else {
+            Self::En
+        }
+    }
+
+    pub fn resolve(&self) -> Self {
+        match self {
+            Self::Auto => Self::detect_system(),
+            concrete => *concrete,
         }
     }
 
     pub fn t(&self) -> &'static Translations {
-        match self {
+        match self.resolve() {
             Self::En => &en::TRANSLATIONS,
             Self::Ru => &ru::TRANSLATIONS,
             Self::Fr => &fr::TRANSLATIONS,
@@ -78,6 +133,7 @@ impl UiLanguage {
             Self::Zh => &zh::TRANSLATIONS,
             Self::Ja => &ja::TRANSLATIONS,
             Self::Pt => &pt::TRANSLATIONS,
+            Self::Auto => &en::TRANSLATIONS,
         }
     }
 }
@@ -145,6 +201,7 @@ pub struct Translations {
     pub theme_title: &'static str,
     pub interface_language: &'static str,
     pub interface_language_desc: &'static str,
+    pub language_auto: &'static str,
     pub keep_screen_on: &'static str,
     pub keep_screen_on_desc: &'static str,
 
@@ -269,7 +326,8 @@ mod tests {
 
     #[test]
     fn test_ui_languages_all() {
-        assert_eq!(UiLanguage::ALL.len(), 7);
+        assert_eq!(UiLanguage::ALL.len(), 8);
+        assert_eq!(UiLanguage::CONCRETE.len(), 7);
         for &lang in &UiLanguage::ALL {
             assert!(!lang.code().is_empty());
             assert!(!lang.native_name().is_empty());
@@ -282,11 +340,31 @@ mod tests {
             assert!(!t.tab_fonts.is_empty());
             assert!(!t.tab_appearance.is_empty());
             assert!(!t.interface_language.is_empty());
+            assert!(!t.language_auto.is_empty());
             assert!(!t.speech.is_empty());
             assert!(!t.tts_title.is_empty());
             assert!(!t.copy.is_empty());
             assert!(!t.read_aloud_from_here.is_empty());
+
+            let label = lang.label(t);
+            assert!(!label.is_empty());
         }
+    }
+
+    #[test]
+    fn test_from_locale_str() {
+        assert_eq!(UiLanguage::from_locale_str("ru_RU.UTF-8"), UiLanguage::Ru);
+        assert_eq!(UiLanguage::from_locale_str("ru-RU"), UiLanguage::Ru);
+        assert_eq!(UiLanguage::from_locale_str("be_BY"), UiLanguage::Ru);
+        assert_eq!(UiLanguage::from_locale_str("uk_UA"), UiLanguage::Ru);
+        assert_eq!(UiLanguage::from_locale_str("en-US"), UiLanguage::En);
+        assert_eq!(UiLanguage::from_locale_str("en_GB.UTF-8"), UiLanguage::En);
+        assert_eq!(UiLanguage::from_locale_str("fr-FR"), UiLanguage::Fr);
+        assert_eq!(UiLanguage::from_locale_str("es-ES"), UiLanguage::Es);
+        assert_eq!(UiLanguage::from_locale_str("zh-CN"), UiLanguage::Zh);
+        assert_eq!(UiLanguage::from_locale_str("ja_JP"), UiLanguage::Ja);
+        assert_eq!(UiLanguage::from_locale_str("pt-BR"), UiLanguage::Pt);
+        assert_eq!(UiLanguage::from_locale_str("de-DE"), UiLanguage::En);
     }
 
     #[test]
@@ -295,6 +373,11 @@ mod tests {
         assert_eq!(serialized, "\"zh\"");
         let deserialized: UiLanguage = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized, UiLanguage::Zh);
+
+        let auto_ser = serde_json::to_string(&UiLanguage::Auto).unwrap();
+        assert_eq!(auto_ser, "\"auto\"");
+        let auto_de: UiLanguage = serde_json::from_str(&auto_ser).unwrap();
+        assert_eq!(auto_de, UiLanguage::Auto);
     }
 
     #[test]
@@ -304,7 +387,7 @@ mod tests {
             "theme": "Sepia"
         }"#;
         let s: crate::settings::AppSettings = serde_json::from_str(json_without_lang).unwrap();
-        assert_eq!(s.ui_language, UiLanguage::Ru);
+        assert_eq!(s.ui_language, UiLanguage::Auto);
 
         let json_with_ja = r#"{
             "font_size": 18.0,

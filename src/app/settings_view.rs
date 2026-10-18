@@ -284,7 +284,8 @@ impl SettingsView {
         ui.horizontal_wrapped(|ui| {
             for &lang in crate::i18n::UiLanguage::ALL.iter() {
                 let is_sel = settings.ui_language == lang;
-                if ui.selectable_label(is_sel, lang.native_name()).clicked() && !is_sel {
+                let text = lang.label(t);
+                if ui.selectable_label(is_sel, text).clicked() && !is_sel {
                     settings.ui_language = lang;
                     *on_save_settings = true;
                 }
