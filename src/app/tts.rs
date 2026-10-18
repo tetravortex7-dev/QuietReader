@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tts::Tts;
 
-use super::icons::{paint_icon, Icon, IconButton, IconLabel};
+use super::icons::{Icon, IconButton, IconLabel};
 use super::theme::ReaderTheme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -832,21 +832,9 @@ impl TtsController {
                     if ui.selectable_label(is_sys, t.tts_system).on_hover_text(t.tts_system_tip).clicked() && !is_sys {
                         self.set_engine(TtsEngineKind::System);
                     }
-                    if ui.selectable_label(is_edge, t.tts_edge).clicked() && !is_edge {
+                    if ui.selectable_label(is_edge, t.tts_edge).on_hover_text(t.tts_internet_tip).clicked() && !is_edge {
                         self.set_engine(TtsEngineKind::Edge);
                     }
-
-                    let (q_rect, q_resp) = ui.allocate_exact_size(Vec2::new(18.0, 20.0), egui::Sense::hover());
-                    let icon_rect = egui::Rect::from_center_size(q_rect.center(), Vec2::splat(14.0));
-                    let q_color = if q_resp.hovered() {
-                        theme.accent_color()
-                    } else {
-                        theme.secondary_text_color().gamma_multiply(0.7)
-                    };
-                    paint_icon(ui.painter(), Icon::Question, icon_rect, q_color);
-                    q_resp
-                        .on_hover_cursor(egui::CursorIcon::Help)
-                        .on_hover_text(t.tts_internet_tip);
 
                     ui.add_space(6.0);
                     ui.separator();
