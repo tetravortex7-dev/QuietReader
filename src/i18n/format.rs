@@ -233,6 +233,7 @@ pub fn format_extension_description(ext: &str, lang: UiLanguage) -> &'static str
         "fb2" => t.format_desc_fb2,
         "epub" => t.format_desc_epub,
         "mobi" | "prc" => "MOBI (.mobi, .prc) — Книги Mobipocket",
+        "azw3" | "azw" => "AZW3 (.azw3, .azw) — Книги Kindle Format 8",
         "txt" => t.format_desc_txt,
         "doc" => t.format_desc_doc,
         "docx" => t.format_desc_docx,

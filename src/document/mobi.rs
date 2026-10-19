@@ -9,6 +9,7 @@ pub struct MobiDocument {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+    format_name: &'static str,
 }
 
 impl MobiDocument {
@@ -17,10 +18,10 @@ impl MobiDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let p = path.as_ref();
         let meta = std::fs::metadata(p)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать файл MOBI: {e}")))?;
+            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать файл книги: {e}")))?;
         if meta.len() > Self::MAX_MOBI_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер файла MOBI превышает лимит (150 МБ)".to_string(),
+                "Размер файла книги превышает лимит (150 МБ)".to_string(),
             ));
         }
 
@@ -32,11 +33,23 @@ impl MobiDocument {
             ));
         }
 
+        let ext = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        let format_name = match ext.as_str() {
+            "azw3" => "AZW3",
+            "azw" => "AZW",
+            "prc" => "PRC",
+            _ => "MOBI",
+        };
+
         let raw_title = m.title();
         let title = if raw_title.trim().is_empty() {
             p.file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("MOBI Document")
+                .unwrap_or("Kindle Document")
                 .to_string()
         } else {
             raw_title.trim().to_string()
@@ -44,20 +57,23 @@ impl MobiDocument {
         let author = m.author().unwrap_or_default().trim().to_string();
         let metadata = BookMetadata { title, author };
 
-        let content = m
-            .content_as_string()
-            .unwrap_or_else(|_| m.content_as_string_lossy());
+        let content = if let Some(kf8_text) = try_extract_kf8_boundary_text(&m) {
+            kf8_text
+        } else {
+            m.content_as_string()
+                .unwrap_or_else(|_| m.content_as_string_lossy())
+        };
 
         if content.trim().is_empty() {
             return Err(DocumentError::Corrupted(
-                "Текстовое содержимое MOBI пусто или повреждено".to_string(),
+                "Текстовое содержимое книги пусто или повреждено".to_string(),
             ));
         }
 
         let (chapters, toc) = parse_mobi_html(&content, &metadata.title);
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
-                "Не удалось извлечь главы из книги MOBI".to_string(),
+                "Не удалось извлечь главы из книги".to_string(),
             ));
         }
 
@@ -65,7 +81,110 @@ impl MobiDocument {
             metadata,
             chapters,
             toc,
+            format_name,
         })
+    }
+}
+
+pub fn decompress_palmdoc(data: &[u8]) -> Vec<u8> {
+    let init_cap = data.len().saturating_mul(2).min(16 * 1024 * 1024);
+    let mut out = Vec::with_capacity(init_cap);
+    let mut i = 0;
+
+    while i < data.len() {
+        let byte = data[i];
+        i += 1;
+
+        match byte {
+            0x00 | 0x09..=0x7F => {
+                out.push(byte);
+            }
+            0x01..=0x08 => {
+                let count = byte as usize;
+                let end = (i + count).min(data.len());
+                out.extend_from_slice(&data[i..end]);
+                i += count;
+            }
+            0x80..=0xBF => {
+                if i < data.len() {
+                    let next = data[i];
+                    i += 1;
+                    let b1 = byte as usize;
+                    let b2 = next as usize;
+                    let distance = ((b1 & 0x3F) << 5) | (b2 >> 3);
+                    let length = (b2 & 0x07) + 3;
+
+                    if distance > 0 && distance <= out.len() {
+                        let start = out.len() - distance;
+                        for j in 0..length {
+                            let val = out[start + (j % distance)];
+                            out.push(val);
+                        }
+                    } else {
+                        out.push(byte);
+                        out.push(next);
+                    }
+                } else {
+                    out.push(byte);
+                }
+            }
+            0xC0..=0xFF => {
+                out.push(b' ');
+                out.push(byte ^ 0x80);
+            }
+        }
+    }
+
+    out
+}
+
+fn try_extract_kf8_boundary_text(m: &Mobi) -> Option<String> {
+    let raw_records = m.raw_records();
+    let records = raw_records.records();
+
+    let boundary_idx = records
+        .iter()
+        .position(|r| r.content == b"BOUNDARY" || r.content.starts_with(b"BOUNDARY"))?;
+
+    let header_idx = boundary_idx + 1;
+    if header_idx >= records.len() {
+        return None;
+    }
+
+    let header_rec = records[header_idx].content;
+    if header_rec.len() < 16 {
+        return None;
+    }
+
+    let compression = u16::from_be_bytes([header_rec[0], header_rec[1]]);
+    let text_count = u16::from_be_bytes([header_rec[8], header_rec[9]]) as usize;
+    if text_count == 0 {
+        return None;
+    }
+
+    let start_rec = header_idx + 1;
+    let end_rec = (start_rec + text_count).min(records.len());
+    let mut decompressed = Vec::new();
+
+    for r in &records[start_rec..end_rec] {
+        if compression == 2 {
+            decompressed.extend_from_slice(&decompress_palmdoc(r.content));
+        } else if compression == 1 {
+            decompressed.extend_from_slice(r.content);
+        }
+    }
+
+    if decompressed.is_empty() {
+        return None;
+    }
+
+    match String::from_utf8(decompressed) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            let bytes = e.into_bytes();
+            let (cow, _, _) = encoding_rs::WINDOWS_1252.decode(&bytes);
+            Some(cow.into_owned())
+        }
     }
 }
 
@@ -320,7 +439,7 @@ impl Document for MobiDocument {
     }
 
     fn format_name(&self) -> &'static str {
-        "MOBI"
+        self.format_name
     }
 
     fn has_custom_toc(&self) -> bool {
@@ -339,6 +458,16 @@ impl Document for MobiDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_decompress_palmdoc() {
+        let compressed = [
+            b'H', b'e', b'l', b'l', b'o', 0x20, b'W', b'o', b'r', b'l', b'd',
+            b'a' ^ 0x80,
+        ];
+        let decomp = decompress_palmdoc(&compressed);
+        assert_eq!(String::from_utf8(decomp).unwrap(), "Hello World a");
+    }
 
     #[test]
     fn test_split_by_pagebreaks() {

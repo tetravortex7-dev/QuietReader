@@ -23,8 +23,8 @@ impl Dialogs {
             .add_filter(
                 t.format_all_supported,
                 &[
-                    "pdf", "djvu", "djv", "fb2", "epub", "mobi", "prc", "docx", "doc", "rtf", "txt", "md",
-                    "markdown", "log", "cbz", "cbr", "cb7", "zip", "rar", "7z", "xml",
+                    "pdf", "djvu", "djv", "fb2", "epub", "mobi", "prc", "azw", "azw3", "docx", "doc", "rtf",
+                    "txt", "md", "markdown", "log", "cbz", "cbr", "cb7", "zip", "rar", "7z", "xml",
                 ],
             )
             .add_filter(t.format_word, &["docx", "doc", "dot"])
@@ -37,7 +37,7 @@ impl Dialogs {
             )
             .add_filter(t.format_epub, &["epub"])
             .add_filter(t.format_fb2, &["fb2", "xml"])
-            .add_filter("MOBI", &["mobi", "prc"])
+            .add_filter("Kindle / MOBI / AZW3", &["mobi", "prc", "azw", "azw3"])
             .add_filter(
                 t.format_txt,
                 &["txt", "md", "markdown", "log"],

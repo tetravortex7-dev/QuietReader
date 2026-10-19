@@ -125,6 +125,8 @@ impl BookTab {
             Some("fb2") | Some("xml") => "FB2".to_string(),
             Some("epub") => "EPUB".to_string(),
             Some("mobi") | Some("prc") => "MOBI".to_string(),
+            Some("azw3") => "AZW3".to_string(),
+            Some("azw") => "AZW".to_string(),
             Some("txt") => "TXT".to_string(),
             Some("md") | Some("markdown") => "MD".to_string(),
             Some("log") => "LOG".to_string(),

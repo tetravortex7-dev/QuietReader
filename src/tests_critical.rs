@@ -424,6 +424,7 @@ fn test_platform_multi_extension_selection() {
     assert!(exts.contains(&"docx"));
     assert!(exts.contains(&"epub"));
     assert!(exts.contains(&"mobi"));
+    assert!(exts.contains(&"azw3"));
     assert!(exts.contains(&"rtf"));
     assert!(exts.contains(&"pdf"));
     assert!(exts.contains(&"djvu"));

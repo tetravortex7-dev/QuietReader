@@ -278,10 +278,10 @@ impl DocumentFormat for TxtFormat {
 pub struct MobiFormat;
 impl DocumentFormat for MobiFormat {
     fn name(&self) -> &'static str {
-        "MOBI"
+        "MOBI / AZW / AZW3"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["mobi", "prc"]
+        &["mobi", "prc", "azw", "azw3"]
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
@@ -292,7 +292,7 @@ impl DocumentFormat for MobiFormat {
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase())
             .unwrap_or_default();
-        if ext == "mobi" || ext == "prc" {
+        if matches!(ext.as_str(), "mobi" | "prc" | "azw" | "azw3") {
             return true;
         }
         use std::io::Read;
@@ -300,7 +300,10 @@ impl DocumentFormat for MobiFormat {
             let mut buf = [0u8; 68];
             if let Ok(n) = f.read(&mut buf)
                 && n >= 68
-                && (&buf[60..68] == b"BOOKMOBI" || &buf[64..68] == b"MOBI")
+                && (&buf[60..68] == b"BOOKMOBI"
+                    || &buf[60..68] == b"TEXtRECD"
+                    || &buf[64..68] == b"MOBI"
+                    || &buf[60..64] == b"BOOK")
             {
                 return true;
             }
