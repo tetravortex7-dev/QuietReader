@@ -55,7 +55,11 @@ pub fn split_bionic_spans(text: &str) -> Vec<(&str, bool)> {
             while i < total_chars && (is_arabic(chars[i].1) || chars[i].1 == '\u{0640}') {
                 i += 1;
             }
-            let end_byte = if i < total_chars { chars[i].0 } else { text.len() };
+            let end_byte = if i < total_chars {
+                chars[i].0
+            } else {
+                text.len()
+            };
             result.push((&text[start_byte..end_byte], true));
             continue;
         }
@@ -71,7 +75,11 @@ pub fn split_bionic_spans(text: &str) -> Vec<(&str, bool)> {
                 word_char_count += 1;
                 i += 1;
             }
-            let end_byte = if i < total_chars { chars[i].0 } else { text.len() };
+            let end_byte = if i < total_chars {
+                chars[i].0
+            } else {
+                text.len()
+            };
             let word = &text[start_byte..end_byte];
 
             let fix = if word_char_count <= 3 {
@@ -104,7 +112,11 @@ pub fn split_bionic_spans(text: &str) -> Vec<(&str, bool)> {
         {
             i += 1;
         }
-        let end_byte = if i < total_chars { chars[i].0 } else { text.len() };
+        let end_byte = if i < total_chars {
+            chars[i].0
+        } else {
+            text.len()
+        };
         result.push((&text[start_byte..end_byte], false));
     }
 
@@ -143,14 +155,18 @@ pub fn render_reading_ruler(
     let painter = ui.painter();
 
     if band_top > viewport.min.y {
-        let top_rect =
-            eframe::egui::Rect::from_min_max(viewport.min, eframe::egui::pos2(viewport.max.x, band_top));
+        let top_rect = eframe::egui::Rect::from_min_max(
+            viewport.min,
+            eframe::egui::pos2(viewport.max.x, band_top),
+        );
         painter.rect_filled(top_rect, 0.0, dim_color);
     }
 
     if band_bot < viewport.max.y {
-        let bot_rect =
-            eframe::egui::Rect::from_min_max(eframe::egui::pos2(viewport.min.x, band_bot), viewport.max);
+        let bot_rect = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(viewport.min.x, band_bot),
+            viewport.max,
+        );
         painter.rect_filled(bot_rect, 0.0, dim_color);
     }
 

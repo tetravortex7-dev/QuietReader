@@ -28,6 +28,21 @@ pub enum Icon {
     ChevronDown,
     Speech,
     Ruler,
+    Globe,
+    ArrowLeft,
+    ArrowRight,
+    Home,
+    Refresh,
+    Download,
+    Cross,
+    Copy,
+    Key,
+    Bookmark,
+    Quote,
+    Edit,
+    Headphones,
+    Moon,
+    Crop,
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
@@ -162,10 +177,22 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
                 let a2 = mid_angle + 0.13;
                 let a3 = mid_angle + 0.26;
 
-                pts.push(Pos2::new(center.x + a0.cos() * r_in, center.y + a0.sin() * r_in));
-                pts.push(Pos2::new(center.x + a1.cos() * r_out, center.y + a1.sin() * r_out));
-                pts.push(Pos2::new(center.x + a2.cos() * r_out, center.y + a2.sin() * r_out));
-                pts.push(Pos2::new(center.x + a3.cos() * r_in, center.y + a3.sin() * r_in));
+                pts.push(Pos2::new(
+                    center.x + a0.cos() * r_in,
+                    center.y + a0.sin() * r_in,
+                ));
+                pts.push(Pos2::new(
+                    center.x + a1.cos() * r_out,
+                    center.y + a1.sin() * r_out,
+                ));
+                pts.push(Pos2::new(
+                    center.x + a2.cos() * r_out,
+                    center.y + a2.sin() * r_out,
+                ));
+                pts.push(Pos2::new(
+                    center.x + a3.cos() * r_in,
+                    center.y + a3.sin() * r_in,
+                ));
             }
 
             painter.add(egui::Shape::closed_line(pts, stroke));
@@ -301,18 +328,168 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
             painter.add(egui::Shape::line(wave2, Stroke::new(1.6, color)));
         }
         Icon::Ruler => {
-            let outline = vec![
-                p(0.12, 0.32),
-                p(0.88, 0.32),
-                p(0.88, 0.68),
-                p(0.12, 0.68),
-            ];
+            let outline = vec![p(0.12, 0.32), p(0.88, 0.32), p(0.88, 0.68), p(0.12, 0.68)];
             painter.add(egui::Shape::closed_line(outline, stroke));
             painter.line_segment([p(0.24, 0.32), p(0.24, 0.52)], thin_stroke);
             painter.line_segment([p(0.38, 0.32), p(0.38, 0.46)], thin_stroke);
             painter.line_segment([p(0.52, 0.32), p(0.52, 0.52)], thin_stroke);
             painter.line_segment([p(0.66, 0.32), p(0.66, 0.46)], thin_stroke);
             painter.line_segment([p(0.78, 0.32), p(0.78, 0.52)], thin_stroke);
+        }
+        Icon::Globe => {
+            let center = p(0.50, 0.50);
+            painter.circle_stroke(center, w * 0.36, stroke);
+            painter.line_segment([p(0.14, 0.50), p(0.86, 0.50)], thin_stroke);
+            painter.line_segment([p(0.50, 0.14), p(0.50, 0.86)], thin_stroke);
+            let arc_left = vec![
+                p(0.50, 0.14),
+                p(0.32, 0.30),
+                p(0.28, 0.50),
+                p(0.32, 0.70),
+                p(0.50, 0.86),
+            ];
+            painter.add(egui::Shape::line(arc_left, thin_stroke));
+            let arc_right = vec![
+                p(0.50, 0.14),
+                p(0.68, 0.30),
+                p(0.72, 0.50),
+                p(0.68, 0.70),
+                p(0.50, 0.86),
+            ];
+            painter.add(egui::Shape::line(arc_right, thin_stroke));
+        }
+        Icon::ArrowLeft => {
+            painter.line_segment([p(0.74, 0.50), p(0.26, 0.50)], bold_stroke);
+            painter.add(egui::Shape::line(
+                vec![p(0.48, 0.26), p(0.26, 0.50), p(0.48, 0.74)],
+                bold_stroke,
+            ));
+        }
+        Icon::ArrowRight => {
+            painter.line_segment([p(0.26, 0.50), p(0.74, 0.50)], bold_stroke);
+            painter.add(egui::Shape::line(
+                vec![p(0.52, 0.26), p(0.74, 0.50), p(0.52, 0.74)],
+                bold_stroke,
+            ));
+        }
+        Icon::Home => {
+            let roof = vec![p(0.16, 0.46), p(0.50, 0.18), p(0.84, 0.46)];
+            painter.add(egui::Shape::line(roof, bold_stroke));
+            let body = vec![p(0.24, 0.46), p(0.24, 0.82), p(0.76, 0.82), p(0.76, 0.46)];
+            painter.add(egui::Shape::closed_line(body, stroke));
+            let door = vec![p(0.42, 0.82), p(0.42, 0.58), p(0.58, 0.58), p(0.58, 0.82)];
+            painter.add(egui::Shape::line(door, thin_stroke));
+        }
+        Icon::Refresh => {
+            let center = p(0.50, 0.50);
+            let r = w * 0.28;
+            let start_ang = 0.35 * PI;
+            let end_ang = 1.95 * PI;
+            let steps = 12;
+            let mut arc_pts = Vec::with_capacity(steps + 1);
+            for i in 0..=steps {
+                let a = start_ang + (end_ang - start_ang) * (i as f32 / steps as f32);
+                arc_pts.push(Pos2::new(center.x + r * a.cos(), center.y + r * a.sin()));
+            }
+            painter.add(egui::Shape::line(arc_pts, bold_stroke));
+            let tip = Pos2::new(center.x + r * end_ang.cos(), center.y + r * end_ang.sin());
+            let head = vec![
+                Pos2::new(tip.x - w * 0.14, tip.y - h * 0.04),
+                tip,
+                Pos2::new(tip.x - w * 0.02, tip.y - h * 0.15),
+            ];
+            painter.add(egui::Shape::line(head, bold_stroke));
+        }
+        Icon::Download => {
+            painter.line_segment([p(0.50, 0.16), p(0.50, 0.58)], bold_stroke);
+            let arrow = vec![p(0.32, 0.42), p(0.50, 0.60), p(0.68, 0.42)];
+            painter.add(egui::Shape::line(arrow, bold_stroke));
+            let tray = vec![p(0.18, 0.64), p(0.18, 0.82), p(0.82, 0.82), p(0.82, 0.64)];
+            painter.add(egui::Shape::line(tray, bold_stroke));
+        }
+        Icon::Cross => {
+            painter.line_segment([p(0.26, 0.26), p(0.74, 0.74)], bold_stroke);
+            painter.line_segment([p(0.74, 0.26), p(0.26, 0.74)], bold_stroke);
+        }
+        Icon::Copy => {
+            let back = Rect::from_min_max(p(0.32, 0.16), p(0.82, 0.68));
+            painter.rect_stroke(back, 1.5, thin_stroke, StrokeKind::Inside);
+            let front = Rect::from_min_max(p(0.18, 0.32), p(0.68, 0.84));
+            painter.rect_filled(front, 1.5, color.gamma_multiply(0.15));
+            painter.rect_stroke(front, 1.5, stroke, StrokeKind::Inside);
+        }
+        Icon::Key => {
+            let center = p(0.35, 0.50);
+            let r = w * 0.16;
+            painter.circle_stroke(center, r, stroke);
+            painter.line_segment([p(0.51, 0.50), p(0.82, 0.50)], bold_stroke);
+            painter.line_segment([p(0.68, 0.50), p(0.68, 0.68)], bold_stroke);
+            painter.line_segment([p(0.80, 0.50), p(0.80, 0.64)], bold_stroke);
+        }
+        Icon::Bookmark => {
+            let ribbon = vec![
+                p(0.28, 0.16),
+                p(0.72, 0.16),
+                p(0.72, 0.84),
+                p(0.50, 0.66),
+                p(0.28, 0.84),
+            ];
+            painter.add(egui::Shape::closed_line(ribbon, stroke));
+        }
+        Icon::Quote => {
+            let q1 = vec![p(0.26, 0.44), p(0.36, 0.44), p(0.30, 0.66)];
+            painter.add(egui::Shape::line(q1, bold_stroke));
+            painter.circle_filled(p(0.31, 0.44), 2.2, color);
+            let q2 = vec![p(0.56, 0.44), p(0.66, 0.44), p(0.60, 0.66)];
+            painter.add(egui::Shape::line(q2, bold_stroke));
+            painter.circle_filled(p(0.61, 0.44), 2.2, color);
+        }
+        Icon::Edit => {
+            let barrel = vec![p(0.30, 0.70), p(0.68, 0.32), p(0.78, 0.42), p(0.40, 0.80)];
+            painter.add(egui::Shape::closed_line(barrel, stroke));
+            let tip = vec![p(0.30, 0.70), p(0.22, 0.86), p(0.40, 0.80)];
+            painter.add(egui::Shape::closed_line(tip, thin_stroke));
+            painter.line_segment([p(0.20, 0.90), p(0.85, 0.90)], thin_stroke);
+        }
+        Icon::Headphones => {
+            let arc = vec![
+                p(0.24, 0.54),
+                p(0.25, 0.38),
+                p(0.34, 0.22),
+                p(0.50, 0.16),
+                p(0.66, 0.22),
+                p(0.75, 0.38),
+                p(0.76, 0.54),
+            ];
+            painter.add(egui::Shape::line(arc, bold_stroke));
+            let left_cup = Rect::from_min_max(p(0.16, 0.48), p(0.28, 0.82));
+            painter.rect_stroke(left_cup, 2.5, stroke, StrokeKind::Inside);
+            painter.rect_filled(left_cup.shrink(1.0), 2.0, color.gamma_multiply(0.2));
+            let right_cup = Rect::from_min_max(p(0.72, 0.48), p(0.84, 0.82));
+            painter.rect_stroke(right_cup, 2.5, stroke, StrokeKind::Inside);
+            painter.rect_filled(right_cup.shrink(1.0), 2.0, color.gamma_multiply(0.2));
+        }
+        Icon::Moon => {
+            let pts = vec![
+                p(0.58, 0.16),
+                p(0.70, 0.24),
+                p(0.78, 0.40),
+                p(0.76, 0.60),
+                p(0.66, 0.76),
+                p(0.48, 0.84),
+                p(0.28, 0.80),
+                p(0.44, 0.70),
+                p(0.54, 0.54),
+                p(0.54, 0.36),
+                p(0.46, 0.22),
+            ];
+            painter.add(egui::Shape::closed_line(pts, bold_stroke));
+        }
+        Icon::Crop => {
+            painter.line_segment([p(0.18, 0.34), p(0.76, 0.34)], bold_stroke);
+            painter.line_segment([p(0.34, 0.18), p(0.34, 0.76)], bold_stroke);
+            painter.line_segment([p(0.24, 0.66), p(0.82, 0.66)], bold_stroke);
+            painter.line_segment([p(0.66, 0.24), p(0.66, 0.82)], bold_stroke);
         }
     }
 }
@@ -324,6 +501,8 @@ pub struct IconButton<'a> {
     pub min_size: Option<Vec2>,
     pub selected: bool,
     pub center_content: bool,
+    pub color: Option<Color32>,
+    pub fill: Option<Color32>,
 }
 
 impl<'a> IconButton<'a> {
@@ -335,6 +514,8 @@ impl<'a> IconButton<'a> {
             min_size: None,
             selected: false,
             center_content: false,
+            color: None,
+            fill: None,
         }
     }
 
@@ -357,6 +538,17 @@ impl<'a> IconButton<'a> {
         self.center_content = center;
         self
     }
+
+    pub fn color(mut self, color: Color32) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn fill(mut self, fill: Color32) -> Self {
+        self.fill = Some(fill);
+        self
+    }
 }
 
 impl<'a> Widget for IconButton<'a> {
@@ -370,10 +562,14 @@ impl<'a> Widget for IconButton<'a> {
             Some(sz) => egui::FontId::proportional(sz),
             None => egui::TextStyle::Button.resolve(ui.style()),
         };
-        let initial_text_color = ui.visuals().override_text_color.unwrap_or_else(|| ui.visuals().text_color());
-        let galley = ui
-            .painter()
-            .layout_no_wrap(self.text.to_string(), font_id.clone(), initial_text_color);
+        let initial_text_color = self.color.unwrap_or_else(|| {
+            ui.visuals()
+                .override_text_color
+                .unwrap_or_else(|| ui.visuals().text_color())
+        });
+        let galley =
+            ui.painter()
+                .layout_no_wrap(self.text.to_string(), font_id.clone(), initial_text_color);
         let text_size = if has_text { galley.size() } else { Vec2::ZERO };
 
         let mut desired_size = Vec2::new(
@@ -395,17 +591,20 @@ impl<'a> Widget for IconButton<'a> {
                 *ui.style().interact(&response)
             };
 
-            let item_color = visuals.text_color();
+            let item_color = self.color.unwrap_or_else(|| visuals.text_color());
             let galley = if item_color != initial_text_color && has_text {
-                ui.painter().layout_no_wrap(self.text.to_string(), font_id, item_color)
+                ui.painter()
+                    .layout_no_wrap(self.text.to_string(), font_id, item_color)
             } else {
                 galley
             };
 
+            let bg_fill = self.fill.unwrap_or(visuals.bg_fill);
+
             ui.painter().rect(
                 rect,
                 visuals.corner_radius,
-                visuals.bg_fill,
+                bg_fill,
                 visuals.bg_stroke,
                 StrokeKind::Inside,
             );
@@ -479,7 +678,8 @@ impl<'a> Widget for IconLabel<'a> {
     fn ui(self, ui: &mut Ui) -> Response {
         let text_color = self.color.unwrap_or_else(|| ui.visuals().text_color());
         let icon_size = self.font_size;
-        let gap = 6.0;
+        let has_text = !self.text.is_empty();
+        let gap = if has_text { 6.0 } else { 0.0 };
 
         let font_id = if self.strong {
             egui::FontId::new(
@@ -490,12 +690,21 @@ impl<'a> Widget for IconLabel<'a> {
             egui::FontId::proportional(self.font_size)
         };
 
-        let galley = ui
-            .painter()
-            .layout_no_wrap(self.text.to_string(), font_id, text_color);
-        let text_size = galley.size();
+        let galley = if has_text {
+            Some(
+                ui.painter()
+                    .layout_no_wrap(self.text.to_string(), font_id, text_color),
+            )
+        } else {
+            None
+        };
+        let text_size = galley.as_ref().map(|g| g.size()).unwrap_or(Vec2::ZERO);
 
-        let desired_size = Vec2::new(icon_size + gap + text_size.x, text_size.y.max(icon_size));
+        let desired_size = if has_text {
+            Vec2::new(icon_size + gap + text_size.x, text_size.y.max(icon_size))
+        } else {
+            Vec2::splat(icon_size)
+        };
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
         if ui.is_rect_visible(rect) {
@@ -505,11 +714,13 @@ impl<'a> Widget for IconLabel<'a> {
             );
             paint_icon(ui.painter(), self.icon, icon_rect, text_color);
 
-            let text_pos = Pos2::new(
-                rect.min.x + icon_size + gap,
-                rect.center().y - text_size.y * 0.5,
-            );
-            ui.painter().galley(text_pos, galley, text_color);
+            if let Some(g) = galley {
+                let text_pos = Pos2::new(
+                    rect.min.x + icon_size + gap,
+                    rect.center().y - text_size.y * 0.5,
+                );
+                ui.painter().galley(text_pos, g, text_color);
+            }
         }
 
         response

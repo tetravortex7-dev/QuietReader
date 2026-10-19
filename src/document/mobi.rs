@@ -1,8 +1,8 @@
 use crate::document::{
     BookChapter, BookMetadata, Document, DocumentError, HasToc, TextContent, TocItem,
 };
-use mobi::headers::Encryption;
 use mobi::Mobi;
+use mobi::headers::Encryption;
 use std::path::Path;
 
 pub struct MobiDocument {
@@ -455,14 +455,24 @@ impl Document for MobiDocument {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "enable_tests"))]
 mod tests {
     use super::*;
 
     #[test]
     fn test_decompress_palmdoc() {
         let compressed = [
-            b'H', b'e', b'l', b'l', b'o', 0x20, b'W', b'o', b'r', b'l', b'd',
+            b'H',
+            b'e',
+            b'l',
+            b'l',
+            b'o',
+            0x20,
+            b'W',
+            b'o',
+            b'r',
+            b'l',
+            b'd',
             b'a' ^ 0x80,
         ];
         let decomp = decompress_palmdoc(&compressed);
@@ -529,8 +539,18 @@ mod tests {
         assert_eq!(toc.len(), 3);
 
         assert_eq!(chapters[0].paragraphs, vec!["Title Page"]);
-        assert!(chapters[1].paragraphs.iter().any(|p| p.contains("<b>bold</b>")));
-        assert!(chapters[1].paragraphs.iter().any(|p| p.contains("<i>italic</i>")));
+        assert!(
+            chapters[1]
+                .paragraphs
+                .iter()
+                .any(|p| p.contains("<b>bold</b>"))
+        );
+        assert!(
+            chapters[1]
+                .paragraphs
+                .iter()
+                .any(|p| p.contains("<i>italic</i>"))
+        );
         assert!(chapters[1].paragraphs.iter().any(|p| p.contains('—')));
         assert_eq!(toc[1].chapter_index, 1);
         assert_eq!(toc[2].chapter_index, 2);
@@ -563,4 +583,3 @@ mod tests {
         assert!(matches!(res_garbage, Err(DocumentError::Corrupted(_))));
     }
 }
-

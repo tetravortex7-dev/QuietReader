@@ -8,12 +8,16 @@ pub struct TopBarActions {
     pub open_file: bool,
     pub open_folder: bool,
     pub toggle_recent: bool,
+    pub toggle_opds: bool,
     pub toggle_toc: bool,
+    pub toggle_bookmark: bool,
+    pub toggle_bookmarks_panel: bool,
     pub toggle_search: bool,
     pub toggle_tts: bool,
     pub toggle_fullscreen: bool,
     pub toggle_settings: bool,
     pub toggle_reading_ruler: bool,
+    pub toggle_ambient: bool,
     pub open_update: bool,
 }
 
@@ -31,12 +35,16 @@ pub fn render_top_bar(
         open_file: false,
         open_folder: false,
         toggle_recent: false,
+        toggle_opds: false,
         toggle_toc: false,
+        toggle_bookmark: false,
+        toggle_bookmarks_panel: false,
         toggle_search: false,
         toggle_tts: false,
         toggle_fullscreen: false,
         toggle_settings: false,
         toggle_reading_ruler: false,
+        toggle_ambient: false,
         open_update: false,
     };
 
@@ -54,34 +62,82 @@ pub fn render_top_bar(
         };
 
         ui.with_layout(main_layout, |ui| {
-            if icon_button(ui, Icon::OpenFile, t.open_file).on_hover_text(t.open_file_tooltip).clicked() {
+            if icon_button(ui, Icon::OpenFile, t.open_file)
+                .on_hover_text(t.open_file_tooltip)
+                .clicked()
+            {
                 actions.open_file = true;
             }
-            if icon_button(ui, Icon::Folder, t.open_folder).on_hover_text(t.open_folder_tooltip).clicked() {
+            if icon_button(ui, Icon::Folder, t.open_folder)
+                .on_hover_text(t.open_folder_tooltip)
+                .clicked()
+            {
                 actions.open_folder = true;
             }
-            if icon_button(ui, Icon::Recent, t.recent_books).on_hover_text(t.recent_books_tooltip).clicked() {
+            if icon_button(ui, Icon::Recent, t.recent_books)
+                .on_hover_text(t.recent_books_tooltip)
+                .clicked()
+            {
                 actions.toggle_recent = true;
+            }
+            if icon_button(ui, Icon::Globe, t.opds_catalogs)
+                .on_hover_text(t.opds_catalogs_tooltip)
+                .clicked()
+            {
+                actions.toggle_opds = true;
             }
             if has_document {
                 ui.separator();
                 let toc_text = if show_toc { t.hide_toc } else { t.toc };
-                if icon_button(ui, Icon::Toc, toc_text).clicked() {
+                if icon_button(ui, Icon::Toc, toc_text)
+                    .on_hover_text(t.toc_tooltip)
+                    .clicked()
+                {
                     actions.toggle_toc = true;
                 }
-                if icon_button(ui, Icon::Search, t.search).on_hover_text(t.search_tooltip).clicked() {
+                let bm_btn =
+                    icon_button(ui, Icon::Bookmark, t.add_bookmark).on_hover_text(t.bookmark_added);
+                if bm_btn.clicked() {
+                    actions.toggle_bookmark = true;
+                }
+                if bm_btn.secondary_clicked() {
+                    actions.toggle_bookmarks_panel = true;
+                }
+                if icon_button(ui, Icon::Search, t.search)
+                    .on_hover_text(t.search_tooltip)
+                    .clicked()
+                {
                     actions.toggle_search = true;
                 }
-                if icon_button(ui, Icon::Speech, t.speech).on_hover_text(t.speech_tooltip).clicked() {
+                if icon_button(ui, Icon::Speech, t.speech)
+                    .on_hover_text(t.speech_tooltip)
+                    .clicked()
+                {
                     actions.toggle_tts = true;
                 }
-                let ruler_text = if reading_ruler { t.hide_reading_ruler } else { t.reading_ruler };
-                if icon_button(ui, Icon::Ruler, ruler_text).on_hover_text(t.reading_ruler_tooltip).clicked() {
+                let ruler_text = if reading_ruler {
+                    t.hide_reading_ruler
+                } else {
+                    t.reading_ruler
+                };
+                if icon_button(ui, Icon::Ruler, ruler_text)
+                    .on_hover_text(t.reading_ruler_tooltip)
+                    .clicked()
+                {
                     actions.toggle_reading_ruler = true;
+                }
+                if icon_button(ui, Icon::Headphones, t.ambient)
+                    .on_hover_text(format!("{} (M)", t.ambient_tooltip))
+                    .clicked()
+                {
+                    actions.toggle_ambient = true;
                 }
             }
             ui.with_layout(secondary_layout, |ui| {
-                if icon_button(ui, Icon::Settings, t.settings).on_hover_text(t.settings_tooltip).clicked() {
+                if icon_button(ui, Icon::Settings, t.settings)
+                    .on_hover_text(t.settings_tooltip)
+                    .clicked()
+                {
                     actions.toggle_settings = true;
                 }
                 let (fs_icon, fs_text) = if is_fullscreen {
@@ -89,13 +145,20 @@ pub fn render_top_bar(
                 } else {
                     (Icon::Fullscreen, t.fullscreen)
                 };
-                if icon_button(ui, fs_icon, fs_text).on_hover_text(t.fullscreen_tooltip).clicked() {
+                if icon_button(ui, fs_icon, fs_text)
+                    .on_hover_text(t.fullscreen_tooltip)
+                    .clicked()
+                {
                     actions.toggle_fullscreen = true;
                 }
                 if let Some(tag) = update_available_version {
                     let label = format!("⬆ v{tag}");
                     if ui
-                        .add(egui::Button::new(RichText::new(label).color(egui::Color32::from_rgb(220, 140, 20)).strong()))
+                        .add(egui::Button::new(
+                            RichText::new(label)
+                                .color(egui::Color32::from_rgb(220, 140, 20))
+                                .strong(),
+                        ))
                         .on_hover_text(t.update_available_tip)
                         .clicked()
                     {
@@ -114,6 +177,7 @@ pub fn render_bottom_bar(
     document: &Option<Arc<dyn Document>>,
     theme: &ReaderTheme,
     status_message: Option<&str>,
+    status_opacity: f32,
     view_kind: DocumentViewKind,
     pdf_page: (usize, usize),
     comic_page: (usize, usize),
@@ -121,19 +185,92 @@ pub fn render_bottom_bar(
     lang: crate::i18n::UiLanguage,
 ) {
     let t = lang.t();
-    Panel::bottom("bottom_bar").show(ui, |ui| {
-        let is_rtl = lang.is_rtl();
-        let main_layout = if is_rtl {
-            egui::Layout::right_to_left(egui::Align::Center)
-        } else {
-            egui::Layout::left_to_right(egui::Align::Center)
-        };
-        let secondary_layout = if is_rtl {
-            egui::Layout::left_to_right(egui::Align::Center)
-        } else {
-            egui::Layout::right_to_left(egui::Align::Center)
-        };
+    let is_rtl = lang.is_rtl();
+    let main_layout = if is_rtl {
+        egui::Layout::right_to_left(egui::Align::Center)
+    } else {
+        egui::Layout::left_to_right(egui::Align::Center)
+    };
+    let secondary_layout = if is_rtl {
+        egui::Layout::left_to_right(egui::Align::Center)
+    } else {
+        egui::Layout::right_to_left(egui::Align::Center)
+    };
 
+    let (cur_str, pct_str, progress_frac) = match view_kind {
+        DocumentViewKind::Pdf => {
+            let (cur_idx, total) = pdf_page;
+            let cur = if total > 0 {
+                (cur_idx + 1).min(total)
+            } else {
+                0
+            };
+            let pct = if total > 0 {
+                (cur as f32 / total as f32 * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            };
+            let frac = if total > 0 {
+                (cur as f32 / total as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            (
+                format!("{} {cur}/{total}", t.page_prefix),
+                crate::i18n::format::format_percent(pct, lang),
+                frac,
+            )
+        }
+        DocumentViewKind::Comic => {
+            let (cur_idx, total) = comic_page;
+            let cur = if total > 0 {
+                (cur_idx + 1).min(total)
+            } else {
+                0
+            };
+            let pct = if total > 0 {
+                (cur as f32 / total as f32 * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            };
+            let frac = if total > 0 {
+                (cur as f32 / total as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            (
+                format!("{} {cur}/{total}", t.page_prefix),
+                crate::i18n::format::format_percent(pct, lang),
+                frac,
+            )
+        }
+        DocumentViewKind::Text => {
+            if let Some(doc) = document {
+                let (ch_idx, total_chapters, cur_scroll, max_scroll) = text_chapter;
+                let (cur_page, total_pages, pct) =
+                    calculate_text_pages(doc.chapters(), ch_idx, cur_scroll, max_scroll);
+                let page_info = format!("{} {cur_page}/{total_pages}", t.page_prefix);
+                let cur_str = if total_chapters > 1 {
+                    let sec_str = t
+                        .section_x_of_y
+                        .replacen("{}", &(ch_idx + 1).to_string(), 1)
+                        .replacen("{}", &total_chapters.to_string(), 1);
+                    format!("{page_info}  •  {sec_str}")
+                } else {
+                    page_info
+                };
+                (
+                    cur_str,
+                    crate::i18n::format::format_percent(pct, lang),
+                    (pct / 100.0).clamp(0.0, 1.0),
+                )
+            } else {
+                (String::new(), String::new(), 0.0)
+            }
+        }
+    };
+
+    Panel::bottom("bottom_bar").show(ui, |ui| {
         ui.with_layout(main_layout, |ui| {
             if let Some(doc) = document {
                 let meta = doc.metadata();
@@ -147,78 +284,59 @@ pub fn render_bottom_bar(
                     ui.separator();
                     ui.add(IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED));
                 } else if let Some(msg) = status_message {
-                    ui.separator();
-                    ui.label(RichText::new(msg).color(theme.accent_color()));
+                    if status_opacity > 0.01 {
+                        ui.separator();
+                        ui.label(
+                            RichText::new(msg)
+                                .color(theme.accent_color().gamma_multiply(status_opacity)),
+                        );
+                    }
                 }
             } else if let Some(err) = crate::settings::AppSettings::last_save_error() {
                 ui.add(IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED));
             } else if let Some(msg) = status_message {
-                ui.label(msg);
+                if status_opacity > 0.01 {
+                    ui.label(
+                        RichText::new(msg).color(theme.text_color().gamma_multiply(status_opacity)),
+                    );
+                } else {
+                    ui.label(t.ready_to_read);
+                }
             } else {
                 ui.label(t.ready_to_read);
             }
 
-            let (cur_str, pct_str) = match view_kind {
-                DocumentViewKind::Pdf => {
-                    let (cur_idx, total) = pdf_page;
-                    let cur = if total > 0 {
-                        (cur_idx + 1).min(total)
-                    } else {
-                        0
-                    };
-                    let pct = if total > 0 {
-                        (cur as f32 / total as f32 * 100.0).clamp(0.0, 100.0)
-                    } else {
-                        0.0
-                    };
-                    (
-                        format!("{} {cur}/{total}", t.page_prefix),
-                        crate::i18n::format::format_percent(pct, lang),
-                    )
-                }
-                DocumentViewKind::Comic => {
-                    let (cur_idx, total) = comic_page;
-                    let cur = if total > 0 {
-                        (cur_idx + 1).min(total)
-                    } else {
-                        0
-                    };
-                    let pct = if total > 0 {
-                        (cur as f32 / total as f32 * 100.0).clamp(0.0, 100.0)
-                    } else {
-                        0.0
-                    };
-                    (
-                        format!("{} {cur}/{total}", t.page_prefix),
-                        crate::i18n::format::format_percent(pct, lang),
-                    )
-                }
-                DocumentViewKind::Text => {
-                    if let Some(doc) = document {
-                        let (ch_idx, total_chapters, cur_scroll, max_scroll) = text_chapter;
-                        let (cur_page, total_pages, pct) =
-                            calculate_text_pages(doc.chapters(), ch_idx, cur_scroll, max_scroll);
-                        let page_info = format!("{} {cur_page}/{total_pages}", t.page_prefix);
-                        let cur_str = if total_chapters > 1 {
-                            let sec_str = t.section_x_of_y
-                                .replacen("{}", &(ch_idx + 1).to_string(), 1)
-                                .replacen("{}", &total_chapters.to_string(), 1);
-                            format!("{page_info}  •  {sec_str}")
-                        } else {
-                            page_info
-                        };
-                        (cur_str, crate::i18n::format::format_percent(pct, lang))
-                    } else {
-                        (String::new(), String::new())
-                    }
-                }
-            };
             if !cur_str.is_empty() {
                 ui.with_layout(secondary_layout, |ui| {
                     ui.label(RichText::new(format!("{cur_str}  •  {pct_str}")).strong());
                 });
             }
         });
+
+        if document.is_some() && progress_frac > 0.0 {
+            let bar_rect = ui.max_rect();
+            let line_height = 2.0;
+            let track_rect = egui::Rect::from_min_max(
+                egui::pos2(bar_rect.min.x, bar_rect.min.y),
+                egui::pos2(bar_rect.max.x, bar_rect.min.y + line_height),
+            );
+            ui.painter()
+                .rect_filled(track_rect, 0.0, theme.accent_color().gamma_multiply(0.18));
+            let fill_width = bar_rect.width() * progress_frac.clamp(0.0, 1.0);
+            let fill_rect = if is_rtl {
+                egui::Rect::from_min_max(
+                    egui::pos2(bar_rect.max.x - fill_width, bar_rect.min.y),
+                    egui::pos2(bar_rect.max.x, bar_rect.min.y + line_height),
+                )
+            } else {
+                egui::Rect::from_min_max(
+                    egui::pos2(bar_rect.min.x, bar_rect.min.y),
+                    egui::pos2(bar_rect.min.x + fill_width, bar_rect.min.y + line_height),
+                )
+            };
+            ui.painter()
+                .rect_filled(fill_rect, 0.0, theme.accent_color());
+        }
     });
 }
 

@@ -73,9 +73,17 @@ impl QuietReaderApp {
                 self.settings.reading_ruler = !self.settings.reading_ruler;
                 self.mark_settings_dirty();
             }
+            Command::ToggleBookmark => {
+                self.toggle_quick_bookmark();
+            }
+            Command::ToggleAmbient => {
+                self.ambient.toggle_panel();
+            }
             Command::ExitFullscreen => {
                 if self.search.is_open {
                     self.search.close();
+                } else if self.ambient.is_open {
+                    self.ambient.close();
                 } else if self.autoscroll.is_active() {
                     self.autoscroll.stop();
                 } else if self.show_settings_dialog {
@@ -244,5 +252,182 @@ impl QuietReaderApp {
                 }
             }
         }
+    }
+
+    pub fn toggle_quick_bookmark(&mut self) {
+        let Some(file_path) = self.current_file_path.clone() else {
+            return;
+        };
+        let Some(doc) = self.document.clone() else {
+            return;
+        };
+        let t = self.settings.ui_language.t();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let view_kind = self.view_kind();
+        let (label, text, progress_pct, page_num) = match view_kind {
+            DocumentViewKind::Pdf => {
+                let cur = self.pdf_view.current_page;
+                let total = self.pdf_view.page_count(&self.document).max(1);
+                let pct = ((cur + 1) as f32 / total as f32 * 100.0).clamp(0.0, 100.0);
+                let page_text = doc
+                    .page_content()
+                    .and_then(|c| c.extract_page_text(cur))
+                    .unwrap_or_default();
+                let preview: String = page_text.trim().chars().take(95).collect();
+                (
+                    format!("{} {}", t.page_prefix, cur + 1),
+                    preview,
+                    pct,
+                    Some(cur),
+                )
+            }
+            DocumentViewKind::Comic => {
+                let cur = self.comic_view.current_page;
+                let total = doc
+                    .page_content()
+                    .map(|c| c.page_count())
+                    .unwrap_or(1)
+                    .max(1);
+                let pct = ((cur + 1) as f32 / total as f32 * 100.0).clamp(0.0, 100.0);
+                (
+                    format!("{} {}", t.page_prefix, cur + 1),
+                    format!("{} {}", t.page_prefix, cur + 1),
+                    pct,
+                    Some(cur),
+                )
+            }
+            _ => {
+                let total_ch = doc.chapters().len().max(1);
+                let ch = doc.chapters().get(self.current_chapter);
+                let clean_title = ch
+                    .map(|c| crate::document::strip_formatting_tags(&c.title))
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        t.section_num
+                            .replace("{}", &(self.current_chapter + 1).to_string())
+                    });
+
+                let visible_p = ReaderCore::estimate_visible_paragraph(
+                    doc.as_ref(),
+                    self.current_chapter,
+                    self.current_scroll_y,
+                    self.font_size,
+                );
+                let para_text = ch
+                    .and_then(|c| c.paragraphs.get(visible_p))
+                    .map(|p| crate::document::strip_formatting_tags(p))
+                    .unwrap_or_default();
+                let mut preview: String = para_text.trim().chars().take(95).collect();
+                if para_text.trim().chars().count() > 95 {
+                    preview.push_str("...");
+                }
+
+                let ch_frac = self.current_chapter as f32 / total_ch as f32;
+                let scroll_frac = if self.max_scroll_y > 0.0 {
+                    (self.current_scroll_y / self.max_scroll_y).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let pct = ((ch_frac + (scroll_frac / total_ch as f32)) * 100.0).clamp(0.0, 100.0);
+
+                (clean_title, preview, pct, None)
+            }
+        };
+
+        let existing_idx = self.settings.bookmarks.iter().position(|b| {
+            b.book_path == file_path
+                && b.chapter == self.current_chapter
+                && (b.scroll_y - self.current_scroll_y).abs() < 25.0
+                && b.page_number == page_num
+        });
+
+        if let Some(idx) = existing_idx {
+            self.settings.bookmarks.remove(idx);
+            self.status_message = Some(t.bookmark_removed.to_string());
+        } else {
+            let id = format!(
+                "{}_{}_{}",
+                timestamp,
+                self.current_chapter,
+                self.settings.bookmarks.len()
+            );
+            let bm = crate::core::Bookmark {
+                id,
+                book_path: file_path,
+                chapter: self.current_chapter,
+                scroll_y: self.current_scroll_y,
+                label,
+                text,
+                note: String::new(),
+                color: crate::core::BookmarkColor::Yellow,
+                kind: crate::core::BookmarkKind::Bookmark,
+                timestamp,
+                progress_percent: progress_pct,
+                page_number: page_num,
+            };
+            self.settings.bookmarks.push(bm);
+            self.status_message = Some(t.bookmark_added.to_string());
+        }
+        self.mark_settings_dirty();
+    }
+
+    pub fn save_quote_bookmark(&mut self, text: String) {
+        let Some(file_path) = self.current_file_path.clone() else {
+            return;
+        };
+        let Some(doc) = self.document.clone() else {
+            return;
+        };
+        let t = self.settings.ui_language.t();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let total_ch = doc.chapters().len().max(1);
+        let ch = doc.chapters().get(self.current_chapter);
+        let clean_title = ch
+            .map(|c| crate::document::strip_formatting_tags(&c.title))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                t.section_num
+                    .replace("{}", &(self.current_chapter + 1).to_string())
+            });
+
+        let ch_frac = self.current_chapter as f32 / total_ch as f32;
+        let scroll_frac = if self.max_scroll_y > 0.0 {
+            (self.current_scroll_y / self.max_scroll_y).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let pct = ((ch_frac + (scroll_frac / total_ch as f32)) * 100.0).clamp(0.0, 100.0);
+
+        let id = format!(
+            "{}_{}_{}",
+            timestamp,
+            self.current_chapter,
+            self.settings.bookmarks.len()
+        );
+        let bm = crate::core::Bookmark {
+            id,
+            book_path: file_path,
+            chapter: self.current_chapter,
+            scroll_y: self.current_scroll_y,
+            label: clean_title,
+            text,
+            note: String::new(),
+            color: crate::core::BookmarkColor::Yellow,
+            kind: crate::core::BookmarkKind::Quote,
+            timestamp,
+            progress_percent: pct,
+            page_number: None,
+        };
+        self.settings.bookmarks.push(bm);
+        self.status_message = Some(t.quote_saved.to_string());
+        self.mark_settings_dirty();
     }
 }

@@ -807,6 +807,7 @@ fn test_reader_core_bookmarks_and_search() {
         scroll_y: 100.0,
         label: "Marker 1".to_string(),
         timestamp: 123456,
+        ..Default::default()
     };
     let bm2 = Bookmark {
         book_path: path.clone(),
@@ -814,6 +815,7 @@ fn test_reader_core_bookmarks_and_search() {
         scroll_y: 200.0,
         label: "Marker 2".to_string(),
         timestamp: 123457,
+        ..Default::default()
     };
 
     core.add_bookmark(bm1.clone());

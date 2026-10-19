@@ -106,7 +106,11 @@ impl SearchView {
 
                 frame.show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.add(IconLabel::new(Icon::Search, "").size(14.0).color(theme.accent_color()));
+                        ui.add(
+                            IconLabel::new(Icon::Search, "")
+                                .size(14.0)
+                                .color(theme.accent_color()),
+                        );
 
                         let text_edit = egui::TextEdit::singleline(&mut state.query)
                             .hint_text(t.search_placeholder)
@@ -124,7 +128,8 @@ impl SearchView {
                                 state.hits = ReaderCore::search_in_document(doc, &state.query);
                                 state.current_hit_index = 0;
                                 if let Some(first) = state.hits.first() {
-                                    jump_target = Some((first.chapter_index, first.paragraph_index));
+                                    jump_target =
+                                        Some((first.chapter_index, first.paragraph_index));
                                 }
                             } else {
                                 state.hits.clear();
@@ -146,22 +151,30 @@ impl SearchView {
                             );
                         } else {
                             ui.label(
-                                RichText::new(format!("{} {} {total}", state.current_hit_index + 1, t.page_of))
-                                    .size(12.5)
-                                    .strong()
-                                    .color(theme.text_color()),
+                                RichText::new(format!(
+                                    "{} {} {total}",
+                                    state.current_hit_index + 1,
+                                    t.page_of
+                                ))
+                                .size(12.5)
+                                .strong()
+                                .color(theme.text_color()),
                             );
                         }
 
-                        let prev_btn = ui.add(
-                            IconButton::new(Icon::ChevronUp, "")
-                                .min_size(Vec2::new(24.0, 22.0)),
-                        ).on_hover_text(t.search_prev);
+                        let prev_btn = ui
+                            .add(
+                                IconButton::new(Icon::ChevronUp, "")
+                                    .min_size(Vec2::new(24.0, 22.0)),
+                            )
+                            .on_hover_text(t.search_prev);
 
-                        let next_btn = ui.add(
-                            IconButton::new(Icon::ChevronDown, "")
-                                .min_size(Vec2::new(24.0, 22.0)),
-                        ).on_hover_text(t.search_next);
+                        let next_btn = ui
+                            .add(
+                                IconButton::new(Icon::ChevronDown, "")
+                                    .min_size(Vec2::new(24.0, 22.0)),
+                            )
+                            .on_hover_text(t.search_next);
 
                         let list_btn = ui.add(
                             IconButton::new(Icon::Toc, "")
@@ -169,10 +182,8 @@ impl SearchView {
                                 .selected(state.show_results_dropdown),
                         );
 
-                        let close_btn = ui.add(
-                            IconButton::new(Icon::Close, "")
-                                .min_size(Vec2::new(24.0, 22.0)),
-                        );
+                        let close_btn = ui
+                            .add(IconButton::new(Icon::Close, "").min_size(Vec2::new(24.0, 22.0)));
 
                         if close_btn.clicked() {
                             state.close();
@@ -218,11 +229,15 @@ impl SearchView {
                                         .and_then(|d| d.chapters().get(hit.chapter_index))
                                         .map(|c| crate::document::strip_formatting_tags(&c.title))
                                         .filter(|t| !t.is_empty())
-                                        .unwrap_or_else(|| t.section_num.replace("{}", &(hit.chapter_index + 1).to_string()));
+                                        .unwrap_or_else(|| {
+                                            t.section_num
+                                                .replace("{}", &(hit.chapter_index + 1).to_string())
+                                        });
 
                                     ui.group(|ui| {
                                         ui.horizontal(|ui| {
-                                            let mut title_rt = RichText::new(&chapter_title).strong().size(12.5);
+                                            let mut title_rt =
+                                                RichText::new(&chapter_title).strong().size(12.5);
                                             if is_active {
                                                 title_rt = title_rt.color(theme.accent_color());
                                             }
@@ -230,20 +245,21 @@ impl SearchView {
                                         });
                                         let snippet_btn = ui.add(
                                             egui::Button::new(
-                                                RichText::new(&hit.snippet)
-                                                    .size(11.5)
-                                                    .color(if is_active {
+                                                RichText::new(&hit.snippet).size(11.5).color(
+                                                    if is_active {
                                                         theme.text_color()
                                                     } else {
                                                         theme.secondary_text_color()
-                                                    }),
+                                                    },
+                                                ),
                                             )
                                             .frame(false)
                                             .wrap(),
                                         );
                                         if snippet_btn.clicked() {
                                             state.current_hit_index = idx;
-                                            jump_target = Some((hit.chapter_index, hit.paragraph_index));
+                                            jump_target =
+                                                Some((hit.chapter_index, hit.paragraph_index));
                                         }
                                     });
                                     ui.add_space(2.0);

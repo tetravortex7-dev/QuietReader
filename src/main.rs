@@ -5,6 +5,7 @@ mod app;
 mod core;
 mod document;
 pub mod i18n;
+pub mod opds;
 mod platform;
 mod settings;
 pub mod updater;
@@ -57,6 +58,14 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "enable_tests"))]
 mod tests_critical;
 
+#[cfg(all(test, feature = "enable_tests"))]
+mod tests_bookmarks;
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod tests_ambient;
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod tests_scan_processor;

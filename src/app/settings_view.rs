@@ -157,7 +157,8 @@ impl SettingsView {
 
         for font_info in super::fonts::AVAILABLE_FONTS {
             let is_selected = settings.font_family == font_info.id;
-            egui::Frame::new()
+            let card_family = egui::FontFamily::Name(font_info.id.into());
+            let card_frame = egui::Frame::new()
                 .fill(if is_selected {
                     theme.panel_bg_color()
                 } else {
@@ -172,39 +173,54 @@ impl SettingsView {
                     },
                 ))
                 .corner_radius(6.0)
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .radio(
-                                is_selected,
-                                RichText::new(font_info.name)
-                                    .size(15.0)
-                                    .strong()
-                                    .color(text_color),
-                            )
-                            .clicked()
-                            && !is_selected
-                        {
-                            settings.font_family = font_info.id.to_string();
-                            apply_font_family(ctx, font_info.id);
-                            *on_save_settings = true;
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(font_info.badge_for_lang(settings.ui_language))
-                                    .size(11.5)
-                                    .color(theme.accent_color()),
-                            );
-                        });
+                .inner_margin(egui::Margin::symmetric(12, 8));
+
+            let frame_response = card_frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .radio(
+                            is_selected,
+                            RichText::new(font_info.name)
+                                .family(card_family.clone())
+                                .size(15.5)
+                                .strong()
+                                .color(text_color),
+                        )
+                        .clicked()
+                        && !is_selected
+                    {
+                        settings.font_family = font_info.id.to_string();
+                        apply_font_family(ctx, font_info.id);
+                        *on_save_settings = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(font_info.badge_for_lang(settings.ui_language))
+                                .size(11.5)
+                                .color(theme.accent_color()),
+                        );
                     });
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(font_info.desc_for_lang(settings.ui_language))
-                            .size(12.0)
-                            .color(text_color.gamma_multiply(0.75)),
-                    );
                 });
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(font_info.desc_for_lang(settings.ui_language))
+                        .family(card_family)
+                        .size(12.5)
+                        .color(text_color.gamma_multiply(0.8)),
+                );
+            });
+
+            if frame_response
+                .response
+                .interact(egui::Sense::click())
+                .clicked()
+                && !is_selected
+            {
+                settings.font_family = font_info.id.to_string();
+                apply_font_family(ctx, font_info.id);
+                *on_save_settings = true;
+            }
+
             ui.add_space(4.0);
         }
 
@@ -326,14 +342,23 @@ impl SettingsView {
                 if settings.reading_ruler {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(t.reading_ruler_height_label).size(13.0).color(text_color));
-                        let resp = ui.add(egui::Slider::new(&mut settings.reading_ruler_lines, 1..=5));
+                        ui.label(
+                            RichText::new(t.reading_ruler_height_label)
+                                .size(13.0)
+                                .color(text_color),
+                        );
+                        let resp =
+                            ui.add(egui::Slider::new(&mut settings.reading_ruler_lines, 1..=5));
                         if resp.changed() || resp.drag_stopped() {
                             *on_save_settings = true;
                         }
                     });
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(t.reading_ruler_dim_label).size(13.0).color(text_color));
+                        ui.label(
+                            RichText::new(t.reading_ruler_dim_label)
+                                .size(13.0)
+                                .color(text_color),
+                        );
                         let mut pct = (settings.reading_ruler_opacity * 100.0).round() as u32;
                         let resp = ui.add(egui::Slider::new(&mut pct, 20..=80).suffix("%"));
                         if resp.changed() {
@@ -349,11 +374,19 @@ impl SettingsView {
         ui.add_space(10.0);
         egui::Frame::new()
             .fill(theme.bg_color())
-            .stroke(egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.25)))
+            .stroke(egui::Stroke::new(
+                1.0,
+                theme.accent_color().gamma_multiply(0.25),
+            ))
             .corner_radius(6.0)
             .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
-                ui.label(RichText::new(t.live_preview).italics().size(12.0).color(text_color.gamma_multiply(0.65)));
+                ui.label(
+                    RichText::new(t.live_preview)
+                        .italics()
+                        .size(12.0)
+                        .color(text_color.gamma_multiply(0.65)),
+                );
                 ui.add_space(6.0);
                 let preview_job = super::text_view::create_sample_preview_job(
                     t.sample_text,
@@ -413,41 +446,17 @@ impl SettingsView {
         ui.add_space(6.0);
 
         let themes = [
-            (
-                ReaderTheme::Sepia,
-                t.theme_sepia,
-                t.theme_sepia_desc,
-            ),
+            (ReaderTheme::Sepia, t.theme_sepia, t.theme_sepia_desc),
             (
                 ReaderTheme::Twilight,
                 t.theme_twilight,
                 t.theme_twilight_desc,
             ),
-            (
-                ReaderTheme::Warm,
-                t.theme_warm,
-                t.theme_warm_desc,
-            ),
-            (
-                ReaderTheme::Mint,
-                t.theme_mint,
-                t.theme_mint_desc,
-            ),
-            (
-                ReaderTheme::Light,
-                t.theme_light,
-                t.theme_light_desc,
-            ),
-            (
-                ReaderTheme::Dark,
-                t.theme_dark,
-                t.theme_dark_desc,
-            ),
-            (
-                ReaderTheme::Oled,
-                t.theme_oled,
-                t.theme_oled_desc,
-            ),
+            (ReaderTheme::Warm, t.theme_warm, t.theme_warm_desc),
+            (ReaderTheme::Mint, t.theme_mint, t.theme_mint_desc),
+            (ReaderTheme::Light, t.theme_light, t.theme_light_desc),
+            (ReaderTheme::Dark, t.theme_dark, t.theme_dark_desc),
+            (ReaderTheme::Oled, t.theme_oled, t.theme_oled_desc),
         ];
 
         for (theme_variant, title, desc) in themes {
@@ -548,11 +557,7 @@ impl SettingsView {
         ui.horizontal(|ui| {
             ui.label(RichText::new(t.motion_type).strong().color(text_color));
             if ui
-                .radio_value(
-                    &mut settings.auto_scroll.pause_mode,
-                    true,
-                    t.mode_pause,
-                )
+                .radio_value(&mut settings.auto_scroll.pause_mode, true, t.mode_pause)
                 .clicked()
             {
                 *on_save_settings = true;
@@ -622,26 +627,10 @@ impl SettingsView {
         ui.add_space(6.0);
 
         let modes = [
-            (
-                "Auto",
-                t.mode_auto,
-                t.mode_auto_desc,
-            ),
-            (
-                "Manga",
-                t.mode_manga,
-                t.mode_manga_desc,
-            ),
-            (
-                "Comic",
-                t.mode_comic,
-                t.mode_comic_desc,
-            ),
-            (
-                "Webtoon",
-                t.mode_webtoon,
-                t.mode_webtoon_desc,
-            ),
+            ("Auto", t.mode_auto, t.mode_auto_desc),
+            ("Manga", t.mode_manga, t.mode_manga_desc),
+            ("Comic", t.mode_comic, t.mode_comic_desc),
+            ("Webtoon", t.mode_webtoon, t.mode_webtoon_desc),
         ];
 
         for (mode_key, title, desc) in modes {
@@ -681,11 +670,7 @@ impl SettingsView {
         ui.add_space(6.0);
         ui.separator();
         ui.add_space(6.0);
-        ui.label(
-            RichText::new(t.layout_title)
-                .strong()
-                .color(text_color),
-        );
+        ui.label(RichText::new(t.layout_title).strong().color(text_color));
         ui.horizontal(|ui| {
             let s1 = ui.radio_value(
                 &mut settings.comic.page_layout,
@@ -764,6 +749,7 @@ impl SettingsView {
                 "Ctrl + F",
                 "Поиск по тексту книги с быстрым переходом к главе",
             ),
+            ("Ctrl + D", "Быстрая закладка текущего места чтения"),
             ("Home / End", "Переход в начало / конец раздела или комикса"),
         ];
 
@@ -785,4 +771,3 @@ impl SettingsView {
         }
     }
 }
-

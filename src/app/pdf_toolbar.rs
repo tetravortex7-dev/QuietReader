@@ -1,4 +1,4 @@
-use super::pdf_view::{truncate_str, PdfViewState};
+use super::pdf_view::{PdfViewState, truncate_str};
 use super::theme::ReaderTheme;
 use crate::settings::PdfSettings;
 use eframe::egui::{self, RichText, Vec2};
@@ -62,11 +62,7 @@ impl PdfViewState {
 
             ui.separator();
 
-            if ui
-                .button("−")
-                .on_hover_text(t.zoom_out)
-                .clicked()
-            {
+            if ui.button("−").on_hover_text(t.zoom_out).clicked() {
                 super::paged_common::zoom_out(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
@@ -83,11 +79,7 @@ impl PdfViewState {
                 );
             }
 
-            if ui
-                .button("+")
-                .on_hover_text(t.zoom_in)
-                .clicked()
-            {
+            if ui.button("+").on_hover_text(t.zoom_in).clicked() {
                 super::paged_common::zoom_in(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
@@ -122,6 +114,42 @@ impl PdfViewState {
 
             ui.separator();
 
+            let dark_resp = ui.add(
+                crate::app::icons::IconButton::new(
+                    crate::app::icons::Icon::Moon,
+                    t.smart_dark_mode,
+                )
+                .selected(settings.smart_dark),
+            );
+            if dark_resp.on_hover_text(t.smart_dark_mode_tooltip).clicked() {
+                settings.smart_dark = !settings.smart_dark;
+                self.clear_cache();
+            }
+
+            let crop_resp = ui
+                .add(
+                    crate::app::icons::IconButton::new(
+                        crate::app::icons::Icon::Crop,
+                        t.auto_crop_margins,
+                    )
+                    .selected(settings.auto_crop),
+                )
+                .on_hover_text(t.auto_crop_margins_tooltip);
+            if crop_resp.clicked() {
+                settings.auto_crop = !settings.auto_crop;
+                self.pan_offset = Vec2::ZERO;
+            }
+            crop_resp.context_menu(|ui| {
+                ui.label(RichText::new(t.crop_sensitivity).strong());
+                let slider = egui::Slider::new(&mut settings.auto_crop_tolerance, 5..=80)
+                    .text(t.crop_tolerance);
+                if ui.add(slider).changed() {
+                    self.clear_cache();
+                }
+            });
+
+            ui.separator();
+
             if ui
                 .selectable_label(settings.layout == "Single", t.single_page_btn)
                 .on_hover_text("Одиночная страница")
@@ -153,11 +181,7 @@ impl PdfViewState {
 
             if !self.selected_text.is_empty() {
                 if ui
-                    .button(
-                        RichText::new(t.copy)
-                            .strong()
-                            .color(theme.accent_color()),
-                    )
+                    .button(RichText::new(t.copy).strong().color(theme.accent_color()))
                     .on_hover_text("Скопировать выделенный текст (Ctrl+C)")
                     .clicked()
                 {
@@ -195,5 +219,79 @@ impl PdfViewState {
                 );
             });
         });
+    }
+
+    pub fn render_selection_popups(
+        &mut self,
+        ctx: &egui::Context,
+        theme: &ReaderTheme,
+        status_message: &mut Option<String>,
+        lang: crate::i18n::UiLanguage,
+        on_translate: &mut Option<String>,
+    ) {
+        if !self.selected_text.is_empty() {
+            let ctrl_c = ctx.input(|i| {
+                (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::C)
+            });
+            if ctrl_c {
+                ctx.copy_text(self.selected_text.clone());
+                let preview = truncate_str(&self.selected_text, 35);
+                *status_message = Some(format!("Скопировано в буфер: \"{preview}\""));
+                self.copy_notification =
+                    Some((format!("Скопировано: \"{preview}\""), Instant::now()));
+            }
+        }
+
+        if !self.selected_text.is_empty()
+            && let Some(curr) = self.selection_current
+        {
+            let pill_pos = curr + Vec2::new(12.0, 12.0);
+            egui::Area::new(egui::Id::unique("pdf_selection_pill"))
+                .fixed_pos(pill_pos)
+                .order(egui::Order::Tooltip)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(RichText::new("Скопировать (Ctrl+C)").size(12.0))
+                                .clicked()
+                            {
+                                ctx.copy_text(self.selected_text.clone());
+                                let preview = truncate_str(&self.selected_text, 35);
+                                *status_message = Some(format!("Скопировано: \"{preview}\""));
+                                self.copy_notification =
+                                    Some((format!("Скопировано: \"{preview}\""), Instant::now()));
+                            }
+                            if ui
+                                .button(RichText::new(lang.t().translate_selection).size(12.0))
+                                .clicked()
+                            {
+                                *on_translate = Some(self.selected_text.clone());
+                            }
+                            if ui.small_button("X").clicked() {
+                                self.selection_start = None;
+                                self.selection_current = None;
+                                self.selection_dirty = false;
+                                self.selected_text.clear();
+                            }
+                        });
+                    });
+                });
+        }
+
+        if let Some((msg, time)) = &self.copy_notification {
+            if time.elapsed().as_secs_f32() < 2.0 {
+                egui::Area::new(egui::Id::unique("pdf_copy_toast"))
+                    .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -45.0))
+                    .order(egui::Order::Tooltip)
+                    .show(ctx, |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.label(RichText::new(msg).strong().color(theme.accent_color()));
+                        });
+                    });
+            } else {
+                self.copy_notification = None;
+            }
+        }
     }
 }

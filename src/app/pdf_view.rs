@@ -16,6 +16,10 @@ struct LoadRequest {
     scale: f32,
     scale_bucket: u32,
     ctx: egui::Context,
+    smart_dark: bool,
+    target_bg: Color32,
+    target_text: Color32,
+    tolerance: u8,
 }
 
 struct LoadResponse {
@@ -24,6 +28,7 @@ struct LoadResponse {
     scale_bucket: u32,
     result: Result<DecodedImage, DocumentError>,
     spans: Option<Vec<PageTextSpan>>,
+    bbox: Rect,
 }
 
 pub struct PageTextureEntry {
@@ -36,6 +41,7 @@ pub struct PageTextureEntry {
 pub struct PdfViewState {
     pub current_page: usize,
     pub textures: HashMap<usize, PageTextureEntry>,
+    pub page_bboxes: HashMap<usize, Rect>,
     pub pending_pages: HashMap<usize, u32>,
     pub failed_pages: HashMap<usize, String>,
     pub access_counter: u64,
@@ -54,6 +60,9 @@ pub struct PdfViewState {
     pub selection_dirty: bool,
     pub selected_text: String,
     pub copy_notification: Option<(String, Instant)>,
+    pub last_smart_dark: bool,
+    pub last_theme_bg: Color32,
+    pub last_crop_tolerance: u8,
     req_tx: Sender<LoadRequest>,
     resp_rx: Receiver<LoadResponse>,
 }
@@ -85,9 +94,19 @@ fn spawn_pdf_worker(
                 let scale = req.scale;
                 let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     if let Some(page_content) = doc.page_content() {
-                        let img = page_content.load_page_image_scaled(page_idx, scale)?;
+                        let mut img = page_content.load_page_image_scaled(page_idx, scale)?;
                         let spans = page_content.extract_page_text_spans(page_idx);
-                        Ok((img, spans))
+                        let bbox =
+                            crate::app::scan_processor::detect_content_bbox(&img, req.tolerance);
+                        if req.smart_dark {
+                            crate::app::scan_processor::apply_smart_dark_mode(
+                                &mut img,
+                                req.target_bg,
+                                req.target_text,
+                                true,
+                            );
+                        }
+                        Ok((img, spans, bbox))
                     } else {
                         Err(DocumentError::Unsupported(
                             "Документ не поддерживает постраничный режим".to_string(),
@@ -99,14 +118,19 @@ fn spawn_pdf_worker(
                     continue;
                 }
 
-                let (result, spans) = match load_res {
-                    Ok(Ok((img, spans))) => (Ok(img), spans),
-                    Ok(Err(e)) => (Err(e), None),
+                let (result, spans, bbox) = match load_res {
+                    Ok(Ok((img, spans, bbox))) => (Ok(img), spans, bbox),
+                    Ok(Err(e)) => (
+                        Err(e),
+                        None,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    ),
                     Err(_) => (
                         Err(DocumentError::Corrupted(
                             "Аварийный сбой при декодировании страницы".to_string(),
                         )),
                         None,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     ),
                 };
 
@@ -116,6 +140,7 @@ fn spawn_pdf_worker(
                     scale_bucket: req.scale_bucket,
                     result,
                     spans,
+                    bbox,
                 });
                 req.ctx.request_repaint();
             }
@@ -134,6 +159,7 @@ impl Default for PdfViewState {
         Self {
             current_page: 0,
             textures: HashMap::new(),
+            page_bboxes: HashMap::new(),
             pending_pages: HashMap::new(),
             failed_pages: HashMap::new(),
             access_counter: 0,
@@ -152,6 +178,9 @@ impl Default for PdfViewState {
             selection_dirty: false,
             selected_text: String::new(),
             copy_notification: None,
+            last_smart_dark: false,
+            last_theme_bg: Color32::TRANSPARENT,
+            last_crop_tolerance: 24,
             req_tx,
             resp_rx,
         }
@@ -161,6 +190,7 @@ impl Default for PdfViewState {
 impl PdfViewState {
     pub fn clear_cache(&mut self) {
         self.textures.clear();
+        self.page_bboxes.clear();
         self.pending_pages.clear();
         self.failed_pages.clear();
         self.total_texture_bytes = 0;
@@ -223,10 +253,18 @@ impl PdfViewState {
         let tex_sizes: Vec<Vec2> = pages_to_show
             .iter()
             .map(|&p| {
-                self.textures
+                let raw = self
+                    .textures
                     .get(&p)
                     .map(|t| t.texture.size_vec2())
-                    .unwrap_or(Vec2::new(600.0, 800.0))
+                    .unwrap_or(Vec2::new(600.0, 800.0));
+                if settings.auto_crop
+                    && let Some(bbox) = self.page_bboxes.get(&p)
+                {
+                    Vec2::new(raw.x * bbox.width(), raw.y * bbox.height())
+                } else {
+                    raw
+                }
             })
             .collect();
         let avail = if self.last_avail_size.x > 10.0 && self.last_avail_size.y > 10.0 {
@@ -259,6 +297,7 @@ impl PdfViewState {
                     if let Some(spans) = resp.spans {
                         self.page_text_spans.insert(resp.page_idx, spans);
                     }
+                    self.page_bboxes.insert(resp.page_idx, resp.bbox);
                     match resp.result {
                         Ok(img) => {
                             self.access_counter += 1;
@@ -373,6 +412,8 @@ impl PdfViewState {
         document: &Option<Arc<dyn Document>>,
         page_idx: usize,
         scale: f32,
+        settings: &PdfSettings,
+        theme: &ReaderTheme,
     ) -> Option<egui::TextureHandle> {
         self.access_counter += 1;
         let counter = self.access_counter;
@@ -409,6 +450,9 @@ impl PdfViewState {
             map.insert(page_idx, scale_bucket);
         }
 
+        let target_bg = theme.bg_color();
+        let target_text = theme.text_color();
+        let smart_dark = settings.smart_dark && theme.is_dark();
         let _ = self.req_tx.send(LoadRequest {
             doc_generation: self.doc_generation,
             doc,
@@ -416,12 +460,14 @@ impl PdfViewState {
             scale,
             scale_bucket,
             ctx: ctx.clone(),
+            smart_dark,
+            target_bg,
+            target_text,
+            tolerance: settings.auto_crop_tolerance,
         });
 
         existing_tex
     }
-
-
 
     #[allow(clippy::too_many_arguments)]
     fn render_page_with_selection<'a>(
@@ -432,44 +478,45 @@ impl PdfViewState {
         tex: &egui::TextureHandle,
         size: Vec2,
         rotation: i32,
+        uv_rect: Rect,
+        auto_crop: bool,
         selected_spans_collector: &mut Vec<&'a str>,
     ) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let painter = ui.painter();
         let rot_deg = rotation.rem_euclid(360);
+        let u0 = uv_rect.min.x;
+        let v0 = uv_rect.min.y;
+        let u1 = uv_rect.max.x;
+        let v1 = uv_rect.max.y;
 
         if rot_deg == 0 {
-            painter.image(
-                tex.id(),
-                rect,
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                Color32::WHITE,
-            );
+            painter.image(tex.id(), rect, uv_rect, Color32::WHITE);
         } else {
             let uvs = match rot_deg {
                 90 => [
-                    Pos2::new(0.0, 1.0),
-                    Pos2::new(0.0, 0.0),
-                    Pos2::new(1.0, 0.0),
-                    Pos2::new(1.0, 1.0),
+                    Pos2::new(u0, v1),
+                    Pos2::new(u0, v0),
+                    Pos2::new(u1, v0),
+                    Pos2::new(u1, v1),
                 ],
                 180 => [
-                    Pos2::new(1.0, 1.0),
-                    Pos2::new(0.0, 1.0),
-                    Pos2::new(0.0, 0.0),
-                    Pos2::new(1.0, 0.0),
+                    Pos2::new(u1, v1),
+                    Pos2::new(u0, v1),
+                    Pos2::new(u0, v0),
+                    Pos2::new(u1, v0),
                 ],
                 270 => [
-                    Pos2::new(1.0, 0.0),
-                    Pos2::new(1.0, 1.0),
-                    Pos2::new(0.0, 1.0),
-                    Pos2::new(0.0, 0.0),
+                    Pos2::new(u1, v0),
+                    Pos2::new(u1, v1),
+                    Pos2::new(u0, v1),
+                    Pos2::new(u0, v0),
                 ],
                 _ => [
-                    Pos2::new(0.0, 0.0),
-                    Pos2::new(1.0, 0.0),
-                    Pos2::new(1.0, 1.0),
-                    Pos2::new(0.0, 1.0),
+                    Pos2::new(u0, v0),
+                    Pos2::new(u1, v0),
+                    Pos2::new(u1, v1),
+                    Pos2::new(u0, v1),
                 ],
             };
             let corners = [
@@ -491,11 +538,27 @@ impl PdfViewState {
             painter.add(mesh);
         }
 
+        let adjust_span = |span: &PageTextSpan| -> Rect {
+            let bbox = if auto_crop {
+                let bw = uv_rect.width().max(0.001);
+                let bh = uv_rect.height().max(0.001);
+                [
+                    (span.bbox[0] - u0) / bw,
+                    (span.bbox[1] - v0) / bh,
+                    (span.bbox[2] - u0) / bw,
+                    (span.bbox[3] - v0) / bh,
+                ]
+            } else {
+                span.bbox
+            };
+            super::paged_common::transform_span_bbox(bbox, rotation, rect)
+        };
+
         if let Some(hover_pos) = response.hover_pos()
             && let Some(spans) = self.page_text_spans.get(&page_idx)
         {
             for span in spans {
-                let span_rect = transform_span_bbox(span.bbox, rotation, rect);
+                let span_rect = adjust_span(span);
                 if span_rect.contains(hover_pos) {
                     ctx.set_cursor_icon(egui::CursorIcon::Text);
                     break;
@@ -528,7 +591,7 @@ impl PdfViewState {
                 && let Some(spans) = self.page_text_spans.get(&page_idx)
             {
                 for span in spans {
-                    let span_rect = transform_span_bbox(span.bbox, rotation, rect);
+                    let span_rect = adjust_span(span);
                     if span_rect.intersects(sel_rect) {
                         painter.rect_filled(
                             span_rect,
@@ -563,8 +626,19 @@ impl PdfViewState {
         max_scroll_y: &mut f32,
         status_message: &mut Option<String>,
         lang: crate::i18n::UiLanguage,
+        on_translate: &mut Option<String>,
     ) {
         self.poll_responses(ctx, status_message);
+
+        if settings.smart_dark != self.last_smart_dark
+            || theme.bg_color() != self.last_theme_bg
+            || settings.auto_crop_tolerance != self.last_crop_tolerance
+        {
+            self.last_smart_dark = settings.smart_dark;
+            self.last_theme_bg = theme.bg_color();
+            self.last_crop_tolerance = settings.auto_crop_tolerance;
+            self.clear_cache();
+        }
 
         let format_label = document
             .as_ref()
@@ -635,12 +709,29 @@ impl PdfViewState {
                         }
 
                         for p in row_range {
-                            if let Some(tex) =
-                                self.request_page_texture(ctx, document, p, render_scale)
-                            {
+                            if let Some(tex) = self.request_page_texture(
+                                ctx,
+                                document,
+                                p,
+                                render_scale,
+                                settings,
+                                theme,
+                            ) {
+                                let uv_rect =
+                                    if settings.auto_crop {
+                                        self.page_bboxes.get(&p).copied().unwrap_or(
+                                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                        )
+                                    } else {
+                                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))
+                                    };
                                 let tex_size = tex.size_vec2();
+                                let content_size = Vec2::new(
+                                    tex_size.x * uv_rect.width(),
+                                    tex_size.y * uv_rect.height(),
+                                );
                                 let mut w = target_w;
-                                let mut h = target_w * (tex_size.y / tex_size.x);
+                                let mut h = target_w * (content_size.y / content_size.x);
                                 if settings.rotation == 90 || settings.rotation == 270 {
                                     std::mem::swap(&mut w, &mut h);
                                 }
@@ -651,6 +742,8 @@ impl PdfViewState {
                                     &tex,
                                     Vec2::new(w, h),
                                     settings.rotation,
+                                    uv_rect,
+                                    settings.auto_crop,
                                     &mut collected_selected_spans,
                                 );
                                 ui.add_space(12.0);
@@ -692,16 +785,24 @@ impl PdfViewState {
             };
 
             for &p in &pages_to_show {
-                let _ = self.request_page_texture(ctx, document, p, render_scale);
+                let _ = self.request_page_texture(ctx, document, p, render_scale, settings, theme);
             }
 
             let tex_sizes: Vec<Vec2> = pages_to_show
                 .iter()
                 .map(|&p| {
-                    self.textures
+                    let raw = self
+                        .textures
                         .get(&p)
                         .map(|t| t.texture.size_vec2())
-                        .unwrap_or(Vec2::new(600.0, 800.0))
+                        .unwrap_or(Vec2::new(600.0, 800.0));
+                    if settings.auto_crop
+                        && let Some(bbox) = self.page_bboxes.get(&p)
+                    {
+                        Vec2::new(raw.x * bbox.width(), raw.y * bbox.height())
+                    } else {
+                        raw
+                    }
                 })
                 .collect();
 
@@ -736,6 +837,14 @@ impl PdfViewState {
                     let display_size = geom.page_sizes[idx];
                     if let Some(entry) = self.textures.get(&p) {
                         let tex = entry.texture.clone();
+                        let uv_rect = if settings.auto_crop {
+                            self.page_bboxes
+                                .get(&p)
+                                .copied()
+                                .unwrap_or(Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)))
+                        } else {
+                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))
+                        };
                         self.render_page_with_selection(
                             ui,
                             ctx,
@@ -743,6 +852,8 @@ impl PdfViewState {
                             &tex,
                             display_size,
                             settings.rotation,
+                            uv_rect,
+                            settings.auto_crop,
                             &mut collected_selected_spans,
                         );
                     } else if let Some(err) = self.failed_pages.get(&p) {
@@ -769,12 +880,24 @@ impl PdfViewState {
             });
 
             if self.current_page + 1 < page_count {
-                let _ =
-                    self.request_page_texture(ctx, document, self.current_page + 1, render_scale);
+                let _ = self.request_page_texture(
+                    ctx,
+                    document,
+                    self.current_page + 1,
+                    render_scale,
+                    settings,
+                    theme,
+                );
             }
             if self.current_page > 0 {
-                let _ =
-                    self.request_page_texture(ctx, document, self.current_page - 1, render_scale);
+                let _ = self.request_page_texture(
+                    ctx,
+                    document,
+                    self.current_page - 1,
+                    render_scale,
+                    settings,
+                    theme,
+                );
             }
         }
 
@@ -787,68 +910,7 @@ impl PdfViewState {
             self.selection_dirty = false;
         }
 
-        if !self.selected_text.is_empty() {
-            let ctrl_c = ctx.input(|i| {
-                (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::C)
-            });
-            if ctrl_c {
-                ctx.copy_text(self.selected_text.clone());
-                let preview = truncate_str(&self.selected_text, 35);
-                *status_message = Some(format!("Скопировано в буфер: \"{preview}\""));
-                self.copy_notification =
-                    Some((format!("Скопировано: \"{preview}\""), Instant::now()));
-            }
-        }
-
-        if !self.selected_text.is_empty()
-            && let Some(curr) = self.selection_current
-        {
-            let pill_pos = curr + Vec2::new(12.0, 12.0);
-            egui::Area::new(egui::Id::unique("pdf_selection_pill"))
-                .fixed_pos(pill_pos)
-                .order(egui::Order::Tooltip)
-                .show(ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui
-                                 .button(RichText::new("Скопировать (Ctrl+C)").size(12.0))
-                                 .clicked()
-                            {
-                                ctx.copy_text(self.selected_text.clone());
-                                let preview = truncate_str(&self.selected_text, 35);
-                                *status_message = Some(format!("Скопировано: \"{preview}\""));
-                                self.copy_notification =
-                                    Some((format!("Скопировано: \"{preview}\""), Instant::now()));
-                            }
-                            if ui.small_button("X").clicked() {
-                                self.selection_start = None;
-                                self.selection_current = None;
-                                self.selection_dirty = false;
-                                self.selected_text.clear();
-                            }
-                        });
-                    });
-                });
-        }
-
-        if let Some((msg, time)) = &self.copy_notification {
-            if time.elapsed().as_secs_f32() < 2.0 {
-                egui::Area::new(egui::Id::unique("pdf_copy_toast"))
-                    .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -45.0))
-                    .order(egui::Order::Tooltip)
-                    .show(ctx, |ui| {
-                        egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            ui.label(
-                                RichText::new(msg)
-                                    .strong()
-                                    .color(theme.accent_color()),
-                            );
-                        });
-                    });
-            } else {
-                self.copy_notification = None;
-            }
-        }
+        self.render_selection_popups(ctx, theme, status_message, lang, on_translate);
     }
 }
 
@@ -859,43 +921,5 @@ pub(crate) fn truncate_str(s: &str, max_chars: usize) -> String {
     } else {
         let prefix: String = trimmed.chars().take(max_chars).collect();
         format!("{prefix}...")
-    }
-}
-
-pub fn transform_span_bbox(bbox: [f32; 4], rotation: i32, rect: Rect) -> Rect {
-    let (rx, ry, rw, rh) = (rect.min.x, rect.min.y, rect.width(), rect.height());
-    match rotation.rem_euclid(360) {
-        90 => {
-            let (x0, x1) = (rect.max.x - bbox[3] * rw, rect.max.x - bbox[1] * rw);
-            let (y0, y1) = (ry + bbox[0] * rh, ry + bbox[2] * rh);
-            Rect::from_min_max(
-                Pos2::new(x0.min(x1), y0.min(y1)),
-                Pos2::new(x0.max(x1), y0.max(y1)),
-            )
-        }
-        180 => {
-            let (x0, x1) = (rect.max.x - bbox[2] * rw, rect.max.x - bbox[0] * rw);
-            let (y0, y1) = (rect.max.y - bbox[3] * rh, rect.max.y - bbox[1] * rh);
-            Rect::from_min_max(
-                Pos2::new(x0.min(x1), y0.min(y1)),
-                Pos2::new(x0.max(x1), y0.max(y1)),
-            )
-        }
-        270 => {
-            let (x0, x1) = (rx + bbox[1] * rw, rx + bbox[3] * rw);
-            let (y0, y1) = (rect.max.y - bbox[2] * rh, rect.max.y - bbox[0] * rh);
-            Rect::from_min_max(
-                Pos2::new(x0.min(x1), y0.min(y1)),
-                Pos2::new(x0.max(x1), y0.max(y1)),
-            )
-        }
-        _ => {
-            let (x0, x1) = (rx + bbox[0] * rw, rx + bbox[2] * rw);
-            let (y0, y1) = (ry + bbox[1] * rh, ry + bbox[3] * rh);
-            Rect::from_min_max(
-                Pos2::new(x0.min(x1), y0.min(y1)),
-                Pos2::new(x0.max(x1), y0.max(y1)),
-            )
-        }
     }
 }

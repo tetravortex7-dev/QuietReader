@@ -550,6 +550,27 @@ pub fn load_system_font_variant_bytes(
     bold: bool,
     italic: bool,
 ) -> Option<Vec<u8>> {
+    match font_name {
+        "OpenDyslexic" => {
+            let bytes = if bold {
+                include_bytes!("../assets/fonts/OpenDyslexic-Bold.otf") as &[u8]
+            } else if italic {
+                include_bytes!("../assets/fonts/OpenDyslexic-Italic.otf") as &[u8]
+            } else {
+                include_bytes!("../assets/fonts/OpenDyslexic-Regular.otf") as &[u8]
+            };
+            return Some(bytes.to_vec());
+        }
+        "Lexend" => {
+            let bytes = if bold {
+                include_bytes!("../assets/fonts/Lexend-Bold.ttf") as &[u8]
+            } else {
+                include_bytes!("../assets/fonts/Lexend-Regular.ttf") as &[u8]
+            };
+            return Some(bytes.to_vec());
+        }
+        _ => {}
+    }
     platform_fonts::load_font_variant(font_name, bold, italic)
 }
 
@@ -602,11 +623,6 @@ mod platform_fonts {
             ("Sitka", false, true) => "SitkaVF-Italic.ttf",
             ("Sitka", true, true) => "SitkaVF-Italic.ttf",
 
-            ("OpenDyslexic", false, false) => "OpenDyslexic-Regular.otf",
-            ("OpenDyslexic", true, false) => "OpenDyslexic-Bold.otf",
-            ("OpenDyslexic", false, true) => "OpenDyslexic-Italic.otf",
-            ("OpenDyslexic", true, true) => "OpenDyslexic-BoldItalic.otf",
-
             _ => {
                 if bold && italic {
                     "georgiaz.ttf"
@@ -640,23 +656,17 @@ mod platform_fonts {
         if let Ok(bytes) = std::fs::read(&fallback) {
             return Some(bytes);
         }
-        if font_name == "OpenDyslexic" {
-            let comic_fn = if bold && italic {
-                "comicz.ttf"
-            } else if bold {
-                "comicbd.ttf"
-            } else if italic {
-                "comici.ttf"
-            } else {
-                "comic.ttf"
-            };
-            return std::fs::read(PathBuf::from(r"C:\Windows\Fonts").join(comic_fn)).ok();
-        }
         None
     }
 
     pub fn load_cjk_font() -> Option<Vec<u8>> {
-        let candidates = ["msyh.ttc", "msyh.ttf", "simsun.ttc", "YuGothR.ttc", "msgothic.ttc"];
+        let candidates = [
+            "msyh.ttc",
+            "msyh.ttf",
+            "simsun.ttc",
+            "YuGothR.ttc",
+            "msgothic.ttc",
+        ];
         if let Some(windir) = std::env::var_os("WINDIR") {
             let fonts_dir = PathBuf::from(windir).join("Fonts");
             for cand in candidates {
@@ -958,4 +968,3 @@ pub mod window;
 
 pub use single_instance::*;
 pub use window::*;
-

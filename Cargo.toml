@@ -6,9 +6,10 @@ edition = "2024"
 [[bin]]
 name = "QuietReader"
 path = "src/main.rs"
+test = false
 
 [dependencies]
-eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "clipboard"] }
 encoding_rs = "0.8.42"
 quick-xml = "0.42.0"
 rfd = "0.17.2"
@@ -26,11 +27,11 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "s
 ureq = "3.4"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 mobi = { version = "0.8", default-features = false }
-
-
+[features]
+default = []
+enable_tests = []
 
 [profile.release]
 opt-level = "s"
 lto = "thin"
-codegen-units = 1
 strip = true

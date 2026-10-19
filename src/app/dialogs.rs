@@ -23,25 +23,20 @@ impl Dialogs {
             .add_filter(
                 t.format_all_supported,
                 &[
-                    "pdf", "djvu", "djv", "fb2", "epub", "mobi", "prc", "azw", "azw3", "docx", "doc", "rtf",
-                    "txt", "md", "markdown", "log", "cbz", "cbr", "cb7", "zip", "rar", "7z", "xml",
+                    "pdf", "djvu", "djv", "fb2", "epub", "mobi", "prc", "azw", "azw3", "docx",
+                    "doc", "rtf", "txt", "md", "markdown", "log", "cbz", "cbr", "cb7", "zip",
+                    "rar", "7z", "xml",
                 ],
             )
             .add_filter(t.format_word, &["docx", "doc", "dot"])
             .add_filter(t.format_rtf, &["rtf"])
             .add_filter(t.format_pdf, &["pdf"])
             .add_filter(t.format_djvu, &["djvu", "djv"])
-            .add_filter(
-                t.format_comics,
-                &["cbz", "cbr", "cb7", "zip", "rar", "7z"],
-            )
+            .add_filter(t.format_comics, &["cbz", "cbr", "cb7", "zip", "rar", "7z"])
             .add_filter(t.format_epub, &["epub"])
             .add_filter(t.format_fb2, &["fb2", "xml"])
             .add_filter("Kindle / MOBI / AZW3", &["mobi", "prc", "azw", "azw3"])
-            .add_filter(
-                t.format_txt,
-                &["txt", "md", "markdown", "log"],
-            )
+            .add_filter(t.format_txt, &["txt", "md", "markdown", "log"])
             .pick_files()
     }
 
@@ -81,11 +76,7 @@ impl Dialogs {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.set_max_width(460.0);
-                ui.label(
-                    RichText::new(t.assoc_dialog_heading)
-                        .size(15.0)
-                        .strong(),
-                );
+                ui.label(RichText::new(t.assoc_dialog_heading).size(15.0).strong());
                 ui.add_space(4.0);
                 ui.label(t.assoc_dialog_text);
                 ui.add_space(8.0);
@@ -103,7 +94,8 @@ impl Dialogs {
                         *on_save_settings = true;
                     }
                     if ui.small_button(t.only_books).clicked() {
-                        settings.associated_extensions = vec!["fb2".to_string(), "epub".to_string()];
+                        settings.associated_extensions =
+                            vec!["fb2".to_string(), "epub".to_string()];
                         *on_save_settings = true;
                     }
                 });
@@ -111,7 +103,10 @@ impl Dialogs {
 
                 egui::Frame::new()
                     .fill(theme.bg_color())
-                    .stroke(egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.2)))
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        theme.accent_color().gamma_multiply(0.2),
+                    ))
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
@@ -119,7 +114,10 @@ impl Dialogs {
                             .max_height(210.0)
                             .show(ui, |ui| {
                                 for &(ext, _) in crate::platform::SUPPORTED_EXTENSIONS_INFO {
-                                    let label = crate::i18n::format::format_extension_description(ext, settings.ui_language);
+                                    let label = crate::i18n::format::format_extension_description(
+                                        ext,
+                                        settings.ui_language,
+                                    );
                                     let mut is_checked = settings
                                         .associated_extensions
                                         .iter()
@@ -131,7 +129,9 @@ impl Dialogs {
                                                 .iter()
                                                 .any(|e| e.eq_ignore_ascii_case(ext))
                                             {
-                                                settings.associated_extensions.push(ext.to_string());
+                                                settings
+                                                    .associated_extensions
+                                                    .push(ext.to_string());
                                             }
                                         } else {
                                             settings
@@ -149,10 +149,8 @@ impl Dialogs {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let has_selected = !settings.associated_extensions.is_empty();
-                    let btn = ui.add_enabled(
-                        has_selected,
-                        IconButton::new(Icon::Check, t.apply_assoc),
-                    );
+                    let btn =
+                        ui.add_enabled(has_selected, IconButton::new(Icon::Check, t.apply_assoc));
                     if btn.clicked() {
                         *on_register_association = true;
                         crate::platform::set_association_prompt_dismissed(true);
@@ -162,7 +160,10 @@ impl Dialogs {
                         *on_save_settings = true;
                         *show_dialog = false;
                     }
-                    if ui.add(IconButton::new(Icon::Close, t.remind_later)).clicked() {
+                    if ui
+                        .add(IconButton::new(Icon::Close, t.remind_later))
+                        .clicked()
+                    {
                         if *dont_show_again {
                             crate::platform::set_association_prompt_dismissed(true);
                             settings.dismiss_association_prompt = true;
@@ -260,13 +261,16 @@ impl Dialogs {
                                             .file_name()
                                             .and_then(|n| n.to_str())
                                             .unwrap_or("");
-                                        let sec_info = t.section_x_of_y
+                                        let sec_info = t
+                                            .section_x_of_y
                                             .replacen("{}", &(book.chapter + 1).to_string(), 1)
                                             .replacen("{}", "", 1);
                                         ui.label(
                                             RichText::new(format!(
                                                 "{} • {}",
-                                                sec_info.trim_end_matches(" / ").trim_end_matches(" of "),
+                                                sec_info
+                                                    .trim_end_matches(" / ")
+                                                    .trim_end_matches(" of "),
                                                 file_name
                                             ))
                                             .size(12.0)

@@ -1,6 +1,10 @@
+pub mod ambient;
+pub mod ambient_synth;
+pub mod app_lifecycle;
 pub mod autoscroll;
 pub mod bars;
 pub mod bionic;
+pub mod bookmarks_view;
 pub mod comic_view;
 pub mod commands;
 pub mod dialogs;
@@ -8,16 +12,20 @@ pub mod document_loader;
 pub mod fonts;
 pub mod icons;
 pub mod input;
+pub mod opds_view;
 pub mod paged_common;
 pub mod pdf_toolbar;
 pub mod pdf_view;
+pub mod scan_processor;
 pub mod search_view;
+pub mod selection;
 pub mod settings_system;
 pub mod settings_view;
 pub mod tabs;
 pub mod text_view;
 pub mod theme;
 pub mod toc_view;
+pub mod translate;
 pub mod tts;
 
 use crate::core::ReaderCore;
@@ -25,14 +33,15 @@ use crate::document::{Document, DocumentViewKind};
 use crate::settings::AppSettings;
 use eframe::egui::{self, Panel, RichText};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+pub use self::ambient::AmbientController;
 pub use self::autoscroll::AutoscrollController;
 pub use self::bars::{render_bottom_bar, render_top_bar};
+pub use self::bookmarks_view::BookmarkViewState;
 pub use self::comic_view::ComicViewState;
 pub use self::dialogs::{Dialogs, SettingsTab};
 pub use self::document_loader::DocumentLoader;
-pub use self::fonts::apply_font_family;
 pub use self::input::poll_keyboard_commands;
 pub use self::pdf_view::PdfViewState;
 pub use self::search_view::{SearchState, SearchView};
@@ -40,7 +49,8 @@ pub use self::settings_view::SettingsView;
 pub use self::tabs::{BookTab, TabBarAction, TabsBar};
 pub use self::text_view::TextView;
 pub use self::theme::ReaderTheme;
-pub use self::toc_view::TocView;
+pub use self::toc_view::{SidebarTab, TocView};
+pub use self::translate::{TranslateState, TranslateView};
 pub use self::tts::TtsController;
 
 pub struct QuietReaderApp {
@@ -60,6 +70,8 @@ pub struct QuietReaderApp {
     pub keep_screen_on: bool,
     pub is_fullscreen: bool,
     pub status_message: Option<String>,
+    pub status_time: Option<Instant>,
+    pub last_status_text: Option<String>,
     pub settings: AppSettings,
 
     pub settings_dirty: bool,
@@ -81,314 +93,13 @@ pub struct QuietReaderApp {
     pub last_tts_paragraph: Option<usize>,
     pub last_applied_theme: Option<ReaderTheme>,
     pub updater: crate::updater::UpdateChecker,
-}
-
-impl Default for QuietReaderApp {
-    fn default() -> Self {
-        Self::from_settings(AppSettings::load())
-    }
-}
-
-impl Drop for QuietReaderApp {
-    fn drop(&mut self) {
-        crate::platform::set_keep_screen_on(false);
-        self.flush_settings_now();
-    }
-}
-
-impl QuietReaderApp {
-    pub fn from_settings(settings: AppSettings) -> Self {
-        let assoc_status = crate::platform::check_fb2_association_status();
-        let is_already_associated = assoc_status == crate::platform::AssociationStatus::Default
-            || assoc_status == crate::platform::AssociationStatus::Registered;
-        let dismissed = settings.dismiss_association_prompt
-            || crate::platform::is_association_prompt_dismissed();
-        let theme = match settings.theme.as_str() {
-            "Dark" => ReaderTheme::Dark,
-            "Light" => ReaderTheme::Light,
-            "Oled" => ReaderTheme::Oled,
-            "Warm" => ReaderTheme::Warm,
-            "Mint" => ReaderTheme::Mint,
-            "Twilight" => ReaderTheme::Twilight,
-            _ => ReaderTheme::Sepia,
-        };
-
-        let show_association_dialog =
-            crate::platform::supports_file_association() && !is_already_associated && !dismissed;
-
-        let updater = crate::updater::UpdateChecker::new();
-        if settings.check_updates_on_startup {
-            updater.check_now();
-        }
-
-        Self {
-            tabs: Vec::new(),
-            active_tab: 0,
-            document: None,
-            current_file_path: None,
-            current_chapter: 0,
-            last_rendered_chapter: 0,
-            pending_scroll_y: None,
-            current_scroll_y: 0.0,
-            viewport_height: 600.0,
-            max_scroll_y: 0.0,
-            font_size: settings.font_size,
-            theme,
-            show_toc: settings.show_toc,
-            keep_screen_on: settings.keep_screen_on,
-            is_fullscreen: false,
-            status_message: None,
-            settings,
-            settings_dirty: false,
-            last_settings_change: Instant::now(),
-            last_saved_scroll_y: 0.0,
-            show_association_dialog,
-            dont_show_association_again: false,
-            show_recent_dialog: false,
-            show_settings_dialog: false,
-            settings_tab: SettingsTab::Fonts,
-            autoscroll: AutoscrollController::default(),
-            comic_view: ComicViewState::default(),
-            pdf_view: PdfViewState::default(),
-            document_loader: DocumentLoader::default(),
-            search: SearchState::default(),
-            tts: TtsController::new(),
-            last_tts_paragraph: None,
-            last_applied_theme: None,
-            updater,
-        }
-    }
-
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        initial_file: Option<PathBuf>,
-        settings: AppSettings,
-    ) -> Self {
-        apply_font_family(&cc.egui_ctx, &settings.font_family);
-        let saved_tabs = settings.open_tabs.clone();
-        let saved_active_idx = settings.active_tab_index;
-        let mut app = Self::from_settings(settings);
-        app.document_loader.update_ctx(&cc.egui_ctx);
-        crate::platform::set_keep_screen_on(app.keep_screen_on);
-
-        if !saved_tabs.is_empty() {
-            for tab_path in saved_tabs {
-                if tab_path.exists() {
-                    app.load_file(tab_path);
-                }
-            }
-            if !app.tabs.is_empty() {
-                let target_idx = saved_active_idx.min(app.tabs.len() - 1);
-                app.activate_tab(target_idx);
-            }
-        } else if let Some(last_path) = app.settings.last_opened_book.clone()
-            && last_path.exists()
-        {
-            app.load_file(last_path);
-        }
-
-        if let Some(path) = initial_file
-            && path.exists()
-        {
-            app.load_file(path);
-        }
-
-        app
-    }
-
-    pub fn view_kind(&self) -> DocumentViewKind {
-        self.document
-            .as_ref()
-            .map(|d| d.view_kind())
-            .unwrap_or(DocumentViewKind::Text)
-    }
-
-    #[allow(dead_code)]
-    pub fn is_comic(&self) -> bool {
-        self.view_kind() == DocumentViewKind::Comic
-    }
-
-    #[allow(dead_code)]
-    pub fn is_pdf(&self) -> bool {
-        self.view_kind() == DocumentViewKind::Pdf
-    }
-
-
-
-    pub fn mark_settings_dirty(&mut self) {
-        self.settings_dirty = true;
-        self.last_settings_change = Instant::now();
-    }
-
-    pub fn flush_debounced_settings(&mut self) {
-        if self.settings_dirty && self.last_settings_change.elapsed() >= Duration::from_millis(1500)
-        {
-            self.flush_settings_now();
-        }
-    }
-
-    pub fn flush_settings_now(&mut self) {
-        self.save_active_to_tab();
-        self.sync_settings_fields();
-        if let Err(e) = self.settings.save() {
-            self.status_message = Some(format!("Ошибка сохранения: {e}"));
-        }
-        self.settings_dirty = false;
-        self.last_settings_change = Instant::now();
-    }
-
-    fn sync_settings_fields(&mut self) {
-        self.settings.open_tabs = self.tabs.iter().map(|t| t.file_path.clone()).collect();
-        self.settings.active_tab_index = self.active_tab;
-        self.settings.font_size = self.font_size;
-        self.settings.keep_screen_on = self.keep_screen_on;
-        self.settings.show_toc = self.show_toc;
-        self.settings.theme = match self.theme {
-            ReaderTheme::Dark => "Dark",
-            ReaderTheme::Light => "Light",
-            ReaderTheme::Sepia => "Sepia",
-            ReaderTheme::Oled => "Oled",
-            ReaderTheme::Warm => "Warm",
-            ReaderTheme::Mint => "Mint",
-            ReaderTheme::Twilight => "Twilight",
-        }
-        .to_string();
-    }
-
-
-
-    pub fn start_tts_at_paragraph(&mut self, paragraph_idx: usize) {
-        if let Some(doc) = &self.document {
-            if let Some(text_content) = doc.text_content() {
-                if let Some(ch) = text_content.chapters().get(self.current_chapter) {
-                    self.tts.show_panel = true;
-                    self.tts.play_chapter(
-                        self.current_chapter,
-                        paragraph_idx,
-                        ch.paragraphs.clone(),
-                    );
-                    self.last_tts_paragraph = Some(paragraph_idx);
-                }
-            }
-        }
-    }
-
-    pub fn register_file_association(&mut self) {
-        let exts: Vec<&str> = self
-            .settings
-            .associated_extensions
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        match crate::platform::register_file_associations(&exts) {
-            Ok(msg) => {
-                self.status_message = Some(msg);
-            }
-            Err(e) => {
-                self.status_message = Some(format!("Ошибка ассоциации: {e}"));
-            }
-        }
-    }
-
-    pub fn open_file_dialog(&mut self) {
-        if let Some(paths) = Dialogs::pick_document_files(self.settings.ui_language) {
-            for path in paths {
-                self.load_file(path);
-            }
-        }
-    }
-
-    pub fn open_folder_dialog(&mut self) {
-        if let Some(path) = Dialogs::pick_comic_folder(self.settings.ui_language) {
-            self.load_file(path);
-        }
-    }
-
-    pub fn load_file(&mut self, path: PathBuf) {
-        if let Some(existing_idx) = self.tabs.iter().position(|t| t.file_path == path) {
-            self.activate_tab(existing_idx);
-            return;
-        }
-
-        self.flush_settings_now();
-        self.autoscroll.stop();
-
-        let request_id = self.document_loader.request_load(path.clone(), self.settings.ui_language);
-        let tab = BookTab::new_loading(path, request_id);
-        self.tabs.push(tab);
-        let new_idx = self.tabs.len() - 1;
-        self.apply_tab_state(new_idx);
-    }
-
-    pub fn poll_document_loader(&mut self) {
-        let responses = self.document_loader.poll_responses();
-        for resp in responses {
-            let matching_idx = self
-                .tabs
-                .iter()
-                .position(|t| t.file_path == resp.path && t.request_id == resp.request_id);
-            let Some(idx) = matching_idx else {
-                continue;
-            };
-            match resp.result {
-                Ok(doc) => {
-                    let loaded = DocumentLoader::finalize_loaded_document(
-                        doc,
-                        resp.path,
-                        &mut self.settings,
-                    );
-                    if let Some(tab) = self.tabs.get_mut(idx) {
-                        tab.update_loaded(
-                            loaded.document.clone(),
-                            loaded.chapter,
-                            loaded.scroll_y,
-                            loaded.comic_page,
-                        );
-                    }
-                    if self.active_tab == idx {
-                        self.document = Some(loaded.document);
-                        self.current_file_path = Some(loaded.file_path);
-                        self.current_chapter = loaded.chapter;
-                        self.last_rendered_chapter = loaded.chapter;
-                        self.pending_scroll_y = Some(loaded.scroll_y);
-                        self.current_scroll_y = loaded.scroll_y;
-                        self.comic_view.clear_cache();
-                        self.comic_view.current_page = loaded.comic_page;
-                        self.pdf_view.clear_cache();
-                        self.pdf_view.current_page = loaded.comic_page;
-                        self.status_message = Some(loaded.status_message);
-                        self.mark_settings_dirty();
-                    }
-                }
-                Err(err) => {
-                    if let Some(tab) = self.tabs.get_mut(idx) {
-                        tab.is_loading = false;
-                        tab.load_error = Some(err.clone());
-                    }
-                    if self.active_tab == idx {
-                        self.document = None;
-                        self.status_message = Some(err);
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn set_fullscreen_mode(&mut self, ctx: &egui::Context, fullscreen: bool) {
-        if self.is_fullscreen == fullscreen {
-            return;
-        }
-        #[cfg(windows)]
-        {
-            let hwnd = crate::platform::get_primary_window_hwnd();
-            if crate::platform::set_window_fullscreen(hwnd, fullscreen) {
-                self.is_fullscreen = fullscreen;
-                return;
-            }
-        }
-        self.is_fullscreen = fullscreen;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
-    }
+    pub show_opds_dialog: bool,
+    pub opds_state: crate::opds::OpdsBrowserState,
+    pub translate: TranslateState,
+    pub sidebar_tab: SidebarTab,
+    pub bookmark_view_state: BookmarkViewState,
+    pub return_location: Option<(usize, f32, Option<usize>)>,
+    pub ambient: AmbientController,
 }
 
 impl eframe::App for QuietReaderApp {
@@ -448,7 +159,8 @@ impl eframe::App for QuietReaderApp {
             }
         }
 
-        let (key_o, key_p, ctrl_w, next_tab_key, prev_tab_key) = if ctx.egui_wants_keyboard_input() {
+        let (key_o, key_p, ctrl_w, next_tab_key, prev_tab_key) = if ctx.egui_wants_keyboard_input()
+        {
             (false, false, false, false, false)
         } else {
             ctx.input(|i| {
@@ -578,7 +290,9 @@ impl eframe::App for QuietReaderApp {
             .input(|i| i.pointer.latest_pos().map(|p| p.y < 72.0))
             .unwrap_or(false);
         let update_tag = match self.updater.status() {
-            crate::updater::UpdateStatus::UpdateAvailable(ref info) => Some(info.latest_version.clone()),
+            crate::updater::UpdateStatus::UpdateAvailable(ref info) => {
+                Some(info.latest_version.clone())
+            }
             _ => None,
         };
         if !self.is_fullscreen || ptr_top || self.show_settings_dialog {
@@ -600,8 +314,27 @@ impl eframe::App for QuietReaderApp {
             if actions.toggle_recent {
                 self.show_recent_dialog = !self.show_recent_dialog;
             }
+            if actions.toggle_opds {
+                self.show_opds_dialog = !self.show_opds_dialog;
+            }
             if actions.toggle_toc {
                 self.show_toc = !self.show_toc;
+                if self.show_toc {
+                    self.sidebar_tab = SidebarTab::Toc;
+                }
+            }
+            if actions.toggle_bookmark {
+                self.toggle_quick_bookmark();
+            }
+            if actions.toggle_bookmarks_panel {
+                if !self.show_toc {
+                    self.show_toc = true;
+                    self.sidebar_tab = SidebarTab::Bookmarks;
+                } else if self.sidebar_tab == SidebarTab::Bookmarks {
+                    self.show_toc = false;
+                } else {
+                    self.sidebar_tab = SidebarTab::Bookmarks;
+                }
             }
             if actions.toggle_search {
                 if self.view_kind() == DocumentViewKind::Text && self.document.is_some() {
@@ -610,10 +343,24 @@ impl eframe::App for QuietReaderApp {
             }
             if actions.toggle_tts {
                 self.tts.toggle_panel();
+                if self.tts.show_panel && !self.tts.status().is_playing {
+                    if let Some(doc) = &self.document {
+                        let visible_para = crate::core::ReaderCore::estimate_visible_paragraph(
+                            doc.as_ref(),
+                            self.current_chapter,
+                            self.current_scroll_y,
+                            self.font_size,
+                        );
+                        self.last_tts_paragraph = Some(visible_para);
+                    }
+                }
             }
             if actions.toggle_reading_ruler {
                 self.settings.reading_ruler = !self.settings.reading_ruler;
                 self.mark_settings_dirty();
+            }
+            if actions.toggle_ambient {
+                self.ambient.toggle_panel();
             }
             if actions.toggle_fullscreen {
                 self.set_fullscreen_mode(&ctx, !self.is_fullscreen);
@@ -622,7 +369,9 @@ impl eframe::App for QuietReaderApp {
                 self.show_settings_dialog = !self.show_settings_dialog;
             }
             if actions.open_update {
-                if let crate::updater::UpdateStatus::UpdateAvailable(ref info) = self.updater.status() {
+                if let crate::updater::UpdateStatus::UpdateAvailable(ref info) =
+                    self.updater.status()
+                {
                     ctx.open_url(egui::OpenUrl::new_tab(&info.release_url));
                 }
             }
@@ -630,7 +379,13 @@ impl eframe::App for QuietReaderApp {
             if !self.tabs.is_empty() {
                 let mut tab_action = TabBarAction::None;
                 Panel::top("tabs_bar").show(ui, |ui| {
-                    tab_action = TabsBar::render(ui, &self.tabs, self.active_tab, &self.theme, self.settings.ui_language);
+                    tab_action = TabsBar::render(
+                        ui,
+                        &self.tabs,
+                        self.active_tab,
+                        &self.theme,
+                        self.settings.ui_language,
+                    );
                 });
                 match tab_action {
                     TabBarAction::None => {}
@@ -658,11 +413,43 @@ impl eframe::App for QuietReaderApp {
             self.current_scroll_y,
             self.max_scroll_y,
         );
+        if self.status_message != self.last_status_text {
+            self.last_status_text = self.status_message.clone();
+            self.status_time = self.status_message.as_ref().map(|_| Instant::now());
+            ctx.request_repaint();
+        }
+
+        let (status_text, status_opacity) = if let Some(ref msg) = self.status_message {
+            if let Some(time) = self.status_time {
+                let elapsed = time.elapsed().as_secs_f32();
+                if elapsed >= 5.0 {
+                    self.status_message = None;
+                    self.status_time = None;
+                    self.last_status_text = None;
+                    (None, 0.0)
+                } else {
+                    let opacity = if elapsed < 3.5 {
+                        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                        1.0
+                    } else {
+                        ctx.request_repaint();
+                        ((5.0 - elapsed) / 1.5).clamp(0.0, 1.0)
+                    };
+                    (Some(msg.as_str()), opacity)
+                }
+            } else {
+                (Some(msg.as_str()), 1.0)
+            }
+        } else {
+            (None, 0.0)
+        };
+
         render_bottom_bar(
             ui,
             &self.document,
             &self.theme,
-            self.status_message.as_deref(),
+            status_text,
+            status_opacity,
             view_kind,
             pdf_info,
             comic_info,
@@ -676,16 +463,28 @@ impl eframe::App for QuietReaderApp {
                 DocumentViewKind::Pdf => &mut self.pdf_view.current_page,
                 _ => &mut self.comic_view.current_page,
             };
+            let mut on_add_bookmark = false;
             TocView::render(
                 ui,
                 &self.document,
-                &self.settings.comic,
                 &mut self.current_chapter,
                 current_page_ref,
                 &mut self.show_toc,
+                &mut self.sidebar_tab,
+                &mut self.settings,
+                self.current_file_path.as_deref(),
+                self.current_scroll_y,
+                &mut self.pending_scroll_y,
+                &mut self.last_rendered_chapter,
                 &self.theme,
-                self.settings.ui_language,
+                &mut self.status_message,
+                &mut self.return_location,
+                &mut self.bookmark_view_state,
+                &mut on_add_bookmark,
             );
+            if on_add_bookmark {
+                self.toggle_quick_bookmark();
+            }
             if view_kind == DocumentViewKind::Pdf && self.pdf_view.current_page != prev_pdf_page {
                 self.pdf_view.go_to_page(self.pdf_view.current_page);
             }
@@ -783,6 +582,8 @@ impl eframe::App for QuietReaderApp {
                         );
                     }
 
+                    let mut on_translate = None;
+
                     match view_kind {
                         DocumentViewKind::Pdf => {
                             self.pdf_view.render(
@@ -797,6 +598,7 @@ impl eframe::App for QuietReaderApp {
                                 &mut self.max_scroll_y,
                                 &mut self.status_message,
                                 self.settings.ui_language,
+                                &mut on_translate,
                             );
                         }
                         DocumentViewKind::Comic => {
@@ -823,12 +625,13 @@ impl eframe::App for QuietReaderApp {
                                 }
                                 if self.last_tts_paragraph != Some(tts_st.current_paragraph) {
                                     if let Some(doc) = &self.document {
-                                        let scroll_y = crate::core::ReaderCore::estimate_paragraph_scroll_y(
-                                            doc.as_ref(),
-                                            tts_st.current_chapter,
-                                            Some(tts_st.current_paragraph),
-                                            self.font_size,
-                                        );
+                                        let scroll_y =
+                                            crate::core::ReaderCore::estimate_paragraph_scroll_y(
+                                                doc.as_ref(),
+                                                tts_st.current_chapter,
+                                                Some(tts_st.current_paragraph),
+                                                self.font_size,
+                                            );
                                         self.pending_scroll_y = Some(scroll_y);
                                     }
                                     self.last_tts_paragraph = Some(tts_st.current_paragraph);
@@ -842,7 +645,8 @@ impl eframe::App for QuietReaderApp {
                                             self.current_chapter = next_ch;
                                             self.last_rendered_chapter = next_ch;
                                             self.pending_scroll_y = Some(0.0);
-                                            self.tts.play_next_chapter(next_ch, ch.paragraphs.clone());
+                                            self.tts
+                                                .play_next_chapter(next_ch, ch.paragraphs.clone());
                                         } else {
                                             self.tts.stop();
                                         }
@@ -850,23 +654,28 @@ impl eframe::App for QuietReaderApp {
                                 }
                             }
 
-                            let search_highlight = if self.search.is_open && !self.search.query.trim().is_empty() {
-                                let active_para = self
-                                    .search
-                                    .current_hit()
-                                    .filter(|h| h.chapter_index == self.current_chapter)
-                                    .and_then(|h| h.paragraph_index);
-                                Some((self.search.query.as_str(), active_para))
-                            } else {
-                                None
-                            };
+                            let search_highlight =
+                                if self.search.is_open && !self.search.query.trim().is_empty() {
+                                    let active_para = self
+                                        .search
+                                        .current_hit()
+                                        .filter(|h| h.chapter_index == self.current_chapter)
+                                        .and_then(|h| h.paragraph_index);
+                                    Some((self.search.query.as_str(), active_para))
+                                } else {
+                                    None
+                                };
 
-                            let tts_highlight = if (tts_st.is_playing || tts_st.is_paused) && tts_st.current_chapter == self.current_chapter {
+                            let tts_highlight = if (tts_st.is_playing || tts_st.is_paused)
+                                && tts_st.current_chapter == self.current_chapter
+                            {
                                 Some(tts_st.current_paragraph)
                             } else {
                                 None
                             };
                             let mut on_start_tts = None;
+                            let mut on_open_opds = false;
+                            let mut on_save_quote = None;
 
                             TextView::render(
                                 ui,
@@ -888,12 +697,33 @@ impl eframe::App for QuietReaderApp {
                                 search_highlight,
                                 tts_highlight,
                                 &mut on_start_tts,
+                                &mut on_open_opds,
+                                &mut on_translate,
+                                &mut on_save_quote,
                             );
+
+                            if let Some(text) = on_save_quote {
+                                self.save_quote_bookmark(text);
+                            }
+
+                            if on_open_opds {
+                                self.show_opds_dialog = true;
+                            }
 
                             if let Some(para_idx) = on_start_tts {
                                 self.start_tts_at_paragraph(para_idx);
                             }
                         }
+                    }
+
+                    if let Some(text) = on_translate {
+                        let target_code = self.settings.ui_language.resolve().code();
+                        self.translate.translate(
+                            text,
+                            target_code,
+                            self.settings.translation.provider,
+                            &self.settings.translation.deepl_api_key,
+                        );
                     }
                 }
             });
@@ -912,13 +742,51 @@ impl eframe::App for QuietReaderApp {
             );
         }
 
-        let has_text_content = self.document.as_ref().map(|d| d.text_content().is_some()).unwrap_or(false);
-        let book_lang = self.document.as_deref().map(crate::core::ReaderCore::detect_document_language);
+        let has_text_content = self
+            .document
+            .as_ref()
+            .map(|d| d.text_content().is_some())
+            .unwrap_or(false);
+        let book_lang = self
+            .document
+            .as_deref()
+            .map(crate::core::ReaderCore::detect_document_language);
         let mut on_tts_play = false;
-        self.tts.render_panel(&ctx, &self.theme, has_text_content, book_lang, &mut on_tts_play, self.settings.ui_language);
+        self.tts.render_panel(
+            &ctx,
+            &self.theme,
+            has_text_content,
+            book_lang,
+            &mut on_tts_play,
+            self.settings.ui_language,
+        );
         if on_tts_play {
-            let start_para = self.last_tts_paragraph.unwrap_or(0);
+            let start_para = self.last_tts_paragraph.unwrap_or_else(|| {
+                if let Some(doc) = &self.document {
+                    crate::core::ReaderCore::estimate_visible_paragraph(
+                        doc.as_ref(),
+                        self.current_chapter,
+                        self.current_scroll_y,
+                        self.font_size,
+                    )
+                } else {
+                    0
+                }
+            });
             self.start_tts_at_paragraph(start_para);
+        }
+
+        self.ambient.set_tts_active(self.tts.status().is_playing);
+        if self.ambient.tick(&ctx) {
+            self.settings.ambient = self.ambient.settings.clone();
+            self.mark_settings_dirty();
+        }
+        if self
+            .ambient
+            .render(&ctx, &self.theme, self.settings.ui_language)
+        {
+            self.settings.ambient = self.ambient.settings.clone();
+            self.mark_settings_dirty();
         }
 
         if close_tab_action {
@@ -960,6 +828,33 @@ impl eframe::App for QuietReaderApp {
         );
         if let Some(path) = recent_file_to_open {
             self.load_file(path);
+        }
+
+        self.opds_state.poll(&mut self.settings);
+        let mut opds_file_to_open = None;
+        self.opds_state.render(
+            &ctx,
+            &mut self.show_opds_dialog,
+            &mut self.settings,
+            &self.theme,
+            &mut opds_file_to_open,
+        );
+        if let Some(path) = opds_file_to_open {
+            self.load_file(path);
+        }
+
+        let mut on_speak_translated = None;
+        TranslateView::render(
+            &mut self.translate,
+            &ctx,
+            &self.theme,
+            &mut self.settings,
+            &mut on_speak_translated,
+            &mut save_settings_action,
+        );
+        if let Some(text) = on_speak_translated {
+            self.tts.show_panel = true;
+            self.tts.play_chapter(self.current_chapter, 0, vec![text]);
         }
 
         if toggle_autoscroll_action {

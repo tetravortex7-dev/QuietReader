@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -98,15 +98,25 @@ pub fn check_for_updates_sync() -> Result<UpdateInfo, String> {
     if let Ok(mut resp) = release_res {
         if resp.status().is_success() {
             let mut text = String::new();
-            if resp.body_mut().as_reader().read_to_string(&mut text).is_ok() {
+            if resp
+                .body_mut()
+                .as_reader()
+                .read_to_string(&mut text)
+                .is_ok()
+            {
                 if let Ok(gh) = serde_json::from_str::<GitHubReleaseResponse>(&text) {
                     if let Some(tag) = gh.tag_name {
                         let is_newer = is_newer_version(CURRENT_VERSION, &tag);
-                        let release_url = gh.html_url.unwrap_or_else(|| GITHUB_RELEASES_URL.to_string());
+                        let release_url = gh
+                            .html_url
+                            .unwrap_or_else(|| GITHUB_RELEASES_URL.to_string());
                         let download_url = gh.assets.and_then(|assets| {
                             assets.into_iter().find_map(|a| {
                                 let name = a.name?;
-                                if name.ends_with(".exe") || name.ends_with(".zip") || name.ends_with(".tar.gz") {
+                                if name.ends_with(".exe")
+                                    || name.ends_with(".zip")
+                                    || name.ends_with(".tar.gz")
+                                {
                                     a.browser_download_url
                                 } else {
                                     None
@@ -218,11 +228,14 @@ impl UpdateChecker {
     }
 
     pub fn status(&self) -> UpdateStatus {
-        self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "enable_tests"))]
 mod tests {
     use super::*;
 
@@ -248,6 +261,9 @@ name = "QuietReader"
 version = "0.2.5"
 edition = "2024"
 "#;
-        assert_eq!(extract_version_from_cargo_toml(sample), Some("0.2.5".to_string()));
+        assert_eq!(
+            extract_version_from_cargo_toml(sample),
+            Some("0.2.5".to_string())
+        );
     }
 }

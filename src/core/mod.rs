@@ -31,15 +31,98 @@ pub enum Command {
     ToggleToc,
     ToggleSettings,
     ToggleReadingRuler,
+    ToggleBookmark,
+    ToggleAmbient,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BookmarkColor {
+    #[default]
+    Yellow,
+    Green,
+    Blue,
+    Red,
+}
+
+impl BookmarkColor {
+    pub const ALL: [BookmarkColor; 4] = [
+        BookmarkColor::Yellow,
+        BookmarkColor::Green,
+        BookmarkColor::Blue,
+        BookmarkColor::Red,
+    ];
+
+    pub fn to_color32(self) -> eframe::egui::Color32 {
+        match self {
+            Self::Yellow => eframe::egui::Color32::from_rgb(235, 195, 60),
+            Self::Green => eframe::egui::Color32::from_rgb(72, 187, 120),
+            Self::Blue => eframe::egui::Color32::from_rgb(66, 153, 225),
+            Self::Red => eframe::egui::Color32::from_rgb(245, 101, 101),
+        }
+    }
+
+    pub fn to_highlight_color(self, is_dark: bool) -> eframe::egui::Color32 {
+        if is_dark {
+            match self {
+                Self::Yellow => eframe::egui::Color32::from_rgba_unmultiplied(235, 195, 60, 60),
+                Self::Green => eframe::egui::Color32::from_rgba_unmultiplied(72, 187, 120, 60),
+                Self::Blue => eframe::egui::Color32::from_rgba_unmultiplied(66, 153, 225, 60),
+                Self::Red => eframe::egui::Color32::from_rgba_unmultiplied(245, 101, 101, 60),
+            }
+        } else {
+            match self {
+                Self::Yellow => eframe::egui::Color32::from_rgba_unmultiplied(255, 235, 120, 95),
+                Self::Green => eframe::egui::Color32::from_rgba_unmultiplied(190, 245, 200, 95),
+                Self::Blue => eframe::egui::Color32::from_rgba_unmultiplied(190, 225, 255, 95),
+                Self::Red => eframe::egui::Color32::from_rgba_unmultiplied(255, 205, 205, 95),
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BookmarkKind {
+    #[default]
+    Bookmark,
+    Quote,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct Bookmark {
+    pub id: String,
     pub book_path: PathBuf,
     pub chapter: usize,
     pub scroll_y: f32,
     pub label: String,
+    pub text: String,
+    pub note: String,
+    pub color: BookmarkColor,
+    pub kind: BookmarkKind,
     pub timestamp: u64,
+    pub progress_percent: f32,
+    pub page_number: Option<usize>,
+}
+
+impl Default for Bookmark {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            book_path: PathBuf::new(),
+            chapter: 0,
+            scroll_y: 0.0,
+            label: String::new(),
+            text: String::new(),
+            note: String::new(),
+            color: BookmarkColor::Yellow,
+            kind: BookmarkKind::Bookmark,
+            timestamp: 0,
+            progress_percent: 0.0,
+            page_number: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +151,10 @@ impl ReaderCore {
     pub fn remove_bookmark(&mut self, book_path: &Path, chapter: usize) {
         self.bookmarks
             .retain(|b| !(b.book_path == book_path && b.chapter == chapter));
+    }
+
+    pub fn remove_bookmark_by_id(&mut self, id: &str) {
+        self.bookmarks.retain(|b| b.id != id);
     }
 
     pub fn bookmarks_for_path<'a>(
@@ -181,6 +268,48 @@ impl ReaderCore {
         (y - 60.0).max(0.0)
     }
 
+    pub fn estimate_visible_paragraph(
+        doc: &dyn Document,
+        chapter_idx: usize,
+        scroll_y: f32,
+        font_size: f32,
+    ) -> usize {
+        let Some(chapter) = doc.chapters().get(chapter_idx) else {
+            return 0;
+        };
+        let line_height = font_size * 1.45;
+        let para_spacing = font_size * 0.4;
+        let chars_per_line = (760.0 / (font_size * 0.52)).max(10.0);
+
+        let clean_title = crate::document::strip_formatting_tags(&chapter.title);
+        let mut y = if clean_title.is_empty() {
+            20.0
+        } else {
+            20.0 + font_size * 1.35 + 24.0
+        };
+
+        let target_y = scroll_y + 40.0;
+        let mut last_non_empty = 0;
+
+        for (idx, para) in chapter.paragraphs.iter().enumerate() {
+            if para.is_empty() {
+                y += font_size * 0.7;
+            } else {
+                let clean = crate::document::strip_formatting_tags(para);
+                let char_count = clean.chars().count();
+                let num_lines = (char_count as f32 / chars_per_line).ceil().max(1.0);
+                let h = num_lines * line_height + para_spacing;
+                if y + h >= target_y {
+                    return idx;
+                }
+                last_non_empty = idx;
+                y += h;
+            }
+        }
+
+        last_non_empty
+    }
+
     pub fn detect_document_language(doc: &dyn Document) -> &'static str {
         if let Some(tc) = doc.text_content() {
             Self::detect_chapters_language(tc.chapters())
@@ -254,11 +383,7 @@ impl ReaderCore {
         }
 
         if cyrillic > latin {
-            if ukrainian_specific >= 2 {
-                "uk"
-            } else {
-                "ru"
-            }
+            if ukrainian_specific >= 2 { "uk" } else { "ru" }
         } else if latin > 0 {
             let lower = text.to_lowercase();
             let mut de_score = 0usize;
@@ -275,14 +400,27 @@ impl ReaderCore {
                     continue;
                 }
                 match word {
-                    "the" | "and" | "that" | "with" | "for" | "this" | "have" | "from" | "you" => en_score += 2,
-                    "der" | "die" | "das" | "und" | "nicht" | "ist" | "ein" | "eine" | "mit" => de_score += 2,
-                    "les" | "des" | "pour" | "dans" | "une" | "est" | "pas" | "sur" | "avec" => fr_score += 2,
-                    "para" | "como" | "los" | "las" | "una" | "por" | "con" | "del" => es_score += 2,
-                    "della" | "dello" | "degli" | "delle" | "sono" | "anche" | "questo" | "questa" | "dopo" => it_score += 2,
-                    "não" | "mais" | "mas" | "foi" | "ao" | "dos" | "pelo" | "pela" | "muito" => pt_score += 2,
-                    "bir" | "bu" | "ile" | "için" | "olan" | "olarak" | "daha" | "kadar" | "sonra" => tr_score += 2,
-                    "yang" | "dan" | "di" | "dari" | "ini" | "itu" | "dengan" | "untuk" | "pada" | "adalah" => id_score += 2,
+                    "the" | "and" | "that" | "with" | "for" | "this" | "have" | "from" | "you" => {
+                        en_score += 2
+                    }
+                    "der" | "die" | "das" | "und" | "nicht" | "ist" | "ein" | "eine" | "mit" => {
+                        de_score += 2
+                    }
+                    "les" | "des" | "pour" | "dans" | "une" | "est" | "pas" | "sur" | "avec" => {
+                        fr_score += 2
+                    }
+                    "para" | "como" | "los" | "las" | "una" | "por" | "con" | "del" => {
+                        es_score += 2
+                    }
+                    "della" | "dello" | "degli" | "delle" | "sono" | "anche" | "questo"
+                    | "questa" | "dopo" => it_score += 2,
+                    "não" | "mais" | "mas" | "foi" | "ao" | "dos" | "pelo" | "pela" | "muito" => {
+                        pt_score += 2
+                    }
+                    "bir" | "bu" | "ile" | "için" | "olan" | "olarak" | "daha" | "kadar"
+                    | "sonra" => tr_score += 2,
+                    "yang" | "dan" | "di" | "dari" | "ini" | "itu" | "dengan" | "untuk"
+                    | "pada" | "adalah" => id_score += 2,
                     _ => {}
                 }
             }

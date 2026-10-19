@@ -1,6 +1,6 @@
 use eframe::egui::{self, Color32, Frame, Id, Order, RichText, Stroke, Vec2};
 use std::io::Cursor;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -40,8 +40,15 @@ pub struct TtsStatus {
 }
 
 pub enum TtsCommand {
-    PlayChapter { chapter_index: usize, paragraph_index: usize, paragraphs: Vec<String> },
-    PlayNextChapter { chapter_index: usize, paragraphs: Vec<String> },
+    PlayChapter {
+        chapter_index: usize,
+        paragraph_index: usize,
+        paragraphs: Vec<String>,
+    },
+    PlayNextChapter {
+        chapter_index: usize,
+        paragraphs: Vec<String>,
+    },
     Pause,
     Resume,
     Stop,
@@ -82,7 +89,14 @@ fn default_edge_voices() -> Vec<TtsVoiceInfo> {
         ("id-ID-GadisNeural", "Gadis (Neural)", "id-ID"),
         ("id-ID-ArdiNeural", "Ardi (Neural)", "id-ID"),
     ];
-    VOICES.iter().map(|&(id, name, lang)| TtsVoiceInfo { id: id.to_string(), name: name.to_string(), language: lang.to_string() }).collect()
+    VOICES
+        .iter()
+        .map(|&(id, name, lang)| TtsVoiceInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            language: lang.to_string(),
+        })
+        .collect()
 }
 
 fn format_voice_name(name: &str) -> String {
@@ -154,64 +168,104 @@ impl TtsController {
     }
 
     pub fn status(&self) -> TtsStatus {
-        self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn toggle_panel(&mut self) {
         self.show_panel = !self.show_panel;
     }
 
-    pub fn play_chapter(&mut self, chapter_index: usize, paragraph_index: usize, paragraphs: Vec<String>) {
+    pub fn play_chapter(
+        &mut self,
+        chapter_index: usize,
+        paragraph_index: usize,
+        paragraphs: Vec<String>,
+    ) {
         if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::PlayChapter { chapter_index, paragraph_index, paragraphs });
+            let _ = tx.send(TtsCommand::PlayChapter {
+                chapter_index,
+                paragraph_index,
+                paragraphs,
+            });
         }
     }
 
     pub fn play_next_chapter(&mut self, chapter_index: usize, paragraphs: Vec<String>) {
         if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::PlayNextChapter { chapter_index, paragraphs });
+            let _ = tx.send(TtsCommand::PlayNextChapter {
+                chapter_index,
+                paragraphs,
+            });
         }
     }
 
     pub fn pause(&mut self) {
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::Pause); }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::Pause);
+        }
     }
 
     pub fn resume(&mut self) {
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::Resume); }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::Resume);
+        }
     }
 
     pub fn stop(&mut self) {
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::Stop); }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::Stop);
+        }
     }
 
     pub fn next_paragraph(&mut self) {
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::NextParagraph); }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::NextParagraph);
+        }
     }
 
     pub fn prev_paragraph(&mut self) {
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::PrevParagraph); }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::PrevParagraph);
+        }
     }
 
     pub fn set_rate(&mut self, rate: f32) {
-        if let Ok(mut st) = self.status.lock() { st.rate = rate; }
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::SetRate(rate)); }
+        if let Ok(mut st) = self.status.lock() {
+            st.rate = rate;
+        }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::SetRate(rate));
+        }
     }
 
     pub fn set_voice(&mut self, voice_id: String) {
-        if let Ok(mut st) = self.status.lock() { st.selected_voice_id = Some(voice_id.clone()); }
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::SetVoice(voice_id)); }
+        if let Ok(mut st) = self.status.lock() {
+            st.selected_voice_id = Some(voice_id.clone());
+        }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::SetVoice(voice_id));
+        }
     }
 
     pub fn set_engine(&mut self, engine: TtsEngineKind) {
-        if let Ok(mut st) = self.status.lock() { st.engine = engine; }
-        if let Some(tx) = &self.command_tx { let _ = tx.send(TtsCommand::SetEngine(engine)); }
+        if let Ok(mut st) = self.status.lock() {
+            st.engine = engine;
+        }
+        if let Some(tx) = &self.command_tx {
+            let _ = tx.send(TtsCommand::SetEngine(engine));
+        }
     }
 
     fn worker_loop(rx: Receiver<TtsCommand>, status: Arc<Mutex<TtsStatus>>) {
         let mut sys_tts = Tts::default().ok();
-        let audio_device: Option<rodio::MixerDeviceSink> = rodio::DeviceSinkBuilder::open_default_sink().ok();
-        let mut audio_player: Option<rodio::Player> = audio_device.as_ref().map(|handle| rodio::Player::connect_new(&handle.mixer()));
+        let audio_device: Option<rodio::MixerDeviceSink> =
+            rodio::DeviceSinkBuilder::open_default_sink().ok();
+        let mut audio_player: Option<rodio::Player> = audio_device
+            .as_ref()
+            .map(|handle| rodio::Player::connect_new(&handle.mixer()));
 
         let system_voices: Vec<TtsVoiceInfo> = sys_tts
             .as_ref()
@@ -285,8 +339,14 @@ impl TtsController {
 
                 if !mapped.is_empty() {
                     mapped.sort_by(|a, b| {
-                        b.language.starts_with("ru").cmp(&a.language.starts_with("ru"))
-                            .then_with(|| b.language.starts_with("en").cmp(&a.language.starts_with("en")))
+                        b.language
+                            .starts_with("ru")
+                            .cmp(&a.language.starts_with("ru"))
+                            .then_with(|| {
+                                b.language
+                                    .starts_with("en")
+                                    .cmp(&a.language.starts_with("en"))
+                            })
                             .then_with(|| a.language.cmp(&b.language))
                             .then_with(|| a.name.cmp(&b.name))
                     });
@@ -307,7 +367,8 @@ impl TtsController {
         let mut is_paused = false;
         let mut rate = 1.0f32;
         let mut utterance_started_at: Option<Instant> = None;
-        let mut edge_client: Option<msedge_tts::tts::client::MSEdgeTTSClient<std::net::TcpStream>> = None;
+        let mut edge_client: Option<msedge_tts::tts::client::MSEdgeTTSClient<std::net::TcpStream>> =
+            None;
 
         let find_clean_para = |paras: &[String], idx: usize| -> Option<(usize, String)> {
             let mut i = idx;
@@ -322,10 +383,8 @@ impl TtsController {
             None
         };
 
-        let restart_player = |
-            device: &Option<rodio::MixerDeviceSink>,
-            player: &mut Option<rodio::Player>,
-        | {
+        let restart_player = |device: &Option<rodio::MixerDeviceSink>,
+                              player: &mut Option<rodio::Player>| {
             if let Some(p) = player.take() {
                 p.stop();
             }
@@ -334,21 +393,16 @@ impl TtsController {
             }
         };
 
-        let stop_all = |
-            sys_tts: &mut Option<Tts>,
-            device: &Option<rodio::MixerDeviceSink>,
-            player: &mut Option<rodio::Player>,
-        | {
+        let stop_all = |sys_tts: &mut Option<Tts>,
+                        device: &Option<rodio::MixerDeviceSink>,
+                        player: &mut Option<rodio::Player>| {
             if let Some(t) = sys_tts.as_mut() {
                 let _ = t.stop();
             }
             restart_player(device, player);
         };
 
-        let pause_all = |
-            sys_tts: &mut Option<Tts>,
-            player: &Option<rodio::Player>,
-        | {
+        let pause_all = |sys_tts: &mut Option<Tts>, player: &Option<rodio::Player>| {
             if let Some(t) = sys_tts.as_mut() {
                 let _ = t.stop();
             }
@@ -357,16 +411,17 @@ impl TtsController {
             }
         };
 
-        let speak_para = |
-            engine: TtsEngineKind,
-            text: &str,
-            cur_rate: f32,
-            sys_tts: &mut Option<Tts>,
-            edge_client: &mut Option<msedge_tts::tts::client::MSEdgeTTSClient<std::net::TcpStream>>,
-            edge_voice_id: &Option<String>,
-            device: &Option<rodio::MixerDeviceSink>,
-            player: &mut Option<rodio::Player>,
-        | -> bool {
+        let speak_para = |engine: TtsEngineKind,
+                          text: &str,
+                          cur_rate: f32,
+                          sys_tts: &mut Option<Tts>,
+                          edge_client: &mut Option<
+            msedge_tts::tts::client::MSEdgeTTSClient<std::net::TcpStream>,
+        >,
+                          edge_voice_id: &Option<String>,
+                          device: &Option<rodio::MixerDeviceSink>,
+                          player: &mut Option<rodio::Player>|
+         -> bool {
             match engine {
                 TtsEngineKind::System => {
                     restart_player(device, player);
@@ -402,7 +457,9 @@ impl TtsController {
                         if let Some(client) = edge_client.as_mut() {
                             match client.synthesize(text, &config) {
                                 Ok(audio) => {
-                                    if let Ok(decoder) = rodio::Decoder::new(Cursor::new(audio.audio_bytes)) {
+                                    if let Ok(decoder) =
+                                        rodio::Decoder::new(Cursor::new(audio.audio_bytes))
+                                    {
                                         restart_player(device, player);
                                         if let Some(p) = player.as_ref() {
                                             p.append(decoder);
@@ -515,7 +572,9 @@ impl TtsController {
                                         s.play();
                                         is_paused = false;
                                         utterance_started_at = Some(Instant::now());
-                                    } else if let Some((idx, text)) = find_clean_para(&paragraphs, current_para) {
+                                    } else if let Some((idx, text)) =
+                                        find_clean_para(&paragraphs, current_para)
+                                    {
                                         current_para = idx;
                                         if speak_para(
                                             current_engine,
@@ -532,7 +591,9 @@ impl TtsController {
                                         }
                                     }
                                 }
-                            } else if let Some((idx, text)) = find_clean_para(&paragraphs, current_para) {
+                            } else if let Some((idx, text)) =
+                                find_clean_para(&paragraphs, current_para)
+                            {
                                 current_para = idx;
                                 if speak_para(
                                     current_engine,
@@ -581,7 +642,8 @@ impl TtsController {
                         let target_idx = current_para.saturating_sub(1);
                         let mut back_idx = target_idx;
                         while back_idx > 0 {
-                            let clean = crate::document::strip_formatting_tags(&paragraphs[back_idx]);
+                            let clean =
+                                crate::document::strip_formatting_tags(&paragraphs[back_idx]);
                             if !clean.trim().is_empty() {
                                 break;
                             }
@@ -639,9 +701,11 @@ impl TtsController {
                         } else {
                             let changed = current_sys_voice_id.as_deref() != Some(&voice_id);
                             current_sys_voice_id = Some(voice_id.clone());
-                            if let (Some(tts), Some(id)) = (sys_tts.as_mut(), &current_sys_voice_id) {
+                            if let (Some(tts), Some(id)) = (sys_tts.as_mut(), &current_sys_voice_id)
+                            {
                                 if let Ok(all_voices) = tts.voices() {
-                                    if let Some(target) = all_voices.iter().find(|v| v.id() == *id) {
+                                    if let Some(target) = all_voices.iter().find(|v| v.id() == *id)
+                                    {
                                         let _ = tts.set_voice(target);
                                     }
                                 }
@@ -704,7 +768,9 @@ impl TtsController {
                                 st.error = None;
                             }
                             if is_playing && !is_paused && current_para < paragraphs.len() {
-                                if let Some((idx, text)) = find_clean_para(&paragraphs, current_para) {
+                                if let Some((idx, text)) =
+                                    find_clean_para(&paragraphs, current_para)
+                                {
                                     current_para = idx;
                                     if speak_para(
                                         current_engine,
@@ -730,12 +796,14 @@ impl TtsController {
 
             if is_playing && !is_paused {
                 let speaking = match current_engine {
-                    TtsEngineKind::System => {
-                        sys_tts.as_mut().and_then(|t| t.is_speaking().ok()).unwrap_or(false)
-                    }
-                    TtsEngineKind::Edge => {
-                        audio_player.as_ref().map(|s| !s.empty() && !s.is_paused()).unwrap_or(false)
-                    }
+                    TtsEngineKind::System => sys_tts
+                        .as_mut()
+                        .and_then(|t| t.is_speaking().ok())
+                        .unwrap_or(false),
+                    TtsEngineKind::Edge => audio_player
+                        .as_ref()
+                        .map(|s| !s.empty() && !s.is_paused())
+                        .unwrap_or(false),
                 };
 
                 let grace_passed = utterance_started_at
@@ -767,7 +835,8 @@ impl TtsController {
                 }
             }
 
-            let needs_next = is_playing && current_para >= paragraphs.len() && !paragraphs.is_empty();
+            let needs_next =
+                is_playing && current_para >= paragraphs.len() && !paragraphs.is_empty();
 
             if let Ok(mut st) = status.lock() {
                 st.is_playing = is_playing;
@@ -815,183 +884,209 @@ impl TtsController {
 
                 frame.show(ui, |ui| {
                     ui.horizontal(|ui| {
-                    ui.add(
-                        IconLabel::new(Icon::Speech, t.tts_title)
-                            .size(13.5)
-                            .strong()
-                            .color(theme.text_color()),
-                    );
-
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-
-                    let is_sys = st.engine == TtsEngineKind::System;
-                    let is_edge = st.engine == TtsEngineKind::Edge;
-
-                    if ui.selectable_label(is_sys, t.tts_system).on_hover_text(t.tts_system_tip).clicked() && !is_sys {
-                        self.set_engine(TtsEngineKind::System);
-                    }
-                    if ui.selectable_label(is_edge, t.tts_edge).on_hover_text(t.tts_internet_tip).clicked() && !is_edge {
-                        self.set_engine(TtsEngineKind::Edge);
-                    }
-
-                    ui.add_space(6.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-
-                    if !st.is_available {
-                        ui.label(
-                            RichText::new(t.tts_unavailable)
-                                .color(Color32::RED)
-                                .size(12.0),
+                        ui.add(
+                            IconLabel::new(Icon::Speech, t.tts_title)
+                                .size(13.5)
+                                .strong()
+                                .color(theme.text_color()),
                         );
-                    } else if !current_book_has_text {
-                        ui.label(
-                            RichText::new(t.tts_open_text_book)
-                                .color(theme.secondary_text_color())
-                                .size(12.0),
-                        );
-                    } else {
-                        let prev_btn = ui.add(
-                            IconButton::new(Icon::ChevronUp, "")
-                                .min_size(Vec2::new(26.0, 24.0)),
-                        ).on_hover_text(t.tts_prev_paragraph);
-                        if prev_btn.clicked() {
-                            self.prev_paragraph();
-                        }
 
-                        if st.is_playing && !st.is_paused {
-                            let pause_btn = ui.add(
-                                IconButton::new(Icon::Pause, t.tts_pause)
-                                    .min_size(Vec2::new(76.0, 24.0)),
-                            );
-                            if pause_btn.clicked() {
-                                self.pause();
-                            }
-                        } else {
-                            let play_icon = Icon::Play;
-                            let play_label = if st.is_paused { t.tts_play } else { t.speech };
-                            let play_btn = ui.add(
-                                IconButton::new(play_icon, play_label)
-                                    .min_size(Vec2::new(88.0, 24.0)),
-                            );
-                            if play_btn.clicked() {
-                                if st.is_paused {
-                                    self.resume();
-                                } else {
-                                    *on_play_requested = true;
-                                }
-                            }
-                        }
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(6.0);
 
-                        let next_btn = ui.add(
-                            IconButton::new(Icon::ChevronDown, "")
-                                .min_size(Vec2::new(26.0, 24.0)),
-                        ).on_hover_text(t.tts_next_paragraph);
-                        if next_btn.clicked() {
-                            self.next_paragraph();
-                        }
+                        let is_sys = st.engine == TtsEngineKind::System;
+                        let is_edge = st.engine == TtsEngineKind::Edge;
 
-                        if st.is_playing || st.is_paused {
-                            let stop_btn = ui.add(
-                                IconButton::new(Icon::Close, t.tts_stop)
-                                    .min_size(Vec2::new(64.0, 24.0)),
-                            );
-                            if stop_btn.clicked() {
-                                self.stop();
-                            }
+                        if ui
+                            .selectable_label(is_sys, t.tts_system)
+                            .on_hover_text(t.tts_system_tip)
+                            .clicked()
+                            && !is_sys
+                        {
+                            self.set_engine(TtsEngineKind::System);
+                        }
+                        if ui
+                            .selectable_label(is_edge, t.tts_edge)
+                            .on_hover_text(t.tts_internet_tip)
+                            .clicked()
+                            && !is_edge
+                        {
+                            self.set_engine(TtsEngineKind::Edge);
                         }
 
                         ui.add_space(6.0);
                         ui.separator();
                         ui.add_space(6.0);
 
-                        let rates = [0.8, 1.0, 1.25, 1.5, 2.0];
-                        for r in rates {
-                            let is_curr = (st.rate - r).abs() < 0.05;
-                            let label = format!("{r}x");
-                            let btn = ui.selectable_label(is_curr, label);
-                            if btn.clicked() {
-                                self.set_rate(r);
-                            }
-                        }
-
-                        let matched_voices: Vec<&TtsVoiceInfo> = if let Some(lang) = book_language {
-                            let m: Vec<&TtsVoiceInfo> = st.voices.iter().filter(|v| voice_matches_lang(&v.language, lang)).collect();
-                            if m.is_empty() { st.voices.iter().collect() } else { m }
+                        if !st.is_available {
+                            ui.label(
+                                RichText::new(t.tts_unavailable)
+                                    .color(Color32::RED)
+                                    .size(12.0),
+                            );
+                        } else if !current_book_has_text {
+                            ui.label(
+                                RichText::new(t.tts_open_text_book)
+                                    .color(theme.secondary_text_color())
+                                    .size(12.0),
+                            );
                         } else {
-                            st.voices.iter().collect()
-                        };
+                            let prev_btn = ui
+                                .add(
+                                    IconButton::new(Icon::ChevronUp, "")
+                                        .min_size(Vec2::new(26.0, 24.0)),
+                                )
+                                .on_hover_text(t.tts_prev_paragraph);
+                            if prev_btn.clicked() {
+                                self.prev_paragraph();
+                            }
 
-                        if !matched_voices.is_empty() {
+                            if st.is_playing && !st.is_paused {
+                                let pause_btn = ui.add(
+                                    IconButton::new(Icon::Pause, t.tts_pause)
+                                        .min_size(Vec2::new(76.0, 24.0)),
+                                );
+                                if pause_btn.clicked() {
+                                    self.pause();
+                                }
+                            } else {
+                                let play_icon = Icon::Play;
+                                let play_label = if st.is_paused { t.tts_play } else { t.speech };
+                                let play_btn = ui.add(
+                                    IconButton::new(play_icon, play_label)
+                                        .min_size(Vec2::new(88.0, 24.0)),
+                                );
+                                if play_btn.clicked() {
+                                    if st.is_paused {
+                                        self.resume();
+                                    } else {
+                                        *on_play_requested = true;
+                                    }
+                                }
+                            }
+
+                            let next_btn = ui
+                                .add(
+                                    IconButton::new(Icon::ChevronDown, "")
+                                        .min_size(Vec2::new(26.0, 24.0)),
+                                )
+                                .on_hover_text(t.tts_next_paragraph);
+                            if next_btn.clicked() {
+                                self.next_paragraph();
+                            }
+
+                            if st.is_playing || st.is_paused {
+                                let stop_btn = ui.add(
+                                    IconButton::new(Icon::Close, t.tts_stop)
+                                        .min_size(Vec2::new(64.0, 24.0)),
+                                );
+                                if stop_btn.clicked() {
+                                    self.stop();
+                                }
+                            }
+
                             ui.add_space(6.0);
                             ui.separator();
                             ui.add_space(6.0);
 
-                            if !matched_voices.iter().any(|v| Some(&v.id) == st.selected_voice_id.as_ref()) {
-                                if let Some(first) = matched_voices.first() {
-                                    self.set_voice(first.id.clone());
+                            let rates = [0.8, 1.0, 1.25, 1.5, 2.0];
+                            for r in rates {
+                                let is_curr = (st.rate - r).abs() < 0.05;
+                                let label = format!("{r}x");
+                                let btn = ui.selectable_label(is_curr, label);
+                                if btn.clicked() {
+                                    self.set_rate(r);
                                 }
                             }
 
-                            let current_voice_name = st
-                                .selected_voice_id
-                                .as_ref()
-                                .and_then(|id| matched_voices.iter().find(|v| v.id == *id))
-                                .map(|v| format_voice_name(&v.name))
-                                .unwrap_or_else(|| t.tts_voice.to_string());
-
-                            egui::ComboBox::from_id_salt("tts_voice_combo")
-                                .selected_text(current_voice_name)
-                                .width(150.0)
-                                .show_ui(ui, |ui| {
-                                    for v in &matched_voices {
-                                        let is_sel = st.selected_voice_id.as_deref() == Some(&v.id);
-                                        let clean_name = format_voice_name(&v.name);
-                                        let label = format!("{} ({})", clean_name, v.language);
-                                        if ui.selectable_label(is_sel, label).clicked() {
-                                            self.set_voice(v.id.clone());
-                                        }
+                            let matched_voices: Vec<&TtsVoiceInfo> =
+                                if let Some(lang) = book_language {
+                                    let m: Vec<&TtsVoiceInfo> = st
+                                        .voices
+                                        .iter()
+                                        .filter(|v| voice_matches_lang(&v.language, lang))
+                                        .collect();
+                                    if m.is_empty() {
+                                        st.voices.iter().collect()
+                                    } else {
+                                        m
                                     }
-                                });
+                                } else {
+                                    st.voices.iter().collect()
+                                };
+
+                            if !matched_voices.is_empty() {
+                                ui.add_space(6.0);
+                                ui.separator();
+                                ui.add_space(6.0);
+
+                                if !matched_voices
+                                    .iter()
+                                    .any(|v| Some(&v.id) == st.selected_voice_id.as_ref())
+                                {
+                                    if let Some(first) = matched_voices.first() {
+                                        self.set_voice(first.id.clone());
+                                    }
+                                }
+
+                                let current_voice_name = st
+                                    .selected_voice_id
+                                    .as_ref()
+                                    .and_then(|id| matched_voices.iter().find(|v| v.id == *id))
+                                    .map(|v| format_voice_name(&v.name))
+                                    .unwrap_or_else(|| t.tts_voice.to_string());
+
+                                egui::ComboBox::from_id_salt("tts_voice_combo")
+                                    .selected_text(current_voice_name)
+                                    .width(150.0)
+                                    .show_ui(ui, |ui| {
+                                        for v in &matched_voices {
+                                            let is_sel =
+                                                st.selected_voice_id.as_deref() == Some(&v.id);
+                                            let clean_name = format_voice_name(&v.name);
+                                            let label = format!("{} ({})", clean_name, v.language);
+                                            if ui.selectable_label(is_sel, label).clicked() {
+                                                self.set_voice(v.id.clone());
+                                            }
+                                        }
+                                    });
+                            }
+
+                            if let Some(ref err) = st.error {
+                                ui.add_space(6.0);
+                                ui.label(RichText::new(err).size(11.5).color(Color32::RED));
+                            } else if st.is_playing || st.is_paused {
+                                ui.add_space(6.0);
+                                let status_str = format!(
+                                    "Гл. {}, абзац {}/{}",
+                                    st.current_chapter + 1,
+                                    st.current_paragraph + 1,
+                                    st.total_paragraphs
+                                );
+                                ui.label(
+                                    RichText::new(status_str)
+                                        .size(12.0)
+                                        .color(theme.accent_color())
+                                        .strong(),
+                                );
+                            }
                         }
 
-                        if let Some(ref err) = st.error {
-                            ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(err)
-                                    .size(11.5)
-                                    .color(Color32::RED),
-                            );
-                        } else if st.is_playing || st.is_paused {
-                            ui.add_space(6.0);
-                            let status_str = format!(
-                                "Гл. {}, абзац {}/{}",
-                                st.current_chapter + 1,
-                                st.current_paragraph + 1,
-                                st.total_paragraphs
-                            );
-                            ui.label(
-                                RichText::new(status_str)
-                                    .size(12.0)
-                                    .color(theme.accent_color())
-                                    .strong(),
-                            );
-                        }
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(IconButton::new(Icon::Close, "").min_size(Vec2::new(20.0, 20.0)))
-                            .on_hover_text(t.tts_close_panel)
-                            .clicked()
-                        {
-                            self.show_panel = false;
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add(
+                                    IconButton::new(Icon::Close, "")
+                                        .min_size(Vec2::new(20.0, 20.0)),
+                                )
+                                .on_hover_text(t.tts_close_panel)
+                                .clicked()
+                            {
+                                self.show_panel = false;
+                            }
+                        });
                     });
                 });
             });
-        });
     }
 }

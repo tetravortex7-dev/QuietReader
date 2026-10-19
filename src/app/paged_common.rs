@@ -168,3 +168,41 @@ pub fn handle_paged_pan(
     pan_offset.x = pan_offset.x.clamp(-max_pan_x, max_pan_x);
     pan_offset.y = pan_offset.y.clamp(-max_pan_y, max_pan_y);
 }
+
+pub fn transform_span_bbox(bbox: [f32; 4], rotation: i32, rect: egui::Rect) -> egui::Rect {
+    let (rx, ry, rw, rh) = (rect.min.x, rect.min.y, rect.width(), rect.height());
+    match rotation.rem_euclid(360) {
+        90 => {
+            let (x0, x1) = (rect.max.x - bbox[3] * rw, rect.max.x - bbox[1] * rw);
+            let (y0, y1) = (ry + bbox[0] * rh, ry + bbox[2] * rh);
+            egui::Rect::from_min_max(
+                egui::Pos2::new(x0.min(x1), y0.min(y1)),
+                egui::Pos2::new(x0.max(x1), y0.max(y1)),
+            )
+        }
+        180 => {
+            let (x0, x1) = (rect.max.x - bbox[2] * rw, rect.max.x - bbox[0] * rw);
+            let (y0, y1) = (rect.max.y - bbox[3] * rh, rect.max.y - bbox[1] * rh);
+            egui::Rect::from_min_max(
+                egui::Pos2::new(x0.min(x1), y0.min(y1)),
+                egui::Pos2::new(x0.max(x1), y0.max(y1)),
+            )
+        }
+        270 => {
+            let (x0, x1) = (rx + bbox[1] * rw, rx + bbox[3] * rw);
+            let (y0, y1) = (rect.max.y - bbox[2] * rh, rect.max.y - bbox[0] * rh);
+            egui::Rect::from_min_max(
+                egui::Pos2::new(x0.min(x1), y0.min(y1)),
+                egui::Pos2::new(x0.max(x1), y0.max(y1)),
+            )
+        }
+        _ => {
+            let (x0, x1) = (rx + bbox[0] * rw, rx + bbox[2] * rw);
+            let (y0, y1) = (ry + bbox[1] * rh, ry + bbox[3] * rh);
+            egui::Rect::from_min_max(
+                egui::Pos2::new(x0.min(x1), y0.min(y1)),
+                egui::Pos2::new(x0.max(x1), y0.max(y1)),
+            )
+        }
+    }
+}

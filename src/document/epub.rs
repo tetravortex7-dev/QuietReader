@@ -62,7 +62,7 @@ pub mod toc;
 #[allow(unused_imports)]
 pub use html::{extract_html_lenient, parse_html_chapter, sanitize_xml_entities};
 #[allow(unused_imports)]
-pub use toc::{parse_epub3_nav_toc, parse_ncx_toc, resolve_toc_destination, NavPoint};
+pub use toc::{NavPoint, parse_epub3_nav_toc, parse_ncx_toc, resolve_toc_destination};
 
 #[derive(Default, Debug)]
 struct ManifestItem {

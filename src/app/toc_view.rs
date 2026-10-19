@@ -1,7 +1,17 @@
+use super::bookmarks_view::{BookmarkViewState, BookmarksView};
+use super::icons::{Icon, IconButton};
 use super::theme::ReaderTheme;
 use crate::document::{Document, TocItem};
-use crate::settings::ComicSettings;
-use eframe::egui::{self, Color32, Panel, RichText, ScrollArea};
+use crate::settings::AppSettings;
+use eframe::egui::{self, Color32, Panel, RichText, ScrollArea, Vec2};
+use std::path::Path;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarTab {
+    #[default]
+    Toc,
+    Bookmarks,
+}
 
 pub struct TocView;
 
@@ -9,12 +19,20 @@ impl TocView {
     pub fn render(
         ui: &mut egui::Ui,
         document: &Option<std::sync::Arc<dyn Document>>,
-        comic_settings: &ComicSettings,
         current_chapter: &mut usize,
         current_page: &mut usize,
         show_toc: &mut bool,
+        sidebar_tab: &mut SidebarTab,
+        settings: &mut AppSettings,
+        current_file_path: Option<&Path>,
+        current_scroll_y: f32,
+        pending_scroll_y: &mut Option<f32>,
+        last_rendered_chapter: &mut usize,
         theme: &ReaderTheme,
-        lang: crate::i18n::UiLanguage,
+        status_message: &mut Option<String>,
+        return_location: &mut Option<(usize, f32, Option<usize>)>,
+        bookmark_state: &mut BookmarkViewState,
+        on_add_bookmark: &mut bool,
     ) {
         if !*show_toc {
             return;
@@ -25,34 +43,83 @@ impl TocView {
             None => return,
         };
 
+        let lang = settings.ui_language;
         let t = lang.t();
         let available_w = ui.available_width();
-        let max_toc_w = (available_w * 0.45).clamp(200.0, 480.0);
+        let max_toc_w = (available_w * 0.45).clamp(240.0, 520.0);
         let mut close_toc = false;
 
         Panel::left("toc_panel")
             .resizable(true)
             .show_separator_line(true)
-            .min_size(140.0)
+            .min_size(180.0)
             .max_size(max_toc_w)
-            .default_size(260.0)
+            .default_size(300.0)
             .show(ui, |ui| {
                 ui.style_mut().interaction.resize_grab_radius_side = 8.0;
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
 
                 ui.horizontal(|ui| {
-                    ui.heading(t.toc);
+                    let is_toc = *sidebar_tab == SidebarTab::Toc;
+                    let is_bm = *sidebar_tab == SidebarTab::Bookmarks;
+                    let count = current_file_path.map_or(0, |path| {
+                        settings
+                            .bookmarks
+                            .iter()
+                            .filter(|b| b.book_path == path)
+                            .count()
+                    });
+                    let bm_title = if count > 0 {
+                        format!("{} ({count})", t.bookmarks)
+                    } else {
+                        t.bookmarks.to_string()
+                    };
+
+                    if ui
+                        .selectable_label(is_toc, RichText::new(t.toc).strong())
+                        .clicked()
+                    {
+                        *sidebar_tab = SidebarTab::Toc;
+                    }
+                    if ui
+                        .selectable_label(is_bm, RichText::new(bm_title).strong())
+                        .clicked()
+                    {
+                        *sidebar_tab = SidebarTab::Bookmarks;
+                    }
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .small_button("×")
-                            .on_hover_text(t.hide_toc)
-                            .clicked()
-                        {
+                        let close_btn =
+                            IconButton::new(Icon::Cross, "").min_size(Vec2::splat(18.0));
+                        if ui.add(close_btn).on_hover_text(t.hide_toc).clicked() {
                             close_toc = true;
                         }
                     });
                 });
                 ui.add_space(4.0);
+
+                if *sidebar_tab == SidebarTab::Bookmarks {
+                    let meta = doc.metadata();
+                    BookmarksView::render(
+                        ui,
+                        settings,
+                        current_file_path,
+                        current_chapter,
+                        current_scroll_y,
+                        pending_scroll_y,
+                        last_rendered_chapter,
+                        current_page,
+                        theme,
+                        lang,
+                        status_message,
+                        &meta.title,
+                        &meta.author,
+                        return_location,
+                        bookmark_state,
+                        on_add_bookmark,
+                    );
+                    return;
+                }
 
                 ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -79,8 +146,8 @@ impl TocView {
                                 ui.add_space(4.0);
                             }
 
-                            let is_double = comic_settings.page_layout == "Double"
-                                && comic_settings.reading_mode != "Webtoon";
+                            let is_double = settings.comic.page_layout == "Double"
+                                && settings.comic.reading_mode != "Webtoon";
                             let step = if is_double { 2 } else { 1 };
                             let total_rows = page_count.div_ceil(step);
                             let row_height = ui.text_style_height(&egui::TextStyle::Button) + 6.0;

@@ -12,17 +12,23 @@ struct LoadRequest {
     doc: Arc<dyn Document>,
     page_idx: usize,
     ctx: egui::Context,
+    smart_dark: bool,
+    target_bg: egui::Color32,
+    target_text: egui::Color32,
+    tolerance: u8,
 }
 
 struct LoadResponse {
     doc_generation: u64,
     page_idx: usize,
     result: Result<DecodedImage, DocumentError>,
+    bbox: egui::Rect,
 }
 
 pub struct ComicViewState {
     pub current_page: usize,
     pub textures: HashMap<usize, (egui::TextureHandle, u64)>,
+    pub page_bboxes: HashMap<usize, egui::Rect>,
     pub pending_pages: HashSet<usize>,
     pub failed_pages: HashMap<usize, String>,
     pub access_counter: u64,
@@ -30,6 +36,9 @@ pub struct ComicViewState {
     pub pan_offset: Vec2,
     pub is_middle_dragging: bool,
     pub page_input: String,
+    pub last_smart_dark: bool,
+    pub last_theme_bg: egui::Color32,
+    pub last_crop_tolerance: u8,
     req_tx: Sender<LoadRequest>,
     resp_rx: Receiver<LoadResponse>,
 }
@@ -54,17 +63,37 @@ fn spawn_comic_worker() -> (Sender<LoadRequest>, Receiver<LoadResponse>) {
                     }
                 }));
 
-                let result = match load_res {
-                    Ok(res) => res,
-                    Err(_) => Err(DocumentError::Corrupted(
-                        "Аварийный сбой при декодировании страницы комикса".to_string(),
-                    )),
+                let (result, bbox) = match load_res {
+                    Ok(Ok(mut img)) => {
+                        let bbox =
+                            crate::app::scan_processor::detect_content_bbox(&img, req.tolerance);
+                        if req.smart_dark {
+                            crate::app::scan_processor::apply_smart_dark_mode(
+                                &mut img,
+                                req.target_bg,
+                                req.target_text,
+                                true,
+                            );
+                        }
+                        (Ok(img), bbox)
+                    }
+                    Ok(Err(e)) => (
+                        Err(e),
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                    ),
+                    Err(_) => (
+                        Err(DocumentError::Corrupted(
+                            "Аварийный сбой при декодировании страницы комикса".to_string(),
+                        )),
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                    ),
                 };
 
                 let _ = resp_tx.send(LoadResponse {
                     doc_generation: req.doc_generation,
                     page_idx,
                     result,
+                    bbox,
                 });
                 req.ctx.request_repaint();
             }
@@ -81,6 +110,7 @@ impl Default for ComicViewState {
         Self {
             current_page: 0,
             textures: HashMap::new(),
+            page_bboxes: HashMap::new(),
             pending_pages: HashSet::new(),
             failed_pages: HashMap::new(),
             access_counter: 0,
@@ -88,6 +118,9 @@ impl Default for ComicViewState {
             pan_offset: Vec2::ZERO,
             is_middle_dragging: false,
             page_input: String::new(),
+            last_smart_dark: false,
+            last_theme_bg: egui::Color32::TRANSPARENT,
+            last_crop_tolerance: 24,
             req_tx,
             resp_rx,
         }
@@ -97,6 +130,7 @@ impl Default for ComicViewState {
 impl ComicViewState {
     pub fn clear_cache(&mut self) {
         self.textures.clear();
+        self.page_bboxes.clear();
         self.pending_pages.clear();
         self.failed_pages.clear();
         self.pan_offset = Vec2::ZERO;
@@ -155,6 +189,7 @@ impl ComicViewState {
                         continue;
                     }
                     self.pending_pages.remove(&resp.page_idx);
+                    self.page_bboxes.insert(resp.page_idx, resp.bbox);
                     match resp.result {
                         Ok(img) => {
                             self.access_counter += 1;
@@ -211,6 +246,8 @@ impl ComicViewState {
         ctx: &egui::Context,
         document: &Option<Arc<dyn Document>>,
         page_idx: usize,
+        settings: &ComicSettings,
+        theme: &ReaderTheme,
     ) -> Option<egui::TextureHandle> {
         self.access_counter += 1;
         let counter = self.access_counter;
@@ -226,11 +263,18 @@ impl ComicViewState {
 
         let doc = document.as_ref()?.clone();
         self.pending_pages.insert(page_idx);
+        let target_bg = theme.bg_color();
+        let target_text = theme.text_color();
+        let smart_dark = settings.smart_dark && theme.is_dark();
         let _ = self.req_tx.send(LoadRequest {
             doc_generation: self.doc_generation,
             doc,
             page_idx,
             ctx: ctx.clone(),
+            smart_dark,
+            target_bg,
+            target_text,
+            tolerance: settings.auto_crop_tolerance,
         });
         None
     }
@@ -311,10 +355,7 @@ impl ComicViewState {
             ui.separator();
 
             let is_single = settings.page_layout == "Single" && settings.reading_mode != "Webtoon";
-            if ui
-                .selectable_label(is_single, t.single_page_btn)
-                .clicked()
-            {
+            if ui.selectable_label(is_single, t.single_page_btn).clicked() {
                 settings.page_layout = "Single".to_string();
                 if settings.reading_mode == "Webtoon" {
                     settings.reading_mode = "Auto".to_string();
@@ -323,10 +364,7 @@ impl ComicViewState {
             }
 
             let is_double = settings.page_layout == "Double" && settings.reading_mode != "Webtoon";
-            if ui
-                .selectable_label(is_double, t.double_page_btn)
-                .clicked()
-            {
+            if ui.selectable_label(is_double, t.double_page_btn).clicked() {
                 settings.page_layout = "Double".to_string();
                 if settings.reading_mode == "Webtoon" {
                     settings.reading_mode = "Auto".to_string();
@@ -335,21 +373,14 @@ impl ComicViewState {
             }
 
             let is_webtoon = settings.reading_mode == "Webtoon";
-            if ui
-                .selectable_label(is_webtoon, t.scroll_btn)
-                .clicked()
-            {
+            if ui.selectable_label(is_webtoon, t.scroll_btn).clicked() {
                 settings.reading_mode = "Webtoon".to_string();
                 self.pan_offset = Vec2::ZERO;
             }
 
             ui.separator();
 
-            if ui
-                .button("−")
-                .on_hover_text(t.zoom_out)
-                .clicked()
-            {
+            if ui.button("−").on_hover_text(t.zoom_out).clicked() {
                 super::paged_common::zoom_out(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
@@ -366,11 +397,7 @@ impl ComicViewState {
                 );
             }
 
-            if ui
-                .button("+")
-                .on_hover_text(t.zoom_in)
-                .clicked()
-            {
+            if ui.button("+").on_hover_text(t.zoom_in).clicked() {
                 super::paged_common::zoom_in(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
@@ -384,10 +411,7 @@ impl ComicViewState {
             }
 
             let fit_w_active = settings.fit_mode == "FitWidth";
-            if ui
-                .selectable_label(fit_w_active, t.fit_width_btn)
-                .clicked()
-            {
+            if ui.selectable_label(fit_w_active, t.fit_width_btn).clicked() {
                 settings.fit_mode = "FitWidth".to_string();
                 self.pan_offset = Vec2::ZERO;
             }
@@ -401,12 +425,44 @@ impl ComicViewState {
                 self.pan_offset = Vec2::ZERO;
             }
 
+            ui.separator();
+
+            let dark_resp = ui.add(
+                crate::app::icons::IconButton::new(
+                    crate::app::icons::Icon::Moon,
+                    t.smart_dark_mode,
+                )
+                .selected(settings.smart_dark),
+            );
+            if dark_resp.on_hover_text(t.smart_dark_mode_tooltip).clicked() {
+                settings.smart_dark = !settings.smart_dark;
+                self.clear_cache();
+            }
+
+            let crop_resp = ui
+                .add(
+                    crate::app::icons::IconButton::new(
+                        crate::app::icons::Icon::Crop,
+                        t.auto_crop_margins,
+                    )
+                    .selected(settings.auto_crop),
+                )
+                .on_hover_text(t.auto_crop_margins_tooltip);
+            if crop_resp.clicked() {
+                settings.auto_crop = !settings.auto_crop;
+                self.pan_offset = Vec2::ZERO;
+            }
+            crop_resp.context_menu(|ui| {
+                ui.label(RichText::new(t.crop_sensitivity).strong());
+                let slider = egui::Slider::new(&mut settings.auto_crop_tolerance, 5..=80)
+                    .text(t.crop_tolerance);
+                if ui.add(slider).changed() {
+                    self.clear_cache();
+                }
+            });
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let badge_txt = if is_manga {
-                    "🍙 Manga"
-                } else {
-                    "🎨 Comic"
-                };
+                let badge_txt = if is_manga { "🍙 Manga" } else { "🎨 Comic" };
                 ui.label(
                     RichText::new(badge_txt)
                         .size(11.0)
@@ -432,6 +488,16 @@ impl ComicViewState {
         lang: crate::i18n::UiLanguage,
     ) {
         self.poll_responses(ctx, status_message);
+
+        if settings.smart_dark != self.last_smart_dark
+            || theme.bg_color() != self.last_theme_bg
+            || settings.auto_crop_tolerance != self.last_crop_tolerance
+        {
+            self.last_smart_dark = settings.smart_dark;
+            self.last_theme_bg = theme.bg_color();
+            self.last_crop_tolerance = settings.auto_crop_tolerance;
+            self.clear_cache();
+        }
 
         let page_count = self.page_count(document);
         if page_count == 0 {
@@ -475,10 +541,30 @@ impl ComicViewState {
                             self.current_page = first_visible.min(page_count.saturating_sub(1));
                         }
                         for p in row_range {
-                            if let Some(tex) = self.request_page_texture(ctx, document, p) {
+                            if let Some(tex) =
+                                self.request_page_texture(ctx, document, p, settings, theme)
+                            {
+                                let uv_rect = if settings.auto_crop {
+                                    self.page_bboxes.get(&p).copied().unwrap_or(
+                                        egui::Rect::from_min_max(
+                                            egui::Pos2::ZERO,
+                                            egui::Pos2::new(1.0, 1.0),
+                                        ),
+                                    )
+                                } else {
+                                    egui::Rect::from_min_max(
+                                        egui::Pos2::ZERO,
+                                        egui::Pos2::new(1.0, 1.0),
+                                    )
+                                };
                                 let tex_size = tex.size_vec2();
-                                let h = target_w * (tex_size.y / tex_size.x);
+                                let content_size = Vec2::new(
+                                    tex_size.x * uv_rect.width(),
+                                    tex_size.y * uv_rect.height(),
+                                );
+                                let h = target_w * (content_size.y / content_size.x);
                                 let img_widget = egui::Image::from_texture(&tex)
+                                    .uv(uv_rect)
                                     .fit_to_exact_size(Vec2::new(target_w, h));
                                 ui.add(img_widget);
                                 ui.add_space(8.0);
@@ -524,16 +610,24 @@ impl ComicViewState {
             };
 
             for &p in &pages_to_show {
-                let _ = self.request_page_texture(ctx, document, p);
+                let _ = self.request_page_texture(ctx, document, p, settings, theme);
             }
 
             let tex_sizes: Vec<Vec2> = pages_to_show
                 .iter()
                 .map(|&p| {
-                    self.textures
+                    let raw = self
+                        .textures
                         .get(&p)
                         .map(|t| t.0.size_vec2())
-                        .unwrap_or(Vec2::new(600.0, 800.0))
+                        .unwrap_or(Vec2::new(600.0, 800.0));
+                    if settings.auto_crop
+                        && let Some(bbox) = self.page_bboxes.get(&p)
+                    {
+                        Vec2::new(raw.x * bbox.width(), raw.y * bbox.height())
+                    } else {
+                        raw
+                    }
                 })
                 .collect();
 
@@ -572,7 +666,19 @@ impl ComicViewState {
                     let display_size = geom.page_sizes[idx];
                     if let Some(entry) = self.textures.get(&p) {
                         let tex = entry.0.clone();
+                        let uv_rect = if settings.auto_crop {
+                            self.page_bboxes
+                                .get(&p)
+                                .copied()
+                                .unwrap_or(egui::Rect::from_min_max(
+                                    egui::Pos2::ZERO,
+                                    egui::Pos2::new(1.0, 1.0),
+                                ))
+                        } else {
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0))
+                        };
                         let img_widget = egui::Image::from_texture(&tex)
+                            .uv(uv_rect)
                             .fit_to_exact_size(display_size)
                             .sense(egui::Sense::click());
                         let img_resp = ui.add(img_widget);
@@ -611,10 +717,22 @@ impl ComicViewState {
             });
 
             if self.current_page + 1 < page_count {
-                let _ = self.request_page_texture(ctx, document, self.current_page + 1);
+                let _ = self.request_page_texture(
+                    ctx,
+                    document,
+                    self.current_page + 1,
+                    settings,
+                    theme,
+                );
             }
             if self.current_page > 0 {
-                let _ = self.request_page_texture(ctx, document, self.current_page - 1);
+                let _ = self.request_page_texture(
+                    ctx,
+                    document,
+                    self.current_page - 1,
+                    settings,
+                    theme,
+                );
             }
 
             if next_clicked {

@@ -643,7 +643,9 @@ fn test_search_state_cycle_and_scroll_estimate() {
     assert!(y_para >= 0.0);
 
     state.hits = ReaderCore::search_in_document(&doc, "Beta");
-    state.hits.extend(ReaderCore::search_in_document(&doc, "Delta"));
+    state
+        .hits
+        .extend(ReaderCore::search_in_document(&doc, "Delta"));
     assert_eq!(state.hits.len(), 2);
     let first = state.current_hit().cloned();
     let second = state.next_hit().cloned();
@@ -686,11 +688,7 @@ fn test_light_themes_button_borders() {
         assert_eq!(visuals.override_text_color, Some(theme.text_color()));
     }
 
-    let dark_themes = [
-        ReaderTheme::Dark,
-        ReaderTheme::Oled,
-        ReaderTheme::Twilight,
-    ];
+    let dark_themes = [ReaderTheme::Dark, ReaderTheme::Oled, ReaderTheme::Twilight];
 
     for theme in dark_themes {
         assert!(theme.is_dark());
@@ -851,8 +849,8 @@ fn test_tts_controller_engine_and_rate_switching() {
 
 #[test]
 fn test_language_detection_and_voice_matching() {
-    use crate::core::ReaderCore;
     use crate::app::tts::voice_matches_lang;
+    use crate::core::ReaderCore;
 
     let ru_text = "Здоровье моего тела всегда улучшается и обновляется с каждым новым днем.";
     assert_eq!(ReaderCore::detect_language_from_text(ru_text), "ru");
@@ -866,10 +864,12 @@ fn test_language_detection_and_voice_matching() {
     let de_text = "Die Gesundheit meines Körpers verbessert sich und das ist wunderbar für mich.";
     assert_eq!(ReaderCore::detect_language_from_text(de_text), "de");
 
-    let fr_text = "La santé de mon corps s'améliore toujours avec le temps et c'est pour une vie saine.";
+    let fr_text =
+        "La santé de mon corps s'améliore toujours avec le temps et c'est pour une vie saine.";
     assert_eq!(ReaderCore::detect_language_from_text(fr_text), "fr");
 
-    let es_text = "La salud de mi cuerpo siempre mejora y se renueva con los días para vivir mejor.";
+    let es_text =
+        "La salud de mi cuerpo siempre mejora y se renueva con los días para vivir mejor.";
     assert_eq!(ReaderCore::detect_language_from_text(es_text), "es");
 
     let zh_text = "阅读能够开阔视野并让我们体验不同的人生与思考方式。";
@@ -934,7 +934,12 @@ fn test_hotkeys_b_v_j() {
     let cmds_ctrl_v = process_keyboard_events(false, |k| k == Key::V, ctrl_mod, false);
     assert!(cmds_ctrl_v.is_empty());
 
-    let cmds_typing = process_keyboard_events(true, |k| k == Key::B || k == Key::V || k == Key::J, Modifiers::default(), false);
+    let cmds_typing = process_keyboard_events(
+        true,
+        |k| k == Key::B || k == Key::V || k == Key::J,
+        Modifiers::default(),
+        false,
+    );
     assert!(cmds_typing.is_empty());
 }
 
@@ -958,8 +963,8 @@ fn test_hotkey_l_reading_ruler() {
 
 #[test]
 fn test_reading_ruler_settings_and_translations() {
-    use crate::settings::AppSettings;
     use crate::i18n::UiLanguage;
+    use crate::settings::AppSettings;
 
     let settings = AppSettings::default();
     assert!(!settings.reading_ruler);

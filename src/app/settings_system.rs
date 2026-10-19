@@ -29,16 +29,16 @@ pub fn render_system_tab(
         .corner_radius(6.0)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(t.update_title)
-                    .strong()
-                    .color(text_color),
-            );
+            ui.label(RichText::new(t.update_title).strong().color(text_color));
             ui.add_space(4.0);
             ui.label(
-                RichText::new(format!("{}: v{}", t.update_current_version, crate::updater::CURRENT_VERSION))
-                    .size(12.0)
-                    .color(text_color.gamma_multiply(0.8)),
+                RichText::new(format!(
+                    "{}: v{}",
+                    t.update_current_version,
+                    crate::updater::CURRENT_VERSION
+                ))
+                .size(12.0)
+                .color(text_color.gamma_multiply(0.8)),
             );
             ui.add_space(6.0);
             if ui
@@ -94,22 +94,17 @@ pub fn render_system_tab(
             .corner_radius(6.0)
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
-                ui.label(
-                    RichText::new(t.assoc_title)
-                        .strong()
-                        .color(text_color),
-                );
+                ui.label(RichText::new(t.assoc_title).strong().color(text_color));
                 ui.add_space(4.0);
                 ui.label(t.assoc_hint);
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
                     if ui.small_button(t.select_all).clicked() {
-                        settings.associated_extensions =
-                            crate::platform::SUPPORTED_EXTENSIONS_INFO
-                                .iter()
-                                .map(|(ext, _)| ext.to_string())
-                                .collect();
+                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS_INFO
+                            .iter()
+                            .map(|(ext, _)| ext.to_string())
+                            .collect();
                         *on_save_settings = true;
                     }
                     if ui.small_button(t.deselect_all).clicked() {
@@ -179,10 +174,7 @@ pub fn render_system_tab(
                 if ui
                     .add_enabled(
                         has_selected,
-                        egui::Button::new(
-                            RichText::new(t.register_btn)
-                                .strong(),
-                        ),
+                        egui::Button::new(RichText::new(t.register_btn).strong()),
                     )
                     .clicked()
                 {
@@ -191,10 +183,7 @@ pub fn render_system_tab(
 
                 ui.add_space(8.0);
                 if ui
-                    .checkbox(
-                        &mut settings.dismiss_association_prompt,
-                        t.dont_show_assoc,
-                    )
+                    .checkbox(&mut settings.dismiss_association_prompt, t.dont_show_assoc)
                     .changed()
                 {
                     *on_save_settings = true;
@@ -210,10 +199,54 @@ pub fn render_system_tab(
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
             ui.label(
-                RichText::new(t.settings_storage)
+                RichText::new(t.translation_provider)
                     .strong()
                     .color(text_color),
             );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let is_google =
+                    settings.translation.provider == crate::settings::TranslationProvider::Google;
+                let is_deepl =
+                    settings.translation.provider == crate::settings::TranslationProvider::DeepL;
+                if ui.selectable_label(is_google, "Google Translate").clicked() && !is_google {
+                    settings.translation.provider = crate::settings::TranslationProvider::Google;
+                    *on_save_settings = true;
+                }
+                if ui.selectable_label(is_deepl, "DeepL (API)").clicked() && !is_deepl {
+                    settings.translation.provider = crate::settings::TranslationProvider::DeepL;
+                    *on_save_settings = true;
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(t.deepl_api_key).color(text_color).size(13.0));
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut settings.translation.deepl_api_key)
+                        .password(true)
+                        .hint_text(t.deepl_key_hint)
+                        .desired_width(260.0),
+                );
+                if resp.changed() || resp.lost_focus() {
+                    *on_save_settings = true;
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(t.deepl_desc)
+                    .size(11.5)
+                    .color(text_color.gamma_multiply(0.7)),
+            );
+        });
+    ui.add_space(8.0);
+
+    egui::Frame::new()
+        .fill(theme.bg_color())
+        .stroke(card_stroke)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.label(RichText::new(t.settings_storage).strong().color(text_color));
             ui.add_space(4.0);
             let path_str = AppSettings::get_settings_path().display().to_string();
             ui.label(

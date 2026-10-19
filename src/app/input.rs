@@ -43,6 +43,10 @@ pub fn process_keyboard_events(
         cmds.push(Command::ToggleSettings);
     } else if !ctrl && key_pressed(egui::Key::L) {
         cmds.push(Command::ToggleReadingRuler);
+    } else if cmd_mod && key_pressed(egui::Key::D) {
+        cmds.push(Command::ToggleBookmark);
+    } else if !ctrl && key_pressed(egui::Key::M) {
+        cmds.push(Command::ToggleAmbient);
     } else if key_pressed(egui::Key::Escape) {
         cmds.push(Command::ExitFullscreen);
     }

@@ -28,12 +28,29 @@ impl TextView {
         search_highlight: Option<(&str, Option<usize>)>,
         tts_highlight: Option<usize>,
         on_start_tts: &mut Option<usize>,
+        on_open_opds: &mut bool,
+        on_translate: &mut Option<String>,
+        on_save_quote: &mut Option<String>,
     ) {
         let t = settings.ui_language.t();
         let is_rtl = settings.ui_language.is_rtl();
         if let Some(doc) = document {
             let total_chapters = doc.chapters().len();
             let chapter = doc.chapters().get(*current_chapter);
+
+            let chapter_quotes: Vec<(&str, Color32)> = settings
+                .bookmarks
+                .iter()
+                .filter(|b| {
+                    b.kind == crate::core::BookmarkKind::Quote
+                        && current_file_path
+                            .as_ref()
+                            .map_or(false, |p| b.book_path == *p)
+                        && b.chapter == *current_chapter
+                        && !b.text.trim().is_empty()
+                })
+                .map(|b| (b.text.as_str(), b.color.to_highlight_color(theme.is_dark())))
+                .collect();
 
             let allow_select = !ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
 
@@ -65,7 +82,9 @@ impl TextView {
                             let base_title_fmt = egui::TextFormat {
                                 font_id: egui::FontId::new(
                                     font_size * 1.35,
-                                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into()),
+                                    egui::FontFamily::Name(
+                                        crate::app::fonts::FONT_FAMILY_BOLD.into(),
+                                    ),
                                 ),
                                 color: theme.text_color(),
                                 ..Default::default()
@@ -76,16 +95,97 @@ impl TextView {
                                 &base_title_fmt,
                                 query_str,
                                 is_active_title,
+                                &chapter_quotes,
                             );
-                            let resp =
-                                ui.add(egui::Label::new(title_job).selectable(allow_select));
+                            let resp = selectable_label_preserving_on_secondary(
+                                ui,
+                                title_job,
+                                allow_select,
+                            );
                             resp.context_menu(|ui| {
-                                if ui.button(t.copy).clicked() {
-                                    ui.ctx().copy_text(clean_title.clone());
+                                let selected_text =
+                                    crate::app::selection::get_selected_text(ui.ctx());
+                                let has_selection = selected_text
+                                    .as_ref()
+                                    .map_or(false, |s| !s.trim().is_empty())
+                                    || crate::app::selection::has_active_selection(ui.ctx());
+                                if selected_text.is_none() && has_selection {
+                                    crate::app::selection::request_selection_capture(ui.ctx());
+                                }
+                                let prov_name = settings.translation.provider.name();
+
+                                if ui
+                                    .add(
+                                        IconButton::new(Icon::Speech, t.read_aloud_from_here)
+                                            .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    *on_start_tts = Some(0);
                                     ui.close();
                                 }
-                                if ui.button(t.copy_section).clicked()
+                                if ui
+                                    .add(
+                                        IconButton::new(Icon::Globe, t.translate_paragraph)
+                                            .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{} ({})",
+                                        t.translate_paragraph, prov_name
+                                    ))
+                                    .clicked()
                                 {
+                                    *on_translate = Some(clean_title.clone());
+                                    ui.close();
+                                }
+                                let sel_btn = ui.add_enabled(
+                                    has_selection,
+                                    IconButton::new(Icon::Globe, t.translate_selection)
+                                        .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                );
+                                if sel_btn.clicked() {
+                                    let sel = selected_text.clone().or_else(|| {
+                                        crate::app::selection::get_selected_text(ui.ctx())
+                                    });
+                                    if let Some(text) = sel {
+                                        *on_translate = Some(text);
+                                    }
+                                    ui.close();
+                                }
+                                let quote_btn = ui.add_enabled(
+                                    has_selection,
+                                    IconButton::new(Icon::Quote, t.save_quote_bookmark)
+                                        .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                );
+                                if quote_btn.clicked() {
+                                    let sel = selected_text.clone().or_else(|| {
+                                        crate::app::selection::get_selected_text(ui.ctx())
+                                    });
+                                    if let Some(text) = sel {
+                                        *on_save_quote = Some(text);
+                                    }
+                                    ui.close();
+                                }
+                                if has_selection {
+                                    sel_btn.on_hover_text(format!(
+                                        "{} ({})",
+                                        t.translate_selection, prov_name
+                                    ));
+                                } else {
+                                    sel_btn.on_disabled_hover_text(t.translate_selection_tip);
+                                }
+                                if ui.button(t.copy).clicked() {
+                                    let sel = selected_text.clone().or_else(|| {
+                                        crate::app::selection::get_selected_text(ui.ctx())
+                                    });
+                                    if let Some(text) = sel {
+                                        ui.ctx().copy_text(text);
+                                    } else {
+                                        ui.ctx().copy_text(clean_title.clone());
+                                    }
+                                    ui.close();
+                                }
+                                if ui.button(t.copy_section).clicked() {
                                     if let Some(full) =
                                         crate::core::ReaderCore::extract_chapter_text(
                                             doc.as_ref(),
@@ -136,9 +236,12 @@ impl TextView {
                                     is_active_para,
                                     is_rtl,
                                     settings.bionic_reading,
+                                    &chapter_quotes,
                                 );
-                                let resp = ui.add(
-                                    egui::Label::new(layout_job).wrap().selectable(allow_select),
+                                let resp = selectable_label_preserving_on_secondary(
+                                    ui,
+                                    layout_job,
+                                    allow_select,
                                 );
                                 if is_tts_speaking {
                                     ui.painter().rect(
@@ -150,16 +253,89 @@ impl TextView {
                                     );
                                 }
                                 resp.context_menu(|ui| {
-                                    if ui.add(IconButton::new(Icon::Speech, t.read_aloud_from_here)).clicked() {
+                                    let selected_text =
+                                        crate::app::selection::get_selected_text(ui.ctx());
+                                    let has_selection = selected_text
+                                        .as_ref()
+                                        .map_or(false, |s| !s.trim().is_empty())
+                                        || crate::app::selection::has_active_selection(ui.ctx());
+                                    if selected_text.is_none() && has_selection {
+                                        crate::app::selection::request_selection_capture(ui.ctx());
+                                    }
+                                    let prov_name = settings.translation.provider.name();
+
+                                    if ui
+                                        .add(
+                                            IconButton::new(Icon::Speech, t.read_aloud_from_here)
+                                                .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                        )
+                                        .clicked()
+                                    {
                                         *on_start_tts = Some(p_idx);
                                         ui.close();
                                     }
-                                    if ui.button(t.copy).clicked() {
-                                        ui.ctx().copy_text(clean_paragraph.clone());
+                                    if ui
+                                        .add(
+                                            IconButton::new(Icon::Globe, t.translate_paragraph)
+                                                .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                        )
+                                        .on_hover_text(format!(
+                                            "{} ({})",
+                                            t.translate_paragraph, prov_name
+                                        ))
+                                        .clicked()
+                                    {
+                                        *on_translate = Some(clean_paragraph.clone());
                                         ui.close();
                                     }
-                                    if ui.button(t.copy_section).clicked()
-                                    {
+                                    let sel_btn = ui.add_enabled(
+                                        has_selection,
+                                        IconButton::new(Icon::Globe, t.translate_selection)
+                                            .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                    );
+                                    if sel_btn.clicked() {
+                                        let sel = selected_text.clone().or_else(|| {
+                                            crate::app::selection::get_selected_text(ui.ctx())
+                                        });
+                                        if let Some(text) = sel {
+                                            *on_translate = Some(text);
+                                        }
+                                        ui.close();
+                                    }
+                                    let quote_btn = ui.add_enabled(
+                                        has_selection,
+                                        IconButton::new(Icon::Quote, t.save_quote_bookmark)
+                                            .min_size(Vec2::new(ui.available_width(), 26.0)),
+                                    );
+                                    if quote_btn.clicked() {
+                                        let sel = selected_text.clone().or_else(|| {
+                                            crate::app::selection::get_selected_text(ui.ctx())
+                                        });
+                                        if let Some(text) = sel {
+                                            *on_save_quote = Some(text);
+                                        }
+                                        ui.close();
+                                    }
+                                    if has_selection {
+                                        sel_btn.on_hover_text(format!(
+                                            "{} ({})",
+                                            t.translate_selection, prov_name
+                                        ));
+                                    } else {
+                                        sel_btn.on_disabled_hover_text(t.translate_selection_tip);
+                                    }
+                                    if ui.button(t.copy).clicked() {
+                                        let sel = selected_text.clone().or_else(|| {
+                                            crate::app::selection::get_selected_text(ui.ctx())
+                                        });
+                                        if let Some(text) = sel {
+                                            ui.ctx().copy_text(text);
+                                        } else {
+                                            ui.ctx().copy_text(clean_paragraph.clone());
+                                        }
+                                        ui.close();
+                                    }
+                                    if ui.button(t.copy_section).clicked() {
                                         if let Some(full) =
                                             crate::core::ReaderCore::extract_chapter_text(
                                                 doc.as_ref(),
@@ -274,12 +450,9 @@ impl TextView {
                 ui.add_space(30.0);
 
                 ui.horizontal(|ui| {
-                    let open_btn = IconButton::new(
-                        Icon::OpenFile,
-                        t.choose_book_btn,
-                    )
-                    .font_size(17.0)
-                    .min_size(Vec2::new(280.0, 46.0));
+                    let open_btn = IconButton::new(Icon::OpenFile, t.choose_book_btn)
+                        .font_size(17.0)
+                        .min_size(Vec2::new(220.0, 46.0));
 
                     if ui
                         .add(open_btn)
@@ -289,15 +462,28 @@ impl TextView {
                         *on_open_file = true;
                     }
 
-                    let open_dir_btn = IconButton::new(
-                        Icon::Folder,
-                        t.open_manga_folder_btn,
-                    )
-                    .font_size(17.0)
-                    .min_size(Vec2::new(240.0, 46.0));
+                    let open_dir_btn = IconButton::new(Icon::Folder, t.open_manga_folder_btn)
+                        .font_size(17.0)
+                        .min_size(Vec2::new(200.0, 46.0));
 
-                    if ui.add(open_dir_btn).on_hover_text(t.images_folder_hint).clicked() {
+                    if ui
+                        .add(open_dir_btn)
+                        .on_hover_text(t.images_folder_hint)
+                        .clicked()
+                    {
                         *on_open_folder = true;
+                    }
+
+                    let opds_btn = IconButton::new(Icon::Globe, t.opds_catalogs)
+                        .font_size(17.0)
+                        .min_size(Vec2::new(200.0, 46.0));
+
+                    if ui
+                        .add(opds_btn)
+                        .on_hover_text(t.opds_catalogs_tooltip)
+                        .clicked()
+                    {
+                        *on_open_opds = true;
                     }
                 });
 
@@ -322,7 +508,10 @@ impl TextView {
                         } else {
                             format!("{} — {} ({})", book.author, book.title, sec_str)
                         };
-                        if ui.add(IconButton::new(Icon::Book, &label).font_size(14.0)).clicked() {
+                        if ui
+                            .add(IconButton::new(Icon::Book, &label).font_size(14.0))
+                            .clicked()
+                        {
                             *on_load_recent = Some(book.path.clone());
                         }
                         ui.add_space(4.0);
@@ -334,6 +523,74 @@ impl TextView {
 }
 
 fn append_with_highlight(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    base_format: &egui::TextFormat,
+    query: &str,
+    is_active_hit: bool,
+    quotes: &[(&str, Color32)],
+) {
+    if quotes.is_empty() {
+        append_with_query_highlight(job, text, base_format, query, is_active_hit);
+        return;
+    }
+
+    let lower_text = text.to_lowercase();
+    let mut intervals: Vec<(usize, usize, Color32)> = Vec::new();
+    for (quote_text, marker_color) in quotes {
+        let q_clean = quote_text.trim();
+        if q_clean.is_empty() {
+            continue;
+        }
+        let lower_q = q_clean.to_lowercase();
+        let mut search_from = 0;
+        while let Some(found_idx) = lower_text[search_from..].find(&lower_q) {
+            let abs_start = search_from + found_idx;
+            let abs_end = abs_start + lower_q.len();
+            let safe_start = text.floor_char_boundary(abs_start);
+            let safe_end = text.ceil_char_boundary(abs_end.min(text.len()));
+            if safe_start < safe_end {
+                intervals.push((safe_start, safe_end, *marker_color));
+            }
+            search_from = abs_end.max(search_from + 1);
+            if search_from >= lower_text.len() {
+                break;
+            }
+        }
+    }
+
+    if intervals.is_empty() {
+        append_with_query_highlight(job, text, base_format, query, is_active_hit);
+        return;
+    }
+
+    intervals.sort_by_key(|&(s, _, _)| s);
+    let mut last_idx = 0;
+    for (start, end, color) in intervals {
+        if start < last_idx {
+            continue;
+        }
+        if start > last_idx {
+            append_with_query_highlight(
+                job,
+                &text[last_idx..start],
+                base_format,
+                query,
+                is_active_hit,
+            );
+        }
+        let mut quote_format = base_format.clone();
+        quote_format.background = color;
+        append_with_query_highlight(job, &text[start..end], &quote_format, query, is_active_hit);
+        last_idx = end;
+    }
+
+    if last_idx < text.len() {
+        append_with_query_highlight(job, &text[last_idx..], base_format, query, is_active_hit);
+    }
+}
+
+fn append_with_query_highlight(
     job: &mut egui::text::LayoutJob,
     text: &str,
     base_format: &egui::TextFormat,
@@ -399,6 +656,7 @@ fn create_paragraph_layout_job(
     is_active_hit: bool,
     is_rtl: bool,
     bionic_reading: bool,
+    quotes: &[(&str, Color32)],
 ) -> egui::text::LayoutJob {
     let spans = crate::document::parse_formatted_spans(paragraph);
     let mut job = egui::text::LayoutJob::default();
@@ -440,16 +698,14 @@ fn create_paragraph_layout_job(
                     italics: span.italic,
                     ..Default::default()
                 };
-                append_with_highlight(&mut job, chunk, &format, query, is_active_hit);
+                append_with_highlight(&mut job, chunk, &format, query, is_active_hit, quotes);
             }
         } else {
             let family = match (span.bold, span.italic) {
                 (true, true) => {
                     egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
                 }
-                (true, false) => {
-                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into())
-                }
+                (true, false) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into()),
                 (false, true) => {
                     egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into())
                 }
@@ -461,7 +717,7 @@ fn create_paragraph_layout_job(
                 italics: span.italic,
                 ..Default::default()
             };
-            append_with_highlight(&mut job, &text, &format, query, is_active_hit);
+            append_with_highlight(&mut job, &text, &format, query, is_active_hit, quotes);
         }
     }
     if job.sections.is_empty() {
@@ -483,7 +739,7 @@ fn create_paragraph_layout_job(
                     color: text_color,
                     ..Default::default()
                 };
-                append_with_highlight(&mut job, chunk, &format, query, is_active_hit);
+                append_with_highlight(&mut job, chunk, &format, query, is_active_hit, quotes);
             }
         } else {
             let format = egui::TextFormat {
@@ -491,7 +747,7 @@ fn create_paragraph_layout_job(
                 color: text_color,
                 ..Default::default()
             };
-            append_with_highlight(&mut job, &text, &format, query, is_active_hit);
+            append_with_highlight(&mut job, &text, &format, query, is_active_hit, quotes);
         }
     }
     job
@@ -512,5 +768,71 @@ pub fn create_sample_preview_job(
         false,
         is_rtl,
         bionic_reading,
+        &[],
     )
+}
+
+fn selectable_label_preserving_on_secondary(
+    ui: &mut egui::Ui,
+    layout_job: egui::text::LayoutJob,
+    allow_select: bool,
+) -> egui::Response {
+    let is_secondary_or_menu = ui.input(|i| {
+        i.pointer.button_down(egui::PointerButton::Secondary)
+            || i.pointer.button_pressed(egui::PointerButton::Secondary)
+            || i.pointer.button_released(egui::PointerButton::Secondary)
+    }) || egui::Popup::is_any_open(ui.ctx());
+
+    if !allow_select {
+        return ui.add(egui::Label::new(layout_job).wrap().selectable(false));
+    }
+
+    let has_sel = ui
+        .ctx()
+        .plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .has_selection();
+    let is_primary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+    let is_secondary_down = ui.input(|i| {
+        i.pointer.button_pressed(egui::PointerButton::Secondary)
+            || i.pointer.button_down(egui::PointerButton::Secondary)
+    });
+
+    if has_sel && (is_primary_released || is_secondary_down) {
+        crate::app::selection::request_selection_capture(ui.ctx());
+    }
+
+    if !is_secondary_or_menu {
+        return ui.add(egui::Label::new(layout_job).wrap().selectable(true));
+    }
+
+    let label = egui::Label::new(layout_job).wrap().selectable(false);
+    let (galley_pos, galley, response) = label.layout_in_ui(ui);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), galley.text())
+    });
+
+    let click_response = ui.interact(response.rect, response.id, egui::Sense::click());
+
+    if ui.is_rect_visible(response.rect) {
+        let response_color = ui.style().visuals.text_color();
+        let underline = if response.has_focus() || response.highlighted() {
+            Stroke::new(1.0, response_color)
+        } else {
+            Stroke::NONE
+        };
+
+        let safe_response = ui.interact(response.rect, response.id, egui::Sense::hover());
+
+        egui::text_selection::LabelSelectionState::label_text_selection(
+            ui,
+            &safe_response,
+            galley_pos,
+            galley,
+            response_color,
+            underline,
+        );
+    }
+
+    click_response
 }

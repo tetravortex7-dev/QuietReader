@@ -1,3 +1,4 @@
+use crate::opds::{OpdsCatalog, default_opds_catalogs};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -72,6 +73,10 @@ fn default_comic_zoom() -> f32 {
     100.0
 }
 
+fn default_crop_tolerance() -> u8 {
+    24
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct ComicSettings {
@@ -79,6 +84,12 @@ pub struct ComicSettings {
     pub page_layout: String,
     pub fit_mode: String,
     pub zoom_percent: f32,
+    #[serde(default)]
+    pub smart_dark: bool,
+    #[serde(default)]
+    pub auto_crop: bool,
+    #[serde(default = "default_crop_tolerance")]
+    pub auto_crop_tolerance: u8,
 }
 
 impl Default for ComicSettings {
@@ -88,6 +99,9 @@ impl Default for ComicSettings {
             page_layout: "Single".to_string(),
             fit_mode: "FitWindow".to_string(),
             zoom_percent: 100.0,
+            smart_dark: false,
+            auto_crop: false,
+            auto_crop_tolerance: default_crop_tolerance(),
         }
     }
 }
@@ -99,6 +113,12 @@ pub struct PdfSettings {
     pub fit_mode: String,
     pub zoom_percent: f32,
     pub rotation: i32,
+    #[serde(default)]
+    pub smart_dark: bool,
+    #[serde(default)]
+    pub auto_crop: bool,
+    #[serde(default = "default_crop_tolerance")]
+    pub auto_crop_tolerance: u8,
 }
 
 impl Default for PdfSettings {
@@ -108,11 +128,37 @@ impl Default for PdfSettings {
             fit_mode: "FitWindow".to_string(),
             zoom_percent: 100.0,
             rotation: 0,
+            smart_dark: false,
+            auto_crop: false,
+            auto_crop_tolerance: default_crop_tolerance(),
         }
     }
 }
 
 pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TranslationProvider {
+    #[default]
+    Google,
+    DeepL,
+}
+
+impl TranslationProvider {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Google => "Google Translate",
+            Self::DeepL => "DeepL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct TranslationSettings {
+    pub provider: TranslationProvider,
+    pub deepl_api_key: String,
+}
 
 fn default_schema_version() -> u32 {
     0
@@ -176,6 +222,14 @@ pub struct AppSettings {
     pub reading_ruler_lines: u32,
     #[serde(default = "default_reading_ruler_opacity")]
     pub reading_ruler_opacity: f32,
+    #[serde(default = "default_opds_catalogs")]
+    pub opds_catalogs: Vec<OpdsCatalog>,
+    #[serde(default)]
+    pub translation: TranslationSettings,
+    #[serde(default)]
+    pub bookmarks: Vec<crate::core::Bookmark>,
+    #[serde(default)]
+    pub ambient: crate::app::ambient::AmbientSettings,
 }
 
 impl Default for AppSettings {
@@ -204,6 +258,10 @@ impl Default for AppSettings {
             reading_ruler: false,
             reading_ruler_lines: 3,
             reading_ruler_opacity: 0.45,
+            opds_catalogs: default_opds_catalogs(),
+            translation: TranslationSettings::default(),
+            bookmarks: Vec::new(),
+            ambient: crate::app::ambient::AmbientSettings::default(),
         }
     }
 }
@@ -517,7 +575,7 @@ impl AppSettings {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "enable_tests"))]
 mod tests {
     use super::*;
 
@@ -541,5 +599,11 @@ mod tests {
         assert_eq!(s.reading_ruler_lines, 4);
         assert!((s.reading_ruler_opacity - 0.65).abs() < 1e-4);
     }
-}
 
+    #[test]
+    fn test_opds_catalogs_defaults() {
+        let s = AppSettings::default();
+        assert!(!s.opds_catalogs.is_empty());
+        assert!(s.opds_catalogs.iter().any(|c| c.name.contains("Gutenberg")));
+    }
+}
