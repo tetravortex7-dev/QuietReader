@@ -12,6 +12,7 @@ pub fn supports_file_association() -> bool {
 pub const SUPPORTED_EXTENSIONS_INFO: &[(&str, &str)] = &[
     ("fb2", "FB2 (.fb2) — Книги FictionBook"),
     ("epub", "EPUB (.epub) — Электронные книги"),
+    ("mobi", "MOBI (.mobi, .prc) — Книги Mobipocket"),
     ("txt", "TXT (.txt) — Текстовые документы"),
     ("doc", "DOC (.doc) — Документы Word 97-2004"),
     ("docx", "DOCX (.docx) — Документы Word"),

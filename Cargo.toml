@@ -6,7 +6,6 @@ edition = "2024"
 [[bin]]
 name = "QuietReader"
 path = "src/main.rs"
-test = false
 
 [dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
@@ -26,6 +25,8 @@ msedge-tts = "0.4.1"
 rodio = { version = "0.23", default-features = false, features = ["playback", "symphonia-mp3", "symphonia-wav"] }
 ureq = "3.4"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+mobi = { version = "0.8", default-features = false }
+
 
 [profile.release]
 opt-level = "s"

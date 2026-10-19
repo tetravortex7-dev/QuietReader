@@ -423,6 +423,7 @@ fn test_platform_multi_extension_selection() {
     assert!(exts.contains(&"doc"));
     assert!(exts.contains(&"docx"));
     assert!(exts.contains(&"epub"));
+    assert!(exts.contains(&"mobi"));
     assert!(exts.contains(&"rtf"));
     assert!(exts.contains(&"pdf"));
     assert!(exts.contains(&"djvu"));
@@ -961,8 +962,8 @@ fn test_reading_ruler_settings_and_translations() {
 
     let settings = AppSettings::default();
     assert!(!settings.reading_ruler);
-    assert_eq!(settings.reading_ruler_lines, 2);
-    assert!((settings.reading_ruler_opacity - 0.50).abs() < f32::EPSILON);
+    assert_eq!(settings.reading_ruler_lines, 3);
+    assert!((settings.reading_ruler_opacity - 0.45).abs() < f32::EPSILON);
 
     for lang in UiLanguage::CONCRETE {
         let t = lang.t();

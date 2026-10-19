@@ -1,6 +1,6 @@
 use crate::document::{
     ComicDocument, DjvuDocument, DocDocument, Document, DocumentError, DocxDocument, EpubDocument,
-    Fb2Document, PdfDocument, RtfDocument, TxtDocument,
+    Fb2Document, MobiDocument, PdfDocument, RtfDocument, TxtDocument,
 };
 use std::path::Path;
 
@@ -275,12 +275,51 @@ impl DocumentFormat for TxtFormat {
     }
 }
 
+pub struct MobiFormat;
+impl DocumentFormat for MobiFormat {
+    fn name(&self) -> &'static str {
+        "MOBI"
+    }
+    fn extensions(&self) -> &'static [&'static str] {
+        &["mobi", "prc"]
+    }
+    fn probe(&self, path: &Path) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        if ext == "mobi" || ext == "prc" {
+            return true;
+        }
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let mut buf = [0u8; 68];
+            if let Ok(n) = f.read(&mut buf)
+                && n >= 68
+                && (&buf[60..68] == b"BOOKMOBI" || &buf[64..68] == b"MOBI")
+            {
+                return true;
+            }
+        }
+        false
+    }
+    fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = MobiDocument::from_file(path)?;
+        Ok(Box::new(doc))
+    }
+}
+
 pub static FORMAT_REGISTRY: &[&dyn DocumentFormat] = &[
     &PdfFormat,
     &DjvuFormat,
     &ComicFormat,
     &EpubFormat,
     &Fb2Format,
+    &MobiFormat,
     &DocxFormat,
     &RtfFormat,
     &DocFormat,

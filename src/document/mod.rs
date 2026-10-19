@@ -4,6 +4,7 @@ pub mod doc;
 pub mod docx;
 pub mod epub;
 pub mod fb2;
+pub mod mobi;
 pub mod pdf;
 pub mod registry;
 pub mod rtf;
@@ -15,6 +16,7 @@ pub use doc::DocDocument;
 pub use docx::DocxDocument;
 pub use epub::EpubDocument;
 pub use fb2::Fb2Document;
+pub use mobi::MobiDocument;
 pub use pdf::PdfDocument;
 #[allow(unused_imports)]
 pub use registry::{DocumentFormat, FORMAT_REGISTRY};

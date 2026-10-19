@@ -232,6 +232,7 @@ pub fn format_extension_description(ext: &str, lang: UiLanguage) -> &'static str
     match ext.to_ascii_lowercase().as_str() {
         "fb2" => t.format_desc_fb2,
         "epub" => t.format_desc_epub,
+        "mobi" | "prc" => "MOBI (.mobi, .prc) — Книги Mobipocket",
         "txt" => t.format_desc_txt,
         "doc" => t.format_desc_doc,
         "docx" => t.format_desc_docx,
