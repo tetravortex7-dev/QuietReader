@@ -69,3 +69,6 @@ mod tests_ambient;
 
 #[cfg(all(test, feature = "enable_tests"))]
 mod tests_scan_processor;
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod tests_opds;

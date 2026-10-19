@@ -73,7 +73,7 @@ Strict separation between four layers:
 7. Development Rules for AI Agents
 
 - Before changes: Inspect codebase, reuse existing abstractions, make minimal surgical changes. Avoid unrelated refactoring or weakened boundaries.
-- After changes: Run formatting, compilation, and tests. Add/update tests for fixes and features.
+- After changes: Run formatting, compilation, and tests. Add/update tests for fixes and features. Document new features in `README.md`.
 - Reporting: State exact changes and completed checks. Explicitly mention unverified platforms, missing checks, and unresolved issues.
 - Broader architectural changes require explicit justification and controlled scope.
 
@@ -108,3 +108,7 @@ All UI icons must be custom vector paths drawn with `egui::Painter` (`src/app/ic
 14. Git Synchronization Policy
 
 Do not commit and push after every modification or task. Synchronize approximately once every 3 days: check git commit history and push only if at least 3 days have elapsed since the last commit/push.
+
+15. Feature Documentation Policy
+
+Every new feature or capability introduced into the project must be documented in `README.md`. Future agents, assistants, and contributors rely on `README.md` as the authoritative overview of available features and user-facing capabilities.

@@ -12,6 +12,7 @@ pub mod document_loader;
 pub mod fonts;
 pub mod icons;
 pub mod input;
+pub mod opds_sidebar;
 pub mod opds_view;
 pub mod paged_common;
 pub mod pdf_toolbar;
@@ -841,6 +842,13 @@ impl eframe::App for QuietReaderApp {
         );
         if let Some(path) = opds_file_to_open {
             self.load_file(path);
+            self.status_message = Some(
+                self.settings
+                    .ui_language
+                    .t()
+                    .opds_book_downloaded_opened
+                    .to_string(),
+            );
         }
 
         let mut on_speak_translated = None;
