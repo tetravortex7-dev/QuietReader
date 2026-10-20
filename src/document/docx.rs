@@ -391,3 +391,6 @@ fn local_name(name: &str) -> &str {
         name
     }
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

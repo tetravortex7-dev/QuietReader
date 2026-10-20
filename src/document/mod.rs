@@ -337,3 +337,6 @@ pub fn read_bounded<R: std::io::Read>(
     *total_unpacked = new_total;
     Ok(buf)
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

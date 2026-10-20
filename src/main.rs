@@ -59,16 +59,4 @@ fn main() -> eframe::Result<()> {
 }
 
 #[cfg(all(test, feature = "enable_tests"))]
-mod tests_critical;
-
-#[cfg(all(test, feature = "enable_tests"))]
-mod tests_bookmarks;
-
-#[cfg(all(test, feature = "enable_tests"))]
-mod tests_ambient;
-
-#[cfg(all(test, feature = "enable_tests"))]
-mod tests_scan_processor;
-
-#[cfg(all(test, feature = "enable_tests"))]
-mod tests_opds;
+mod test;

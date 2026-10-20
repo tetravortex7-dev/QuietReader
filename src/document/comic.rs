@@ -720,3 +720,6 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
         }
     }
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

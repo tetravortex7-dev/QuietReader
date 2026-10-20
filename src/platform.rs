@@ -968,3 +968,6 @@ pub mod window;
 
 pub use single_instance::*;
 pub use window::*;
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

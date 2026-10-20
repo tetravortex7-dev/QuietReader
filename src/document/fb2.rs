@@ -855,3 +855,6 @@ fn normalize_whitespace(s: &str) -> String {
     }
     result.trim().to_string()
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

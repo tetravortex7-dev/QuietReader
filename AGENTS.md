@@ -107,8 +107,17 @@ All UI icons must be custom vector paths drawn with `egui::Painter` (`src/app/ic
 
 14. Git Synchronization Policy
 
-Do not commit and push after every modification or task. Synchronize approximately once every 3 days: check git commit history and push only if at least 3 days have elapsed since the last commit/push.
+Do not commit and push after every modification or task. Synchronize approximately once every 2 days: check git commit history and push only if at least 2 days have elapsed since the last commit/push.
 
 15. Feature Documentation Policy
 
 Every new feature or capability introduced into the project must be documented in `README.md`. Future agents, assistants, and contributors rely on `README.md` as the authoritative overview of available features and user-facing capabilities.
+
+16. Test Placement Policy
+
+- Tests must never live inline in production source files (no `mod tests { ... }` blocks) and never as loose `tests_*.rs` files in `src/`.
+- Every module keeps its tests in a `test` subdirectory next to it and declares them with `#[cfg(all(test, feature = "enable_tests"))] mod test;`. Examples: `src/document/epub/test/` holds EPUB-only tests, `src/document/fb2/test/` FB2-only tests, `src/document/mobi/test/` MOBI-only tests, `src/app/test/` UI/app tests, `src/settings/test/` settings tests, `src/opds/test/` OPDS tests.
+- The same rule applies to every new format and module: format-specific tests go into `<format module>/test/`; tests spanning several formats (archive safety, registry) go into `src/document/test/`.
+- Split a `test` directory into several topic files (declared in its `mod.rs`) when it grows; the 1000-line limit and the no-comments rule apply to test files too.
+- Helpers shared by tests of different modules live in `src/test/util.rs` (e.g. `unique_test_dir`); do not duplicate them.
+- New tests must be added to the matching `test` directory in the same change as the feature or fix they cover.

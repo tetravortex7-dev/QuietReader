@@ -300,3 +300,6 @@ impl PageContent for PdfDocument {
         false
     }
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

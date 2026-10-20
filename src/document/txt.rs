@@ -336,3 +336,6 @@ fn parse_plain_text_chapters(text: &str, default_title: &str) -> (Vec<BookChapte
     }
     (chapters, toc)
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

@@ -553,3 +553,6 @@ pub fn percent_decode_str(s: &str) -> String {
 pub(crate) fn local_name(name: &str) -> &str {
     name.rfind(':').map(|pos| &name[pos + 1..]).unwrap_or(name)
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

@@ -481,3 +481,6 @@ fn hex_digit(b: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

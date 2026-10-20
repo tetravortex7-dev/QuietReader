@@ -883,3 +883,6 @@ impl eframe::App for QuietReaderApp {
         }
     }
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

@@ -565,3 +565,6 @@ impl PageContent for DjvuDocument {
         false
     }
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

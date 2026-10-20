@@ -8,3 +8,6 @@ pub use client::*;
 pub use covers::*;
 pub use parser::*;
 pub use types::*;
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

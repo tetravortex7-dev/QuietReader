@@ -430,3 +430,6 @@ fn clean_word_text(s: &str) -> String {
     }
     out.trim().to_string()
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;

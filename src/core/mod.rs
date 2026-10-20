@@ -711,3 +711,6 @@ impl ReaderCore {
         }
     }
 }
+
+#[cfg(all(test, feature = "enable_tests"))]
+mod test;
