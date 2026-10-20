@@ -20,6 +20,13 @@
 *.zip
 *.rar
 *.7z
+*.mobi
+*.azw
+*.azw3
+*.prc
+*.docx
+*.rtf
+*.doc
 
 # Prompt & temporary notes
 prompt.md
