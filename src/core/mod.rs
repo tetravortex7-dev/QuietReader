@@ -129,6 +129,7 @@ impl Default for Bookmark {
 pub struct SearchHit {
     pub chapter_index: usize,
     pub paragraph_index: Option<usize>,
+    pub page_index: Option<usize>,
     pub snippet: String,
 }
 
@@ -187,18 +188,32 @@ impl ReaderCore {
     }
 
     pub fn search_in_document(doc: &dyn Document, query: &str) -> Vec<SearchHit> {
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        Self::search_in_document_with_cancel(doc, query, &cancelled)
+    }
+
+    pub fn search_in_document_with_cancel(
+        doc: &dyn Document,
+        query: &str,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Vec<SearchHit> {
+        use std::sync::atomic::Ordering;
         let q = query.trim().to_lowercase();
         if q.is_empty() {
             return Vec::new();
         }
         let mut hits = Vec::new();
         for (ch_idx, chapter) in doc.chapters().iter().enumerate() {
+            if cancelled.load(Ordering::Relaxed) {
+                return Vec::new();
+            }
             let clean_title = crate::document::strip_formatting_tags(&chapter.title);
             let lower_title = clean_title.to_lowercase();
             if lower_title.contains(&q) {
                 hits.push(SearchHit {
                     chapter_index: ch_idx,
                     paragraph_index: None,
+                    page_index: None,
                     snippet: clean_title.clone(),
                 });
                 if hits.len() >= 200 {
@@ -207,6 +222,9 @@ impl ReaderCore {
             }
 
             for (p_idx, para) in chapter.paragraphs.iter().enumerate() {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Vec::new();
+                }
                 let clean = crate::document::strip_formatting_tags(para);
                 let lower_para = clean.to_lowercase();
                 let mut search_from = 0;
@@ -216,6 +234,7 @@ impl ReaderCore {
                     hits.push(SearchHit {
                         chapter_index: ch_idx,
                         paragraph_index: Some(p_idx),
+                        page_index: None,
                         snippet,
                     });
                     if hits.len() >= 200 {
@@ -225,6 +244,50 @@ impl ReaderCore {
                     if search_from >= lower_para.len() {
                         break;
                     }
+                }
+            }
+        }
+        hits
+    }
+
+    pub fn search_page_text_in_document(
+        doc: &dyn Document,
+        query: &str,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Vec<SearchHit> {
+        use std::sync::atomic::Ordering;
+        let Some(pages) = doc.page_content() else {
+            return Vec::new();
+        };
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let mut hits = Vec::new();
+        for page_idx in 0..pages.page_count() {
+            if cancelled.load(Ordering::Relaxed) {
+                return Vec::new();
+            }
+            let Some(text) = pages.extract_page_text(page_idx) else {
+                continue;
+            };
+            let lower_text = text.to_lowercase();
+            let mut search_from = 0;
+            while let Some(found_idx) = lower_text[search_from..].find(&q) {
+                let abs_pos = search_from + found_idx;
+                let snippet = Self::make_safe_snippet(&text, abs_pos, q.len());
+                hits.push(SearchHit {
+                    chapter_index: 0,
+                    paragraph_index: None,
+                    page_index: Some(page_idx),
+                    snippet,
+                });
+                if hits.len() >= 200 {
+                    return hits;
+                }
+                search_from = abs_pos + q.len().max(1);
+                if search_from >= lower_text.len() {
+                    break;
                 }
             }
         }

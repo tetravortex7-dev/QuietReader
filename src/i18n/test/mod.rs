@@ -21,6 +21,38 @@ fn test_ui_languages_all() {
         assert!(!t.tts_title.is_empty());
         assert!(!t.copy.is_empty());
         assert!(!t.read_aloud_from_here.is_empty());
+        assert!(!t.extra.default_word_document.is_empty());
+        assert!(!t.extra.default_text_document.is_empty());
+        assert!(!t.extra.default_section_plain.is_empty());
+        assert!(!t.extra.default_section_page.is_empty());
+        assert!(!t.extra.default_pdf_document.is_empty());
+        assert!(!t.extra.default_djvu_document.is_empty());
+        assert!(!t.extra.default_mobi_document.is_empty());
+        assert!(!t.extra.default_chapter_part.is_empty());
+        assert!(!t.extra.default_lines_range.is_empty());
+        assert!(!t.extra.comic_total_pages.is_empty());
+        assert!(!t.extra.comic_pages_range.is_empty());
+        assert!(!t.extra.translate_provider_error.is_empty());
+        assert!(t.extra.copy_page_done.contains("{page}"));
+        assert!(t.extra.page_error_detail.contains("{page}"));
+        assert!(t.extra.page_error_detail.contains("{error}"));
+        assert!(t.extra.comic_total_pages.contains("{n}"));
+        assert!(t.extra.comic_pages_range.contains("{start}"));
+        assert!(t.extra.comic_pages_range.contains("{end}"));
+        assert!(t.extra.comic_pages_range.contains("{count}"));
+        assert!(t.extra.default_chapter_part.contains("{chapter}"));
+        assert!(t.extra.default_chapter_part.contains("{part}"));
+        assert!(t.extra.default_lines_range.contains("{title}"));
+        assert!(t.extra.default_lines_range.contains("{start}"));
+        assert!(t.extra.default_lines_range.contains("{end}"));
+        assert!(t.fonts.iter().all(|font| !font.badge.is_empty()));
+        assert!(t.fonts.iter().all(|font| !font.description.is_empty()));
+        assert!(t.hotkeys.iter().all(|hotkey| !hotkey.keys.is_empty()));
+        assert!(
+            t.hotkeys
+                .iter()
+                .all(|hotkey| !hotkey.description.is_empty())
+        );
 
         let label = lang.label(t);
         assert!(!label.is_empty());

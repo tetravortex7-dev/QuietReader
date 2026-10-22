@@ -1,4 +1,4 @@
-use super::icons::{Icon, IconLabel, icon_button};
+use super::icons::{Icon, IconButton, IconLabel, icon_button};
 use super::theme::ReaderTheme;
 use crate::document::{Document, DocumentViewKind};
 use eframe::egui::{self, Panel, RichText};
@@ -152,13 +152,12 @@ pub fn render_top_bar(
                     actions.toggle_fullscreen = true;
                 }
                 if let Some(tag) = update_available_version {
-                    let label = format!("⬆ v{tag}");
+                    let label = format!("v{tag}");
                     if ui
-                        .add(egui::Button::new(
-                            RichText::new(label)
-                                .color(egui::Color32::from_rgb(220, 140, 20))
-                                .strong(),
-                        ))
+                        .add(
+                            IconButton::new(Icon::ChevronUp, &label)
+                                .color(egui::Color32::from_rgb(220, 140, 20)),
+                        )
                         .on_hover_text(t.update_available_tip)
                         .clicked()
                     {
@@ -283,6 +282,12 @@ pub fn render_bottom_bar(
                 if let Some(err) = crate::settings::AppSettings::last_save_error() {
                     ui.separator();
                     ui.add(IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED));
+                } else if let Some(err) = crate::settings::AppSettings::last_secret_error() {
+                    ui.separator();
+                    ui.add(
+                        IconLabel::new(Icon::Warning, &t.secrets_storage_error.replace("{}", &err))
+                            .color(egui::Color32::RED),
+                    );
                 } else if let Some(msg) = status_message {
                     if status_opacity > 0.01 {
                         ui.separator();
@@ -294,6 +299,11 @@ pub fn render_bottom_bar(
                 }
             } else if let Some(err) = crate::settings::AppSettings::last_save_error() {
                 ui.add(IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED));
+            } else if let Some(err) = crate::settings::AppSettings::last_secret_error() {
+                ui.add(
+                    IconLabel::new(Icon::Warning, &t.secrets_storage_error.replace("{}", &err))
+                        .color(egui::Color32::RED),
+                );
             } else if let Some(msg) = status_message {
                 if status_opacity > 0.01 {
                     ui.label(

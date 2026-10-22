@@ -2,6 +2,7 @@ mod ambient;
 mod bookmarks;
 mod input;
 mod loader;
+mod localized_document;
 mod paged;
 mod pdf_view;
 mod scan_processor;

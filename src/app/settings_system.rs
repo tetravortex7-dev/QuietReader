@@ -101,9 +101,9 @@ pub fn render_system_tab(
 
                 ui.horizontal(|ui| {
                     if ui.small_button(t.select_all).clicked() {
-                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS_INFO
+                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS
                             .iter()
-                            .map(|(ext, _)| ext.to_string())
+                            .map(|ext| ext.to_string())
                             .collect();
                         *on_save_settings = true;
                     }
@@ -123,7 +123,11 @@ pub fn render_system_tab(
                     .num_columns(2)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
-                        for &(ext, label) in crate::platform::SUPPORTED_EXTENSIONS_INFO {
+                        for &ext in crate::platform::SUPPORTED_EXTENSIONS {
+                            let label = crate::i18n::format::format_extension_description(
+                                ext,
+                                settings.ui_language,
+                            );
                             let mut is_checked = settings
                                 .associated_extensions
                                 .iter()

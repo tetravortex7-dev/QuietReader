@@ -158,8 +158,83 @@ fn decode_text_bytes(bytes: &[u8]) -> String {
     if let Ok(s) = std::str::from_utf8(bytes) {
         return s.to_string();
     }
-    let (cow, _, _) = encoding_rs::WINDOWS_1251.decode(bytes);
-    cow.into_owned()
+
+    let sample = &bytes[..bytes.len().min(64 * 1024)];
+    let mut best_encoding = encoding_rs::WINDOWS_1251;
+    let mut best_score = i64::MIN;
+    for encoding in [
+        encoding_rs::WINDOWS_1251,
+        encoding_rs::WINDOWS_1252,
+        encoding_rs::KOI8_R,
+        encoding_rs::IBM866,
+    ] {
+        let (decoded, _, _) = encoding.decode(sample);
+        let score = score_decoded_text(&decoded);
+        if score > best_score {
+            best_score = score;
+            best_encoding = encoding;
+        }
+    }
+    let (decoded, _, _) = best_encoding.decode(bytes);
+    decoded.into_owned()
+}
+
+fn score_decoded_text(text: &str) -> i64 {
+    let mut score = 0i64;
+    for c in text.chars() {
+        if c == '\u{FFFD}' {
+            score -= 1000;
+        } else if c.is_control() && !c.is_whitespace() {
+            score -= 200;
+        } else if c.is_ascii_alphabetic() || c.is_ascii_digit() {
+            score += 1;
+        } else if is_cyrillic(c) {
+            score += 3;
+        } else if c.is_alphabetic() {
+            score += 1;
+        } else if c.is_ascii_punctuation() {
+            score += 1;
+        } else if matches!(c, '\u{2010}'..='\u{2027}' | '\u{2030}'..='\u{205E}') {
+            score += 2;
+        } else if !c.is_whitespace() {
+            score -= 1;
+        }
+    }
+
+    for word in text.split_whitespace() {
+        let mut has_latin = false;
+        let mut has_cyrillic = false;
+        for c in word.chars() {
+            if is_cyrillic(c) {
+                has_cyrillic = true;
+            } else if c.is_alphabetic() {
+                has_latin = true;
+            }
+        }
+        if has_latin && has_cyrillic {
+            score -= 12;
+        }
+    }
+
+    let lower = text.to_lowercase();
+    for bigram in [
+        "ст", "но", "то", "на", "ен", "ов", "ни", "ра", "во", "ко", "пр", "ро", "по", "го", "ос",
+        "ли", "ре", "ал", "ер", "ть", "ся", "не", "ом", "от", "ка", "та", "те", "ла", "ло", "ан",
+        "ор", "де", "ит", "за", "из", "ел", "ль", "ны", "бы", "ьн", "ей", "ри", "ив", "ве", "ет",
+        "чт", "эт", "ак", "дл", "ил",
+    ] {
+        score += (lower.matches(bigram).count() as i64) * 3;
+    }
+    for trigram in [
+        "про", "при", "что", "это", "как", "для", "или", "его", "она", "они", "ест",
+    ] {
+        score += (lower.matches(trigram).count() as i64) * 4;
+    }
+    score
+}
+
+fn is_cyrillic(c: char) -> bool {
+    matches!(c, '\u{0400}'..='\u{052F}')
 }
 
 fn parse_markdown_chapters(text: &str, default_title: &str) -> (Vec<BookChapter>, Vec<TocItem>) {

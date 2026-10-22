@@ -81,6 +81,28 @@ fn test_comic_cbz_archive_and_metadata_parsing() {
 }
 
 #[test]
+fn test_comic_cb7_archive_uses_cached_pages() {
+    let test_dir = unique_test_dir("comic_cb7");
+    let cb7_path = test_dir.join("test.cb7");
+    std::fs::write(&cb7_path, include_bytes!("fixtures/two_pages.7z")).unwrap();
+
+    let doc = document::open_document(&cb7_path).expect("Должен открыть CB7 архив");
+    let comic = doc.page_content().expect("CB7 должен быть комиксом");
+    assert_eq!(comic.page_count(), 2);
+    assert_eq!(comic.page_name(0), "2.png");
+    assert_eq!(comic.page_name(1), "10.png");
+    for _ in 0..2 {
+        let decoded = comic.load_page_image(0).expect("Страница 0");
+        assert_eq!(decoded.width, 6);
+        assert_eq!(decoded.height, 6);
+        let decoded = comic.load_page_image(1).expect("Страница 1");
+        assert_eq!(decoded.width, 6);
+    }
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
 fn test_comic_folder_scan() {
     let test_dir = unique_test_dir("comic_folder");
     let folder_path = test_dir.join("MangaFolder");
@@ -106,6 +128,71 @@ fn test_comic_folder_scan() {
     assert_eq!(comic.page_name(0), "1.png");
     assert_eq!(comic.page_name(1), "2.png");
     assert_eq!(comic.page_name(2), "10.png");
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_comic_folder_depth_limit() {
+    let test_dir = unique_test_dir("comic_folder_depth");
+    let folder_path = test_dir.join("MangaFolder");
+    std::fs::create_dir_all(&folder_path).unwrap();
+
+    let mut sample_png = Vec::new();
+    let img = image::RgbaImage::new(4, 4);
+    img.write_to(
+        &mut std::io::Cursor::new(&mut sample_png),
+        image::ImageFormat::Png,
+    )
+    .unwrap();
+
+    std::fs::write(folder_path.join("root.png"), &sample_png).unwrap();
+
+    let mut current = folder_path.clone();
+    for _ in 0..(document::MAX_FOLDER_DEPTH + 4) {
+        current = current.join("d");
+        std::fs::create_dir_all(&current).unwrap();
+    }
+    std::fs::write(current.join("deep.png"), &sample_png).unwrap();
+
+    let doc = document::open_document(&folder_path).expect("Должен открыть папку");
+    let comic = doc.page_content().expect("Папка должна быть комиксом");
+    assert_eq!(comic.page_count(), 1);
+    assert_eq!(comic.page_name(0), "root.png");
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_comic_folder_skips_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let test_dir = unique_test_dir("comic_folder_symlink");
+    let folder_path = test_dir.join("MangaFolder");
+    let outside_dir = test_dir.join("Outside");
+    std::fs::create_dir_all(&folder_path).unwrap();
+    std::fs::create_dir_all(&outside_dir).unwrap();
+
+    let mut sample_png = Vec::new();
+    let img = image::RgbaImage::new(4, 4);
+    img.write_to(
+        &mut std::io::Cursor::new(&mut sample_png),
+        image::ImageFormat::Png,
+    )
+    .unwrap();
+
+    let outside_file = test_dir.join("outside.png");
+    std::fs::write(&outside_file, &sample_png).unwrap();
+    std::fs::write(folder_path.join("root.png"), &sample_png).unwrap();
+    std::fs::write(outside_dir.join("hidden.png"), &sample_png).unwrap();
+    symlink(&outside_file, folder_path.join("link.png")).unwrap();
+    symlink(&outside_dir, folder_path.join("linkdir")).unwrap();
+
+    let doc = document::open_document(&folder_path).expect("Должен открыть папку");
+    let comic = doc.page_content().expect("Папка должна быть комиксом");
+    assert_eq!(comic.page_count(), 1);
+    assert_eq!(comic.page_name(0), "root.png");
 
     let _ = std::fs::remove_dir_all(&test_dir);
 }

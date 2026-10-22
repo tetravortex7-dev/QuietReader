@@ -21,13 +21,13 @@ impl QuietReaderApp {
                     };
                     if let Some(text) = text_opt {
                         ctx.copy_text(text);
+                        let t = self.settings.ui_language.t();
                         let msg = if view_kind == DocumentViewKind::Pdf {
-                            format!(
-                                "Текст страницы {} скопирован в буфер обмена (Ctrl+A)",
-                                self.pdf_view.current_page + 1
-                            )
+                            t.extra
+                                .copy_page_done
+                                .replace("{page}", &(self.pdf_view.current_page + 1).to_string())
                         } else {
-                            "Весь раздел скопирован в буфер обмена (Ctrl+A)".to_string()
+                            t.extra.copy_section_done.to_string()
                         };
                         self.status_message = Some(msg);
                     }
@@ -54,7 +54,9 @@ impl QuietReaderApp {
                 self.set_fullscreen_mode(ctx, !self.is_fullscreen);
             }
             Command::ToggleSearch => {
-                if view_kind == DocumentViewKind::Text && self.document.is_some() {
+                if matches!(view_kind, DocumentViewKind::Text | DocumentViewKind::Pdf)
+                    && self.document.is_some()
+                {
                     self.search.toggle();
                 }
             }

@@ -170,159 +170,63 @@ pub fn apply_font_family(ctx: &egui::Context, font_name: &str) {
 pub struct FontOptionInfo {
     pub id: &'static str,
     pub name: &'static str,
-    pub badge: &'static str,
-    pub description: &'static str,
+    pub index: usize,
 }
 
 pub const AVAILABLE_FONTS: [FontOptionInfo; 9] = [
     FontOptionInfo {
         id: "Georgia",
         name: "Georgia",
-        badge: "Антиква • По умолчанию",
-        description: "Классический книжный шрифт с мягкими засечками. Разработан специально для комфортного чтения больших объемов текста на экранах.",
+        index: 0,
     },
     FontOptionInfo {
         id: "Palatino Linotype",
         name: "Palatino Linotype",
-        badge: "Книжная классика",
-        description: "Эталонная книжная антиква с открытыми гармоничными формами и безупречной удобочитаемостью. Признанный стандарт качественной литературы.",
+        index: 1,
     },
     FontOptionInfo {
         id: "Calibri",
         name: "Calibri",
-        badge: "Гуманистический гротеск",
-        description: "Современный мягкий шрифт без засечек со скругленными линиями. Легкий и приятный для художественной литературы.",
+        index: 2,
     },
     FontOptionInfo {
         id: "Segoe UI",
         name: "Segoe UI",
-        badge: "Интерфейсный гротеск",
-        description: "Четкий, строгий системный шрифт с высокой резкостью контуров для экранов высокого разрешения.",
+        index: 3,
     },
     FontOptionInfo {
         id: "Verdana",
         name: "Verdana",
-        badge: "Экранный гротеск",
-        description: "Шрифт с увеличенным межбуквенным интервалом и открытыми знаками. Создан специально для идеального чтения без усталости глаз.",
+        index: 4,
     },
     FontOptionInfo {
         id: "Comic Sans MS",
         name: "Comic Sans MS",
-        badge: "Доступность • Дислексия",
-        description: "Рекомендован ассоциациями дислексии. Несимметричные, уникальные формы букв исключают зеркальную путаницу. Полная поддержка кириллицы и латиницы.",
+        index: 5,
     },
     FontOptionInfo {
         id: "Sitka",
         name: "Sitka",
-        badge: "Оптическая разборчивость",
-        description: "Шрифт Microsoft, созданный совместно с исследователями чтения для улучшения распознавания слов и снижения утомления глаз.",
+        index: 6,
     },
     FontOptionInfo {
         id: "OpenDyslexic",
         name: "OpenDyslexic",
-        badge: "Специализированный • Зашит в приложение",
-        description: "Специальный шрифт с утяжелённым основанием букв против переворачивания знаков при дислексии. Всегда встроен в читалку.",
+        index: 7,
     },
     FontOptionInfo {
         id: "Lexend",
         name: "Lexend",
-        badge: "Беглость чтения • Зашит в приложение",
-        description: "Разработан исследователями чтения для снижения зрительного утомления, расширения интервала и мгновенного повышения беглости чтения. Встроен в читалку.",
+        index: 8,
     },
 ];
 
 impl FontOptionInfo {
     pub fn badge_for_lang(&self, lang: crate::i18n::UiLanguage) -> &'static str {
-        match lang.resolve() {
-            crate::i18n::UiLanguage::Ru => self.badge,
-            crate::i18n::UiLanguage::Uk => match self.id {
-                "Georgia" => "Антиква • За замовчуванням",
-                "Palatino Linotype" => "Книжкова класика",
-                "Calibri" => "Гуманістичний гротеск",
-                "Segoe UI" => "Інтерфейсний гротеск",
-                "Verdana" => "Екранний гротеск",
-                "Comic Sans MS" => "Доступність • Дислексія",
-                "Sitka" => "Оптична розбірливість",
-                "OpenDyslexic" => "Спеціалізований • Вбудований",
-                "Lexend" => "Швидкість читання • Вбудований",
-                _ => self.badge,
-            },
-            _ => match self.id {
-                "Georgia" => "Serif • Default",
-                "Palatino Linotype" => "Book Classic",
-                "Calibri" => "Humanist Sans",
-                "Segoe UI" => "UI Sans",
-                "Verdana" => "Screen Sans",
-                "Comic Sans MS" => "Accessibility • Dyslexia",
-                "Sitka" => "Optical Legibility",
-                "OpenDyslexic" => "Specialized • Embedded",
-                "Lexend" => "Reading Fluency • Embedded",
-                _ => self.badge,
-            },
-        }
+        lang.t().fonts[self.index].badge
     }
 
     pub fn desc_for_lang(&self, lang: crate::i18n::UiLanguage) -> &'static str {
-        match lang.resolve() {
-            crate::i18n::UiLanguage::Ru => self.description,
-            crate::i18n::UiLanguage::Uk => match self.id {
-                "Georgia" => {
-                    "Класичний книжковий шрифт із м'якими засічками. Створений спеціально для комфортного читання великих обсягів тексту на екранах."
-                }
-                "Palatino Linotype" => {
-                    "Еталонна книжкова антиква з відкритими гармонійними формами та бездоганною читабельністю."
-                }
-                "Calibri" => {
-                    "Сучасний м'який шрифт без засічок із заокругленими лініями. Легкий та приємний для художньої літератури."
-                }
-                "Segoe UI" => {
-                    "Чіткий, строгий системний шрифт із високою різкістю контурів для екранів високої роздільної здатності."
-                }
-                "Verdana" => {
-                    "Шрифт зі збільшеним міжбуквеним інтервалом та відкритими знаками для читання без втоми очей."
-                }
-                "Comic Sans MS" => {
-                    "Рекомендований асоціаціями дислексії. Несиметричні форми літер виключають дзеркальну плутанину. Підтримка кирилиці та латиниці."
-                }
-                "Sitka" => {
-                    "Шрифт Microsoft, створений спільно з дослідниками читання для покращення розпізнавання слів."
-                }
-                "OpenDyslexic" => {
-                    "Спеціальний шрифт з обтяженою основою літер проти дислексії. Вбудований безпосередньо у програму."
-                }
-                "Lexend" => {
-                    "Розроблений дослідниками для покращення сприйняття тексту та швидкості читання. Вбудований безпосередньо у програму."
-                }
-                _ => self.description,
-            },
-            _ => match self.id {
-                "Georgia" => {
-                    "Classic book serif with gentle serifs designed for comfortable long-form screen reading."
-                }
-                "Palatino Linotype" => {
-                    "Literary benchmark serif with harmonious open forms and superb readability."
-                }
-                "Calibri" => "Modern warm sans-serif with rounded lines, easy on the eyes.",
-                "Segoe UI" => {
-                    "Crisp, clean system sans-serif with sharp outlines for high-DPI displays."
-                }
-                "Verdana" => {
-                    "Wide letter spacing and open apertures designed for fatigue-free screen reading."
-                }
-                "Comic Sans MS" => {
-                    "Recommended by dyslexia associations. Distinct, non-mirrored letterforms prevent visual confusion. Full Latin and Cyrillic support."
-                }
-                "Sitka" => {
-                    "Microsoft font designed with reading researchers to enhance word recognition and reduce eye fatigue."
-                }
-                "OpenDyslexic" => {
-                    "Specialized typeface with weighted bottoms to prevent letter inversion. Built directly into the reader."
-                }
-                "Lexend" => {
-                    "Scientifically designed to ease dyslexia, widen character spacing, and improve reading fluency. Built directly into the reader."
-                }
-                _ => self.description,
-            },
-        }
+        lang.t().fonts[self.index].description
     }
 }

@@ -1,7 +1,25 @@
+use crate::document::DocumentError;
 use mobi::Mobi;
 use mobi::headers::Compression;
 
-pub fn decompress_palmdoc(data: &[u8]) -> Vec<u8> {
+pub const MAX_MOBI_TEXT_BYTES: usize = 300 * 1024 * 1024;
+
+fn ensure_mobi_capacity(out: &[u8], extra: usize) -> Result<(), DocumentError> {
+    if out.len().saturating_add(extra) > MAX_MOBI_TEXT_BYTES {
+        return Err(DocumentError::LimitExceeded(
+            "Размер распакованного текста MOBI/AZW превышает допустимый лимит (300 МБ)".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn extend_mobi_bytes(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), DocumentError> {
+    ensure_mobi_capacity(out, bytes.len())?;
+    out.extend_from_slice(bytes);
+    Ok(())
+}
+
+pub fn decompress_palmdoc(data: &[u8]) -> Result<Vec<u8>, DocumentError> {
     let init_cap = data.len().saturating_mul(2).min(16 * 1024 * 1024);
     let mut out = Vec::with_capacity(init_cap);
     let mut i = 0;
@@ -12,11 +30,14 @@ pub fn decompress_palmdoc(data: &[u8]) -> Vec<u8> {
 
         match byte {
             0x00 | 0x09..=0x7F => {
+                ensure_mobi_capacity(&out, 1)?;
                 out.push(byte);
             }
             0x01..=0x08 => {
                 let count = byte as usize;
                 let end = (i + count).min(data.len());
+                let len = end - i;
+                ensure_mobi_capacity(&out, len)?;
                 out.extend_from_slice(&data[i..end]);
                 i += count;
             }
@@ -30,6 +51,7 @@ pub fn decompress_palmdoc(data: &[u8]) -> Vec<u8> {
                     let length = (b2 & 0x07) + 3;
 
                     if distance > 0 && distance <= out.len() {
+                        ensure_mobi_capacity(&out, length)?;
                         let start = out.len() - distance;
                         for k in 0..length {
                             let src_idx = start + (k % distance);
@@ -38,17 +60,19 @@ pub fn decompress_palmdoc(data: &[u8]) -> Vec<u8> {
                         }
                     }
                 } else {
+                    ensure_mobi_capacity(&out, 1)?;
                     out.push(byte);
                 }
             }
             0xC0..=0xFF => {
+                ensure_mobi_capacity(&out, 2)?;
                 out.push(b' ');
                 out.push(byte ^ 0x80);
             }
         }
     }
 
-    out
+    Ok(out)
 }
 
 pub fn get_trailing_data_size(data: &[u8], flags: u16) -> usize {
@@ -79,28 +103,31 @@ pub fn get_trailing_data_size(data: &[u8], flags: u16) -> usize {
     num.min(data.len())
 }
 
-pub fn try_extract_kf8_boundary_raw_bytes(m: &Mobi) -> Option<Vec<u8>> {
+pub fn try_extract_kf8_boundary_raw_bytes(m: &Mobi) -> Result<Option<Vec<u8>>, DocumentError> {
     let raw_records = m.raw_records();
     let records = raw_records.records();
 
-    let boundary_idx = records
+    let Some(boundary_idx) = records
         .iter()
-        .position(|r| r.content == b"BOUNDARY" || r.content.starts_with(b"BOUNDARY"))?;
+        .position(|r| r.content == b"BOUNDARY" || r.content.starts_with(b"BOUNDARY"))
+    else {
+        return Ok(None);
+    };
 
     let header_idx = boundary_idx + 1;
     if header_idx >= records.len() {
-        return None;
+        return Ok(None);
     }
 
     let header_rec = records[header_idx].content;
     if header_rec.len() < 16 {
-        return None;
+        return Ok(None);
     }
 
     let compression = u16::from_be_bytes([header_rec[0], header_rec[1]]);
     let text_count = u16::from_be_bytes([header_rec[8], header_rec[9]]) as usize;
     if text_count == 0 {
-        return None;
+        return Ok(None);
     }
 
     let extra_flags = if header_rec.len() >= 244 {
@@ -117,22 +144,23 @@ pub fn try_extract_kf8_boundary_raw_bytes(m: &Mobi) -> Option<Vec<u8>> {
         let trailing = get_trailing_data_size(r.content, extra_flags);
         let valid_slice = &r.content[..r.content.len().saturating_sub(trailing)];
         if compression == 2 {
-            decompressed.extend_from_slice(&decompress_palmdoc(valid_slice));
+            let bytes = decompress_palmdoc(valid_slice)?;
+            extend_mobi_bytes(&mut decompressed, &bytes)?;
         } else if compression == 1 {
-            decompressed.extend_from_slice(valid_slice);
+            extend_mobi_bytes(&mut decompressed, valid_slice)?;
         }
     }
 
     if decompressed.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(decompressed)
+        Ok(Some(decompressed))
     }
 }
 
-pub fn extract_raw_mobi_bytes(m: &Mobi) -> (Vec<u8>, bool) {
-    if let Some(kf8_bytes) = try_extract_kf8_boundary_raw_bytes(m) {
-        return (kf8_bytes, true);
+pub fn extract_raw_mobi_bytes(m: &Mobi) -> Result<(Vec<u8>, bool), DocumentError> {
+    if let Some(kf8_bytes) = try_extract_kf8_boundary_raw_bytes(m)? {
+        return Ok((kf8_bytes, true));
     }
 
     let raw = m.raw_records();
@@ -149,21 +177,22 @@ pub fn extract_raw_mobi_bytes(m: &Mobi) -> (Vec<u8>, bool) {
             for r in raw.range(m.readable_records_range()) {
                 let trailing = get_trailing_data_size(r.content, extra_flags);
                 let valid_slice = &r.content[..r.content.len().saturating_sub(trailing)];
-                out.extend_from_slice(&decompress_palmdoc(valid_slice));
+                let bytes = decompress_palmdoc(valid_slice)?;
+                extend_mobi_bytes(&mut out, &bytes)?;
             }
         }
         Compression::No => {
             for r in raw.range(m.readable_records_range()) {
                 let trailing = get_trailing_data_size(r.content, extra_flags);
                 let valid_slice = &r.content[..r.content.len().saturating_sub(trailing)];
-                out.extend_from_slice(valid_slice);
+                extend_mobi_bytes(&mut out, valid_slice)?;
             }
         }
         Compression::Huff => {
             let text = m
                 .content_as_string()
                 .unwrap_or_else(|_| m.content_as_string_lossy());
-            out.extend_from_slice(text.as_bytes());
+            extend_mobi_bytes(&mut out, text.as_bytes())?;
         }
     }
 
@@ -171,10 +200,10 @@ pub fn extract_raw_mobi_bytes(m: &Mobi) -> (Vec<u8>, bool) {
         let text = m
             .content_as_string()
             .unwrap_or_else(|_| m.content_as_string_lossy());
-        out.extend_from_slice(text.as_bytes());
+        extend_mobi_bytes(&mut out, text.as_bytes())?;
     }
 
-    (out, false)
+    Ok((out, false))
 }
 
 pub fn detect_meta_charset(bytes: &[u8]) -> Option<&'static encoding_rs::Encoding> {

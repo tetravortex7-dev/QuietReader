@@ -43,6 +43,7 @@ pub enum Icon {
     Headphones,
     Moon,
     Crop,
+    Hourglass,
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
@@ -490,6 +491,14 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
             painter.line_segment([p(0.34, 0.18), p(0.34, 0.76)], bold_stroke);
             painter.line_segment([p(0.24, 0.66), p(0.82, 0.66)], bold_stroke);
             painter.line_segment([p(0.66, 0.24), p(0.66, 0.82)], bold_stroke);
+        }
+        Icon::Hourglass => {
+            painter.line_segment([p(0.26, 0.16), p(0.74, 0.16)], bold_stroke);
+            painter.line_segment([p(0.26, 0.84), p(0.74, 0.84)], bold_stroke);
+            let upper = vec![p(0.32, 0.20), p(0.68, 0.20), p(0.50, 0.50)];
+            painter.add(egui::Shape::closed_line(upper, stroke));
+            let lower = vec![p(0.50, 0.50), p(0.68, 0.80), p(0.32, 0.80)];
+            painter.add(egui::Shape::closed_line(lower, stroke));
         }
     }
 }

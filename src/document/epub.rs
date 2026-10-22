@@ -133,7 +133,10 @@ impl EpubDocument {
         let mut matched = None;
         for i in 0..archive.len() {
             if let Ok(file) = archive.by_index(i) {
-                let name = file.name().replace('\\', "/");
+                let name = file
+                    .name()
+                    .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?
+                    .replace('\\', "/");
                 if name == normalized || name == decoded {
                     matched = Some(i);
                     break;
@@ -195,9 +198,10 @@ impl EpubDocument {
                 Err(_) => {
                     for i in 0..archive.len() {
                         if let Ok(f) = archive.by_index(i)
-                            && f.name().ends_with(".opf")
+                            && let Ok(name) = f.name()
+                            && name.ends_with(".opf")
                         {
-                            return Ok(f.name().to_string());
+                            return Ok(name.into_owned());
                         }
                     }
                     return Err(DocumentError::Corrupted(
@@ -234,9 +238,10 @@ impl EpubDocument {
 
         for i in 0..archive.len() {
             if let Ok(f) = archive.by_index(i)
-                && f.name().ends_with(".opf")
+                && let Ok(name) = f.name()
+                && name.ends_with(".opf")
             {
-                return Ok(f.name().to_string());
+                return Ok(name.into_owned());
             }
         }
         Err(DocumentError::Corrupted(
@@ -250,10 +255,12 @@ impl EpubDocument {
         let mut total_unpacked: u64 = 0;
         for i in 0..archive.len() {
             if let Ok(entry) = archive.by_index_raw(i) {
-                if !crate::document::is_safe_archive_path(entry.name()) {
+                let name = entry
+                    .name()
+                    .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?;
+                if !crate::document::is_safe_archive_path(&name) {
                     return Err(DocumentError::Corrupted(format!(
-                        "Небезопасный путь: {}",
-                        entry.name()
+                        "Небезопасный путь: {name}"
                     )));
                 }
                 total_unpacked = total_unpacked.saturating_add(entry.size());

@@ -16,6 +16,30 @@ pub fn format_document_error_with_lang(
     crate::i18n::format::format_document_error(err, lang)
 }
 
+pub const ERR_PAGED_UNSUPPORTED: &str = "__paged_unsupported__";
+pub const ERR_COMIC_DECODE_CRASH: &str = "__comic_decode_crash__";
+pub const ERR_PAGE_DECODE_CRASH: &str = "__page_decode_crash__";
+pub const ERR_DECODE_STREAM_CRASH: &str = "__decode_stream_crash__";
+
+pub fn format_page_error(err: &DocumentError, lang: crate::i18n::UiLanguage) -> String {
+    let t = lang.t();
+    match err {
+        DocumentError::Unsupported(message) if message == ERR_PAGED_UNSUPPORTED => {
+            t.extra.document_unsupported_paged.to_string()
+        }
+        DocumentError::Corrupted(message) if message == ERR_COMIC_DECODE_CRASH => {
+            t.extra.comic_decode_crash.to_string()
+        }
+        DocumentError::Corrupted(message) if message == ERR_PAGE_DECODE_CRASH => {
+            t.extra.page_decode_crash.to_string()
+        }
+        DocumentError::Corrupted(message) if message == ERR_DECODE_STREAM_CRASH => {
+            t.extra.decode_stream_crashed.to_string()
+        }
+        _ => format_document_error_with_lang(err, lang),
+    }
+}
+
 pub struct DocumentLoadRequest {
     pub request_id: u64,
     pub path: PathBuf,
@@ -57,7 +81,9 @@ fn spawn_loader_worker(
                 let lang = req.lang;
                 let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     crate::document::open_document(&path)
-                        .map(Arc::from)
+                        .map(|doc| {
+                            super::localized_document::LocalizedDocument::wrap(Arc::from(doc), lang)
+                        })
                         .map_err(|e| crate::i18n::format::format_document_error(&e, lang))
                 }));
 
@@ -170,25 +196,43 @@ impl DocumentLoader {
             scroll_y,
         );
         let fmt = doc.format_name();
+        let t = settings.ui_language.t();
         let status = if is_comic {
             if comic_page > 0 {
-                format!(
-                    "Открыт {fmt}: {title} (стр. {}/{})",
-                    comic_page + 1,
-                    comic_page_count
+                crate::i18n::fill(
+                    t.extra.status_opened_comic,
+                    &[
+                        ("{fmt}", fmt),
+                        ("{title}", &title),
+                        ("{page}", &(comic_page + 1).to_string()),
+                        ("{total}", &comic_page_count.to_string()),
+                    ],
                 )
             } else {
-                format!("Открыт {fmt}: {title} (всего {} стр.)", comic_page_count)
+                crate::i18n::fill(
+                    t.extra.status_opened_comic_total,
+                    &[
+                        ("{fmt}", fmt),
+                        ("{title}", &title),
+                        ("{total}", &comic_page_count.to_string()),
+                    ],
+                )
             }
         } else if effective_ch > 0 || scroll_y > 10.0 {
-            format!(
-                "Открыта книга: {title} (продолжение с раздела {})",
-                effective_ch + 1
+            crate::i18n::fill(
+                t.extra.status_opened_book_resume,
+                &[
+                    ("{title}", &title),
+                    ("{section}", &(effective_ch + 1).to_string()),
+                ],
             )
         } else if !author.is_empty() {
-            format!("Открыта книга: {author} — {title}")
+            crate::i18n::fill(
+                t.extra.status_opened_book_author,
+                &[("{author}", &author), ("{title}", &title)],
+            )
         } else {
-            format!("Открыта книга: {title}")
+            crate::i18n::fill(t.extra.status_opened_book, &[("{title}", &title)])
         };
 
         LoadedBookState {
@@ -206,9 +250,12 @@ impl DocumentLoader {
         settings: &mut AppSettings,
     ) -> Result<LoadedBookState, String> {
         let lang = settings.ui_language;
-        let doc: Arc<dyn Document> = Arc::from(
-            crate::document::open_document(&path)
-                .map_err(|e| crate::i18n::format::format_document_error(&e, lang))?,
+        let doc = super::localized_document::LocalizedDocument::wrap(
+            Arc::from(
+                crate::document::open_document(&path)
+                    .map_err(|e| crate::i18n::format::format_document_error(&e, lang))?,
+            ),
+            lang,
         );
         Ok(Self::finalize_loaded_document(doc, path, settings))
     }

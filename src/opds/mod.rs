@@ -1,9 +1,11 @@
+pub mod auth;
 pub mod client;
 pub mod covers;
 pub mod parser;
 pub mod types;
 
 pub use crate::app::opds_view::OpdsBrowserState;
+pub use auth::*;
 pub use client::*;
 pub use covers::*;
 pub use parser::*;

@@ -9,21 +9,9 @@ pub fn supports_file_association() -> bool {
     cfg!(windows)
 }
 
-pub const SUPPORTED_EXTENSIONS_INFO: &[(&str, &str)] = &[
-    ("fb2", "FB2 (.fb2) — Книги FictionBook"),
-    ("epub", "EPUB (.epub) — Электронные книги"),
-    ("mobi", "MOBI (.mobi, .prc) — Книги Mobipocket"),
-    ("azw3", "AZW3 (.azw3, .azw) — Книги Kindle Format 8"),
-    ("txt", "TXT (.txt) — Текстовые документы"),
-    ("doc", "DOC (.doc) — Документы Word 97-2004"),
-    ("docx", "DOCX (.docx) — Документы Word"),
-    ("rtf", "RTF (.rtf) — Форматированный текст"),
-    ("pdf", "PDF (.pdf) — Документы PDF"),
-    ("djvu", "DJVU (.djvu, .djv) — Документы DjVu"),
-    ("cbz", "CBZ (.cbz) — Комиксы CBZ (ZIP)"),
-    ("cbr", "CBR (.cbr) — Комиксы CBR (RAR)"),
-    ("cb7", "CB7 (.cb7) — Комиксы CB7 (7-Zip)"),
-    ("md", "MD (.md) — Документы Markdown"),
+pub const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "fb2", "epub", "mobi", "azw3", "txt", "doc", "docx", "rtf", "pdf", "djvu", "cbz", "cbr", "cb7",
+    "md",
 ];
 
 #[cfg(windows)]
@@ -50,6 +38,8 @@ pub fn set_keep_screen_on(_keep_on: bool) {}
 #[cfg(windows)]
 mod windows_registry {
     use super::AssociationStatus;
+    use crate::i18n::UiLanguage;
+    use crate::i18n::format::format_extension_description;
     use std::ffi::c_void;
 
     const HKEY_CURRENT_USER: *mut c_void = 0x80000001u32 as usize as *mut c_void;
@@ -101,8 +91,6 @@ mod windows_registry {
             lpData: *mut u8,
             lpcbData: *mut u32,
         ) -> i32;
-
-        fn RegDeleteKeyW(hKey: *mut c_void, lpSubKey: *const u16) -> i32;
 
         fn RegCloseKey(hKey: *mut c_void) -> i32;
 
@@ -160,7 +148,7 @@ mod windows_registry {
             Ok(RegKey(hkey))
         } else {
             Err(format!(
-                "Не удалось создать ключ реестра '{sub_key}': код {res}"
+                "failed to create registry key '{sub_key}': code {res}"
             ))
         }
     }
@@ -186,7 +174,7 @@ mod windows_registry {
         if res == ERROR_SUCCESS {
             Ok(())
         } else {
-            Err(format!("Не удалось записать значение в реестр: код {res}"))
+            Err(format!("failed to write registry value: code {res}"))
         }
     }
 
@@ -296,9 +284,13 @@ mod windows_registry {
         check_extension_association_status("fb2")
     }
 
-    pub fn register_file_associations(extensions: &[&str]) -> Result<String, String> {
+    pub fn register_file_associations(
+        extensions: &[&str],
+        lang: UiLanguage,
+    ) -> Result<String, String> {
+        let t = lang.t();
         let exe_path = std::env::current_exe()
-            .map_err(|e| format!("Не удалось определить путь к исполнимому файлу: {e}"))?;
+            .map_err(|e| format!("failed to determine executable path: {e}"))?;
         let exe_str = exe_path.to_string_lossy();
         let open_cmd = format!("\"{exe_str}\" \"%1\"");
         let doc_icon_cmd = format!("\"{exe_str}\",1");
@@ -329,11 +321,7 @@ mod windows_registry {
 
         let caps = reg_create_key(HKEY_CURRENT_USER, r"Software\QuietReader\Capabilities")?;
         let _ = reg_set_string(&caps, Some("ApplicationName"), "QuietReader");
-        let _ = reg_set_string(
-            &caps,
-            Some("ApplicationDescription"),
-            "Модульная читалка электронных книг",
-        );
+        let _ = reg_set_string(&caps, Some("ApplicationDescription"), t.app_subtitle);
 
         let file_assoc = reg_create_key(
             HKEY_CURRENT_USER,
@@ -355,24 +343,27 @@ mod windows_registry {
             }
             let ext_dot = format!(".{ext}");
             let progid = format!("QuietReader.{ext}");
-            let (friendly_name, content_type) = match ext.as_str() {
-                "fb2" => ("Книга FictionBook (FB2)", "application/x-fictionbook+xml"),
-                "epub" => ("Книга EPUB", "application/epub+zip"),
-                "txt" => ("Текстовый документ", "text/plain"),
-                "md" => ("Документ Markdown", "text/markdown"),
-                "log" => ("Журнал логов", "text/plain"),
-                "pdf" => ("Документ PDF", "application/pdf"),
-                "djvu" | "djv" => ("Документ DjVu", "image/vnd.djvu"),
-                "cbz" => ("Комикс CBZ", "application/vnd.comicbook+zip"),
-                "cbr" => ("Комикс CBR", "application/vnd.comicbook-rar"),
-                "cb7" => ("Комикс CB7", "application/x-cb7"),
-                "docx" => (
-                    "Документ Microsoft Word (DOCX)",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ),
-                "doc" => ("Документ Microsoft Word (DOC)", "application/msword"),
-                "rtf" => ("Документ RTF", "application/rtf"),
-                _ => ("Документ", "application/octet-stream"),
+            let content_type = match ext.as_str() {
+                "fb2" => "application/x-fictionbook+xml",
+                "epub" => "application/epub+zip",
+                "txt" => "text/plain",
+                "md" => "text/markdown",
+                "log" => "text/plain",
+                "pdf" => "application/pdf",
+                "djvu" | "djv" => "image/vnd.djvu",
+                "cbz" => "application/vnd.comicbook+zip",
+                "cbr" => "application/vnd.comicbook-rar",
+                "cb7" => "application/x-cb7",
+                "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "doc" => "application/msword",
+                "rtf" => "application/rtf",
+                _ => "application/octet-stream",
+            };
+            let description = format_extension_description(&ext, lang);
+            let friendly_name = if description.is_empty() {
+                t.extra.default_document_title
+            } else {
+                description
             };
 
             if let Ok(dot_key) =
@@ -417,22 +408,6 @@ mod windows_registry {
                 let _ = reg_set_string(&file_exts_key, Some(&progid), "");
             }
 
-            let file_exts_list = format!(
-                r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\OpenWithList"
-            );
-            if let Ok(list_key) = reg_create_key(HKEY_CURRENT_USER, &file_exts_list) {
-                let _ = reg_set_string(&list_key, Some("a"), "QuietReader.exe");
-                let _ = reg_set_string(&list_key, Some("MRUList"), "a");
-            }
-
-            let user_choice_path = format!(
-                r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{ext_dot}\UserChoice"
-            );
-            let wide_uc = to_wide(&user_choice_path);
-            unsafe {
-                RegDeleteKeyW(HKEY_CURRENT_USER, wide_uc.as_ptr());
-            }
-
             let _ = reg_set_string(&supported, Some(&ext_dot), "");
             let _ = reg_set_string(&file_assoc, Some(&ext_dot), &progid);
             count += 1;
@@ -440,14 +415,15 @@ mod windows_registry {
 
         notify_shell_assoc_changed();
 
-        Ok(format!(
-            "QuietReader успешно зарегистрирован в реестре Windows (HKCU) для {count} формат(ов)."
+        Ok(crate::i18n::fill(
+            t.extra.status_assoc_success,
+            &[("{count}", &count.to_string())],
         ))
     }
 
     #[allow(dead_code)]
     pub fn register_fb2_association() -> Result<String, String> {
-        register_file_associations(&["fb2"])
+        register_file_associations(&["fb2"], UiLanguage::Auto)
     }
 
     pub fn is_association_prompt_dismissed() -> bool {
@@ -480,8 +456,11 @@ pub fn check_fb2_association_status() -> AssociationStatus {
 }
 
 #[cfg(windows)]
-pub fn register_file_associations(extensions: &[&str]) -> Result<String, String> {
-    windows_registry::register_file_associations(extensions)
+pub fn register_file_associations(
+    extensions: &[&str],
+    lang: crate::i18n::UiLanguage,
+) -> Result<String, String> {
+    windows_registry::register_file_associations(extensions, lang)
 }
 
 #[cfg(windows)]
@@ -519,13 +498,19 @@ pub fn check_fb2_association_status() -> AssociationStatus {
 }
 
 #[cfg(not(windows))]
-pub fn register_file_associations(_extensions: &[&str]) -> Result<String, String> {
-    Ok("Регистрация ассоциаций поддерживается только в Windows.".to_string())
+pub fn register_file_associations(
+    _extensions: &[&str],
+    lang: crate::i18n::UiLanguage,
+) -> Result<String, String> {
+    Ok(crate::i18n::fill(
+        lang.t().extra.status_assoc_error,
+        &[("{error}", "not supported on this platform")],
+    ))
 }
 
 #[cfg(not(windows))]
 pub fn register_fb2_association() -> Result<String, String> {
-    Ok("Регистрация ассоциаций поддерживается только в Windows.".to_string())
+    register_file_associations(&["fb2"], crate::i18n::UiLanguage::Auto)
 }
 
 #[cfg(not(windows))]
@@ -963,6 +948,9 @@ pub fn detect_system_ui_language() -> Option<String> {
     None
 }
 
+pub mod downloads;
+pub mod permissions;
+pub mod secrets;
 pub mod single_instance;
 pub mod window;
 

@@ -1,8 +1,11 @@
 use crate::app::icons::{Icon, IconButton, IconLabel};
 use crate::app::theme::ReaderTheme;
 use crate::core::{ReaderCore, SearchHit};
-use crate::document::Document;
+use crate::document::{Document, DocumentViewKind};
 use eframe::egui::{self, Color32, Frame, Id, Key, Order, RichText, ScrollArea, Stroke, Vec2};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
 
 pub struct SearchState {
     pub is_open: bool,
@@ -12,6 +15,10 @@ pub struct SearchState {
     pub should_focus: bool,
     pub last_searched_query: String,
     pub show_results_dropdown: bool,
+    pub is_searching: bool,
+    search_rx: Option<Receiver<(u64, Vec<SearchHit>)>>,
+    search_cancel: Option<Arc<AtomicBool>>,
+    search_generation: u64,
 }
 
 impl Default for SearchState {
@@ -24,6 +31,10 @@ impl Default for SearchState {
             should_focus: false,
             last_searched_query: String::new(),
             show_results_dropdown: false,
+            is_searching: false,
+            search_rx: None,
+            search_cancel: None,
+            search_generation: 0,
         }
     }
 }
@@ -37,6 +48,86 @@ impl SearchState {
     pub fn close(&mut self) {
         self.is_open = false;
         self.show_results_dropdown = false;
+        self.cancel_search();
+    }
+
+    pub fn reset_for_document(&mut self) {
+        self.cancel_search();
+        self.hits.clear();
+        self.current_hit_index = 0;
+        self.last_searched_query.clear();
+    }
+
+    fn cancel_search(&mut self) {
+        if let Some(cancel) = self.search_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.search_rx = None;
+        self.is_searching = false;
+    }
+
+    fn start_search(&mut self, ctx: &egui::Context, document: Option<&Arc<dyn Document>>) {
+        self.cancel_search();
+        self.last_searched_query = self.query.clone();
+        self.hits.clear();
+        self.current_hit_index = 0;
+        let Some(doc) = document else {
+            return;
+        };
+        if self.query.trim().is_empty() {
+            return;
+        }
+
+        self.search_generation = self.search_generation.wrapping_add(1);
+        let generation = self.search_generation;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
+        let query = self.query.clone();
+        let doc = Arc::clone(doc);
+        let ctx = ctx.clone();
+        let (tx, rx) = mpsc::channel();
+        let spawn = std::thread::Builder::new()
+            .name("document-search".to_string())
+            .spawn(move || {
+                let hits = if doc.view_kind() == DocumentViewKind::Pdf {
+                    ReaderCore::search_page_text_in_document(
+                        doc.as_ref(),
+                        &query,
+                        worker_cancel.as_ref(),
+                    )
+                } else {
+                    ReaderCore::search_in_document_with_cancel(
+                        doc.as_ref(),
+                        &query,
+                        worker_cancel.as_ref(),
+                    )
+                };
+                let _ = tx.send((generation, hits));
+                ctx.request_repaint();
+            });
+
+        if spawn.is_ok() {
+            self.search_rx = Some(rx);
+            self.search_cancel = Some(cancel);
+            self.is_searching = true;
+        }
+    }
+
+    fn poll_search(&mut self) -> Option<Vec<SearchHit>> {
+        let rx = self.search_rx.as_ref()?;
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return None,
+            Err(mpsc::TryRecvError::Disconnected) => (self.search_generation, Vec::new()),
+        };
+        self.search_rx = None;
+        self.search_cancel = None;
+        self.is_searching = false;
+        if result.0 == self.search_generation {
+            Some(result.1)
+        } else {
+            None
+        }
     }
 
     pub fn toggle(&mut self) {
@@ -72,6 +163,18 @@ impl SearchState {
     }
 }
 
+fn select_hit(
+    hit: &SearchHit,
+    jump_target: &mut Option<(usize, Option<usize>)>,
+    page_target: &mut Option<usize>,
+) {
+    if let Some(page) = hit.page_index {
+        *page_target = Some(page);
+    } else {
+        *jump_target = Some((hit.chapter_index, hit.paragraph_index));
+    }
+}
+
 pub struct SearchView;
 
 impl SearchView {
@@ -79,10 +182,11 @@ impl SearchView {
     pub fn render(
         ctx: &egui::Context,
         state: &mut SearchState,
-        document: Option<&dyn Document>,
+        document: Option<&Arc<dyn Document>>,
         current_chapter: &mut usize,
         last_rendered_chapter: &mut usize,
         pending_scroll_y: &mut Option<f32>,
+        page_target: &mut Option<usize>,
         font_size: f32,
         theme: &ReaderTheme,
         lang: crate::i18n::UiLanguage,
@@ -93,6 +197,15 @@ impl SearchView {
 
         let t = lang.t();
         let mut jump_target = None;
+        let mut local_page_target = None;
+
+        if let Some(hits) = state.poll_search() {
+            state.hits = hits;
+            state.current_hit_index = 0;
+            if let Some(first) = state.hits.first() {
+                select_hit(first, &mut jump_target, &mut local_page_target);
+            }
+        }
 
         egui::Area::new(Id::unique("floating_search_panel"))
             .order(Order::Foreground)
@@ -123,17 +236,7 @@ impl SearchView {
                         }
 
                         if state.query != state.last_searched_query {
-                            state.last_searched_query = state.query.clone();
-                            if let Some(doc) = document {
-                                state.hits = ReaderCore::search_in_document(doc, &state.query);
-                                state.current_hit_index = 0;
-                                if let Some(first) = state.hits.first() {
-                                    jump_target =
-                                        Some((first.chapter_index, first.paragraph_index));
-                                }
-                            } else {
-                                state.hits.clear();
-                            }
+                            state.start_search(ctx, document);
                         }
 
                         let total = state.hits.len();
@@ -141,6 +244,12 @@ impl SearchView {
                             ui.label(
                                 RichText::new("Ctrl+F")
                                     .size(11.5)
+                                    .color(theme.secondary_text_color()),
+                            );
+                        } else if state.is_searching {
+                            ui.label(
+                                RichText::new(t.search_searching)
+                                    .size(12.0)
                                     .color(theme.secondary_text_color()),
                             );
                         } else if total == 0 {
@@ -202,14 +311,14 @@ impl SearchView {
                         } else if (enter_hit && resp.has_focus()) || next_btn.clicked() {
                             if shift {
                                 if let Some(hit) = state.prev_hit() {
-                                    jump_target = Some((hit.chapter_index, hit.paragraph_index));
+                                    select_hit(hit, &mut jump_target, &mut local_page_target);
                                 }
                             } else if let Some(hit) = state.next_hit() {
-                                jump_target = Some((hit.chapter_index, hit.paragraph_index));
+                                select_hit(hit, &mut jump_target, &mut local_page_target);
                             }
                         } else if prev_btn.clicked() {
                             if let Some(hit) = state.prev_hit() {
-                                jump_target = Some((hit.chapter_index, hit.paragraph_index));
+                                select_hit(hit, &mut jump_target, &mut local_page_target);
                             }
                         }
                     });
@@ -225,14 +334,22 @@ impl SearchView {
                             .show(ui, |ui| {
                                 for (idx, hit) in state.hits.iter().enumerate() {
                                     let is_active = idx == state.current_hit_index;
-                                    let chapter_title = document
-                                        .and_then(|d| d.chapters().get(hit.chapter_index))
-                                        .map(|c| crate::document::strip_formatting_tags(&c.title))
-                                        .filter(|t| !t.is_empty())
-                                        .unwrap_or_else(|| {
-                                            t.section_num
-                                                .replace("{}", &(hit.chapter_index + 1).to_string())
-                                        });
+                                    let chapter_title = if let Some(page) = hit.page_index {
+                                        format!("{} {}", t.page_prefix, page + 1)
+                                    } else {
+                                        document
+                                            .and_then(|d| d.chapters().get(hit.chapter_index))
+                                            .map(|c| {
+                                                crate::document::strip_formatting_tags(&c.title)
+                                            })
+                                            .filter(|t| !t.is_empty())
+                                            .unwrap_or_else(|| {
+                                                t.section_num.replace(
+                                                    "{}",
+                                                    &(hit.chapter_index + 1).to_string(),
+                                                )
+                                            })
+                                    };
 
                                     ui.group(|ui| {
                                         ui.horizontal(|ui| {
@@ -258,8 +375,11 @@ impl SearchView {
                                         );
                                         if snippet_btn.clicked() {
                                             state.current_hit_index = idx;
-                                            jump_target =
-                                                Some((hit.chapter_index, hit.paragraph_index));
+                                            select_hit(
+                                                hit,
+                                                &mut jump_target,
+                                                &mut local_page_target,
+                                            );
                                         }
                                     });
                                     ui.add_space(2.0);
@@ -269,15 +389,25 @@ impl SearchView {
                 });
             });
 
+        let had_navigation = jump_target.is_some() || local_page_target.is_some();
+
+        if let Some(page) = local_page_target {
+            *page_target = Some(page);
+        }
+
         if let (Some((target_ch, target_para)), Some(doc)) = (jump_target, document) {
             *current_chapter = target_ch;
             *last_rendered_chapter = target_ch;
             *pending_scroll_y = Some(ReaderCore::estimate_paragraph_scroll_y(
-                doc,
+                doc.as_ref(),
                 target_ch,
                 target_para,
                 font_size,
             ));
+        }
+
+        if had_navigation {
+            ctx.request_repaint();
         }
     }
 }

@@ -1,13 +1,136 @@
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+const MAX_IPC_BYTES: u64 = 64 * 1024;
+const MAX_IPC_PATHS: usize = 32;
+const MAX_IPC_PATH_LEN: usize = 4096;
+
 fn get_ipc_dir() -> PathBuf {
-    if let Some(parent) = crate::settings::AppSettings::get_settings_path().parent() {
-        let _ = std::fs::create_dir_all(parent);
-        return parent.to_path_buf();
+    let base = crate::settings::AppSettings::get_settings_path()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(std::env::temp_dir);
+    let dir = base.join("ipc");
+    crate::platform::permissions::create_private_dir(&dir);
+    dir
+}
+
+pub(crate) fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if data.len() as u64 > MAX_IPC_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "IPC payload is too large",
+        ));
     }
-    std::env::temp_dir()
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("ipc");
+    let Some(dir) = path.parent() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "IPC path has no parent directory",
+        ));
+    };
+    let tmp = dir.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        drop(file);
+        crate::platform::permissions::restrict_file(&tmp);
+        let _ = std::fs::remove_file(path);
+        std::fs::rename(&tmp, path)?;
+        crate::platform::permissions::restrict_file(path);
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+pub(crate) fn read_private_file(path: &Path, remove: bool) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_IPC_BYTES {
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => {
+            if remove {
+                let _ = std::fs::remove_file(path);
+            }
+            Some(content)
+        }
+        Err(_) => {
+            let _ = std::fs::remove_file(path);
+            None
+        }
+    }
+}
+
+pub(crate) fn validated_ipc_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_IPC_PATH_LEN
+        || trimmed.contains('\n')
+        || trimmed.contains('\r')
+    {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    let canonical = std::fs::canonicalize(&path).ok()?;
+    let canonical_str = canonical.to_str()?;
+    if canonical_str.len() > MAX_IPC_PATH_LEN
+        || canonical_str.contains('\n')
+        || canonical_str.contains('\r')
+    {
+        return None;
+    }
+    let metadata = std::fs::metadata(&canonical).ok()?;
+    metadata.is_file().then_some(canonical)
+}
+
+pub(crate) fn parse_ipc_payload(content: &str) -> Vec<PathBuf> {
+    let mut lines = content.lines();
+    if !matches!(lines.next().map(str::trim), Some("ACTIVATE")) {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    for line in lines {
+        if files.len() >= MAX_IPC_PATHS {
+            break;
+        }
+        if let Some(path) = validated_ipc_path(line) {
+            files.push(path);
+        }
+    }
+    files
+}
+
+fn build_ipc_payload(initial_file: &Option<PathBuf>) -> Vec<u8> {
+    let mut payload = String::from("ACTIVATE\n");
+    if let Some(path) = initial_file
+        .as_deref()
+        .and_then(Path::to_str)
+        .and_then(validated_ipc_path)
+    {
+        payload.push_str(&path.to_string_lossy());
+        payload.push('\n');
+    }
+    payload.into_bytes()
 }
 
 fn get_ipc_request_path() -> PathBuf {
@@ -99,7 +222,7 @@ mod win32_ipc {
     }
 
     fn find_primary_hwnd() -> isize {
-        if let Ok(text) = std::fs::read_to_string(get_hwnd_file_path())
+        if let Some(text) = super::read_private_file(&get_hwnd_file_path(), false)
             && let Ok(val) = text.trim().parse::<isize>()
             && val != 0
             && unsafe { IsWindow(val) != 0 }
@@ -138,15 +261,8 @@ mod win32_ipc {
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 CloseHandle(handle);
 
-                let mut payload = String::from("ACTIVATE\n");
-                if let Some(path) = initial_file {
-                    if path.is_file() {
-                        let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-                        payload.push_str(&abs.to_string_lossy());
-                        payload.push('\n');
-                    }
-                }
-                let _ = std::fs::write(get_ipc_request_path(), payload);
+                let payload = super::build_ipc_payload(initial_file);
+                let _ = super::write_private_file(&get_ipc_request_path(), &payload);
 
                 AllowSetForegroundWindow(ASFW_ANY);
                 let hwnd = find_primary_hwnd();
@@ -177,7 +293,8 @@ mod win32_ipc {
             }
             if is_own_process_window(hwnd) {
                 REGISTERED_HWND.store(hwnd, Ordering::Relaxed);
-                let _ = std::fs::write(get_hwnd_file_path(), hwnd.to_string());
+                let _ =
+                    super::write_private_file(&get_hwnd_file_path(), hwnd.to_string().as_bytes());
                 crate::platform::optimize_window_for_rendering(hwnd);
             }
         }
@@ -210,8 +327,7 @@ pub fn acquire_single_instance(initial_file: &Option<PathBuf>) -> Option<SingleI
     #[cfg(not(windows))]
     {
         let lock_file = get_ipc_dir().join("quietreader_instance.lock");
-        if lock_file.exists()
-            && let Ok(pid_str) = std::fs::read_to_string(&lock_file)
+        if let Some(pid_str) = read_private_file(&lock_file, false)
             && let Ok(pid) = pid_str.trim().parse::<u32>()
         {
             let proc_alive = std::path::Path::new(&format!("/proc/{pid}")).exists()
@@ -221,19 +337,12 @@ pub fn acquire_single_instance(initial_file: &Option<PathBuf>) -> Option<SingleI
                     .map(|o| o.status.success())
                     .unwrap_or(false);
             if proc_alive {
-                let mut payload = String::from("ACTIVATE\n");
-                if let Some(path) = initial_file {
-                    if path.is_file() {
-                        let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-                        payload.push_str(&abs.to_string_lossy());
-                        payload.push('\n');
-                    }
-                }
-                let _ = std::fs::write(get_ipc_request_path(), payload);
+                let payload = build_ipc_payload(initial_file);
+                let _ = write_private_file(&get_ipc_request_path(), &payload);
                 return None;
             }
         }
-        let _ = std::fs::write(&lock_file, std::process::id().to_string());
+        let _ = write_private_file(&lock_file, std::process::id().to_string().as_bytes());
         let _ = std::fs::remove_file(get_ipc_request_path());
         Some(SingleInstanceGuard { lock_file })
     }
@@ -269,23 +378,10 @@ pub fn poll_single_instance_requests() -> (bool, Vec<PathBuf>) {
     }
 
     let req_path = get_ipc_request_path();
-    if !req_path.exists() {
+    let Some(content) = read_private_file(&req_path, true) else {
         return (false, Vec::new());
-    }
-
-    let content = std::fs::read_to_string(&req_path).unwrap_or_default();
-    let _ = std::fs::remove_file(&req_path);
-
-    let mut files = Vec::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() && trimmed != "ACTIVATE" {
-            let p = PathBuf::from(trimmed);
-            if p.is_file() {
-                files.push(p);
-            }
-        }
-    }
+    };
+    let files = parse_ipc_payload(&content);
 
     #[cfg(windows)]
     win32_ipc::focus_current_process_window();

@@ -1,3 +1,4 @@
+use super::icons::{Icon, IconButton, IconLabel};
 use super::theme::ReaderTheme;
 use crate::core::ReaderCore;
 use crate::document::{Document, DocumentViewKind};
@@ -23,12 +24,12 @@ pub struct BookTab {
 }
 
 impl BookTab {
-    pub fn new_loading(file_path: PathBuf, request_id: u64) -> Self {
+    pub fn new_loading(file_path: PathBuf, request_id: u64, lang: crate::i18n::UiLanguage) -> Self {
         let format_badge = Self::detect_format_badge(&file_path);
         let title = file_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Документ".to_string());
+            .unwrap_or_else(|| lang.t().extra.default_document_title.to_string());
 
         Self {
             file_path,
@@ -61,7 +62,13 @@ impl BookTab {
             file_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Документ".to_string())
+                .unwrap_or_else(|| {
+                    crate::i18n::UiLanguage::Auto
+                        .t()
+                        .extra
+                        .default_document_title
+                        .to_string()
+                })
         };
         let format_badge = document.format_name().to_string();
 
@@ -213,10 +220,21 @@ impl TabsBar {
                                     .color(theme.accent_color());
                                 ui.label(badge_text);
 
-                                let label_str = if tab.is_loading {
-                                    format!("⏳ {}", tab.short_title(22))
+                                if tab.is_loading {
+                                    ui.add(
+                                        IconLabel::new(Icon::Hourglass, "")
+                                            .size(11.0)
+                                            .color(theme.accent_color()),
+                                    );
                                 } else if tab.load_error.is_some() {
-                                    format!("⚠️ {}", tab.short_title(22))
+                                    ui.add(
+                                        IconLabel::new(Icon::Warning, "")
+                                            .size(11.0)
+                                            .color(theme.accent_color()),
+                                    );
+                                }
+                                let label_str = if tab.is_loading || tab.load_error.is_some() {
+                                    tab.short_title(22)
                                 } else {
                                     tab.short_title(26)
                                 };
@@ -301,7 +319,8 @@ impl TabsBar {
 
                     let add_btn = ui
                         .add(
-                            egui::Button::new(RichText::new("+").size(15.0).strong())
+                            IconButton::new(Icon::Plus, "")
+                                .font_size(15.0)
                                 .min_size(egui::Vec2::new(26.0, 24.0)),
                         )
                         .on_hover_text(t.open_file);
@@ -365,19 +384,27 @@ impl super::QuietReaderApp {
             self.comic_view.current_page = tab.comic_page;
             self.pdf_view.clear_cache();
             self.pdf_view.current_page = tab.comic_page;
-            self.search.last_searched_query.clear();
+            self.search.reset_for_document();
             self.tts.stop();
             self.last_tts_paragraph = None;
             self.settings.last_opened_book = Some(tab.file_path);
             self.settings.active_tab_index = idx;
+            let t = self.settings.ui_language.t();
             if tab.is_loading {
-                self.status_message =
-                    Some(format!("Загрузка [{}]: {}...", tab.format_badge, tab.title));
+                self.status_message = Some(crate::i18n::fill(
+                    t.extra.status_tab_loading,
+                    &[("{fmt}", &tab.format_badge), ("{title}", &tab.title)],
+                ));
             } else if let Some(ref err) = tab.load_error {
-                self.status_message = Some(format!("Ошибка [{}]: {err}", tab.format_badge));
+                self.status_message = Some(crate::i18n::fill(
+                    t.extra.status_tab_error,
+                    &[("{fmt}", &tab.format_badge), ("{error}", err)],
+                ));
             } else {
-                self.status_message =
-                    Some(format!("Вкладка [{}]: {}", tab.format_badge, tab.title));
+                self.status_message = Some(crate::i18n::fill(
+                    t.extra.status_tab_active,
+                    &[("{fmt}", &tab.format_badge), ("{title}", &tab.title)],
+                ));
             }
         }
     }
@@ -403,7 +430,14 @@ impl super::QuietReaderApp {
             self.comic_view.clear_cache();
             self.pdf_view.clear_cache();
             self.autoscroll.stop();
-            self.status_message = Some("Все вкладки закрыты".to_string());
+            self.status_message = Some(
+                self.settings
+                    .ui_language
+                    .t()
+                    .extra
+                    .status_all_tabs_closed
+                    .to_string(),
+            );
         } else {
             let next_idx = if idx < self.active_tab {
                 self.active_tab - 1

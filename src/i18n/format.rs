@@ -1,5 +1,6 @@
 use super::UiLanguage;
 use crate::document::DocumentError;
+use crate::opds::{OpdsAuthError, OpdsError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluralCategory {
@@ -217,13 +218,81 @@ fn days_to_ymd(days: u64) -> (i32, u32, u32) {
     (y as i32, m, d)
 }
 
+fn format_error_detail(prefix: &str, message: &str, lang: UiLanguage) -> String {
+    let has_cyrillic = message
+        .chars()
+        .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    if has_cyrillic && lang.resolve() != UiLanguage::Ru {
+        prefix.to_string()
+    } else {
+        format!("{prefix}: {message}")
+    }
+}
+
 pub fn format_document_error(err: &DocumentError, lang: UiLanguage) -> String {
     let t = lang.t();
     match err {
-        DocumentError::Io(msg) => format!("{}: {msg}", t.err_io),
-        DocumentError::Unsupported(msg) => format!("{}: {msg}", t.err_unsupported),
-        DocumentError::Corrupted(msg) => format!("{}: {msg}", t.err_corrupted),
-        DocumentError::LimitExceeded(msg) => format!("{}: {msg}", t.err_limit_exceeded),
+        DocumentError::Io(msg) => format_error_detail(t.err_io, msg, lang),
+        DocumentError::Unsupported(msg) => format_error_detail(t.err_unsupported, msg, lang),
+        DocumentError::Corrupted(msg) => format_error_detail(t.err_corrupted, msg, lang),
+        DocumentError::LimitExceeded(msg) => format_error_detail(t.err_limit_exceeded, msg, lang),
+    }
+}
+
+pub fn format_opds_auth_error(err: OpdsAuthError, lang: UiLanguage) -> String {
+    let t = lang.t();
+    match err {
+        OpdsAuthError::InvalidUrl => t.opds_invalid_url.to_string(),
+        OpdsAuthError::UnsupportedScheme => t.opds_unsupported_scheme.to_string(),
+        OpdsAuthError::HttpsRequired => t.opds_https_required.to_string(),
+    }
+}
+
+pub fn format_opds_error(err: &OpdsError, lang: UiLanguage) -> String {
+    let t = lang.t();
+    match err {
+        OpdsError::Message(message) => message.clone(),
+        OpdsError::ResponseTooLarge { limit } => t
+            .opds_response_too_large
+            .replace("{}", &(limit / (1024 * 1024)).to_string()),
+        OpdsError::DownloadTooLarge { limit } => t
+            .opds_download_too_large
+            .replace("{}", &(limit / (1024 * 1024)).to_string()),
+        OpdsError::Network(message) => {
+            super::fill(t.extra.opds_network_error, &[("{error}", message)])
+        }
+        OpdsError::ReadResponse(message) => {
+            super::fill(t.extra.opds_read_response_error, &[("{error}", message)])
+        }
+        OpdsError::HttpStatus(status) => super::fill(
+            t.extra.opds_http_status,
+            &[("{status}", &status.to_string())],
+        ),
+        OpdsError::OpenSearch(message) => {
+            super::fill(t.extra.opds_opensearch_error, &[("{error}", message)])
+        }
+        OpdsError::InvalidOpenSearch => t.extra.opds_invalid_opensearch.to_string(),
+        OpdsError::NoSearchInterface => t.extra.opds_no_search_interface.to_string(),
+        OpdsError::DownloadConnect(message) => {
+            super::fill(t.extra.opds_download_connect_error, &[("{error}", message)])
+        }
+        OpdsError::DownloadServer(status) => super::fill(
+            t.extra.opds_download_server_error,
+            &[("{status}", &status.to_string())],
+        ),
+        OpdsError::CreateFile(message) => {
+            super::fill(t.extra.opds_create_file_error, &[("{error}", message)])
+        }
+        OpdsError::Transfer(message) => {
+            super::fill(t.extra.opds_transfer_error, &[("{error}", message)])
+        }
+        OpdsError::WriteFile(message) => {
+            super::fill(t.extra.opds_write_file_error, &[("{error}", message)])
+        }
+        OpdsError::Flush(message) => super::fill(t.extra.opds_flush_error, &[("{error}", message)]),
+        OpdsError::MoveFile(message) => {
+            super::fill(t.extra.opds_move_file_error, &[("{error}", message)])
+        }
     }
 }
 
@@ -232,8 +301,9 @@ pub fn format_extension_description(ext: &str, lang: UiLanguage) -> &'static str
     match ext.to_ascii_lowercase().as_str() {
         "fb2" => t.format_desc_fb2,
         "epub" => t.format_desc_epub,
-        "mobi" | "prc" => "MOBI (.mobi, .prc) — Книги Mobipocket",
-        "azw3" | "azw" => "AZW3 (.azw3, .azw) — Книги Kindle Format 8",
+        "mobi" | "prc" => t.extra.format_desc_mobi,
+        "azw3" | "azw" => t.extra.format_desc_azw3,
+        "log" => t.extra.format_desc_log,
         "txt" => t.format_desc_txt,
         "doc" => t.format_desc_doc,
         "docx" => t.format_desc_docx,

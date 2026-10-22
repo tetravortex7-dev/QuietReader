@@ -161,7 +161,8 @@ impl QuietReaderApp {
         self.save_active_to_tab();
         self.sync_settings_fields();
         if let Err(e) = self.settings.save() {
-            self.status_message = Some(format!("Ошибка сохранения: {e}"));
+            let t = self.settings.ui_language.t();
+            self.status_message = Some(t.save_settings_error.replace("{}", &e));
         }
         self.settings_dirty = false;
         self.last_settings_change = Instant::now();
@@ -214,12 +215,13 @@ impl QuietReaderApp {
             .iter()
             .map(|s| s.as_str())
             .collect();
-        match crate::platform::register_file_associations(&exts) {
+        match crate::platform::register_file_associations(&exts, self.settings.ui_language) {
             Ok(msg) => {
                 self.status_message = Some(msg);
             }
             Err(e) => {
-                self.status_message = Some(format!("Ошибка ассоциации: {e}"));
+                let t = self.settings.ui_language.t();
+                self.status_message = Some(t.extra.status_assoc_error.replace("{error}", &e));
             }
         }
     }
@@ -250,7 +252,7 @@ impl QuietReaderApp {
         let request_id = self
             .document_loader
             .request_load(path.clone(), self.settings.ui_language);
-        let tab = BookTab::new_loading(path, request_id);
+        let tab = BookTab::new_loading(path, request_id, self.settings.ui_language);
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
         self.apply_tab_state(new_idx);
@@ -292,6 +294,7 @@ impl QuietReaderApp {
                         self.comic_view.current_page = loaded.comic_page;
                         self.pdf_view.clear_cache();
                         self.pdf_view.current_page = loaded.comic_page;
+                        self.search.reset_for_document();
                         self.status_message = Some(loaded.status_message);
                         self.mark_settings_dirty();
                     }

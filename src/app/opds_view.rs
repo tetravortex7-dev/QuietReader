@@ -1,8 +1,9 @@
 use crate::app::icons::{Icon, IconButton, IconLabel, paint_icon};
 use crate::app::theme::ReaderTheme;
+use crate::i18n::{format_opds_auth_error, format_opds_error};
 use crate::opds::{
-    DownloadItem, DownloadStatus, OpdsAcquisitionLink, OpdsBreadcrumb, OpdsCatalog, OpdsClient,
-    OpdsCoverManager, OpdsEntry, OpdsEvent, OpdsFeed,
+    DownloadItem, DownloadStatus, OpdsAcquisitionLink, OpdsAuth, OpdsAuthError, OpdsBreadcrumb,
+    OpdsCatalog, OpdsClient, OpdsCoverManager, OpdsEntry, OpdsEvent, OpdsFeed,
 };
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, Rect, RichText, ScrollArea, Stroke, StrokeKind, Vec2};
@@ -64,7 +65,7 @@ impl OpdsBrowserState {
         }
     }
 
-    pub fn poll(&mut self, _settings: &mut AppSettings) {
+    pub fn poll(&mut self, settings: &mut AppSettings) {
         let events = self.client.poll_events();
         for event in events {
             match event {
@@ -77,7 +78,7 @@ impl OpdsBrowserState {
                             self.error_message = None;
                         }
                         Err(e) => {
-                            self.error_message = Some(e);
+                            self.error_message = Some(format_opds_error(&e, settings.ui_language));
                         }
                     }
                 }
@@ -103,7 +104,10 @@ impl OpdsBrowserState {
                                 self.new_download_to_open = Some(path);
                             }
                             Err(e) => {
-                                item.status = DownloadStatus::Failed(e);
+                                item.status = DownloadStatus::Failed(format_opds_error(
+                                    &e,
+                                    settings.ui_language,
+                                ));
                             }
                         }
                     }
@@ -112,7 +116,7 @@ impl OpdsBrowserState {
         }
     }
 
-    pub fn open_catalog(&mut self, catalog: &OpdsCatalog) {
+    pub fn open_catalog(&mut self, catalog: &OpdsCatalog, settings: &AppSettings) {
         self.active_catalog_id = Some(catalog.id.clone());
         self.history.clear();
         self.breadcrumbs = vec![OpdsBreadcrumb {
@@ -120,13 +124,17 @@ impl OpdsBrowserState {
             url: catalog.url.clone(),
         }];
         self.search_query.clear();
-        self.is_loading = true;
         self.error_message = None;
-        let auth = match (&catalog.username, &catalog.password) {
-            (Some(u), Some(p)) if !u.is_empty() => Some((u.clone(), p.clone())),
-            _ => None,
-        };
-        self.client.fetch_feed(&catalog.url, auth);
+        match OpdsAuth::from_catalog(catalog) {
+            Ok(auth) => {
+                self.is_loading = true;
+                self.client.fetch_feed(&catalog.url, auth);
+            }
+            Err(err) => {
+                self.is_loading = false;
+                self.error_message = Some(format_opds_auth_error(err, settings.ui_language));
+            }
+        }
     }
 
     pub fn navigate_to(&mut self, title: &str, url: &str, settings: &AppSettings) {
@@ -160,19 +168,30 @@ impl OpdsBrowserState {
     }
 
     fn fetch_url(&mut self, url: &str, settings: &AppSettings) {
+        let auth = match self.active_auth(settings) {
+            Ok(auth) => auth,
+            Err(err) => {
+                self.is_loading = false;
+                self.error_message = Some(format_opds_auth_error(err, settings.ui_language));
+                return;
+            }
+        };
         self.is_loading = true;
         self.error_message = None;
-        let auth = self.active_auth(settings);
         self.client.fetch_feed(url, auth);
     }
 
-    pub(crate) fn active_auth(&self, settings: &AppSettings) -> Option<(String, String)> {
-        let cat_id = self.active_catalog_id.as_deref()?;
-        let cat = settings.opds_catalogs.iter().find(|c| c.id == cat_id)?;
-        match (&cat.username, &cat.password) {
-            (Some(u), Some(p)) if !u.is_empty() => Some((u.clone(), p.clone())),
-            _ => None,
-        }
+    pub(crate) fn active_auth(
+        &self,
+        settings: &AppSettings,
+    ) -> Result<Option<OpdsAuth>, OpdsAuthError> {
+        let Some(cat_id) = self.active_catalog_id.as_deref() else {
+            return Ok(None);
+        };
+        let Some(cat) = settings.opds_catalogs.iter().find(|c| c.id == cat_id) else {
+            return Ok(None);
+        };
+        OpdsAuth::from_catalog(cat)
     }
 
     pub fn render(
@@ -274,7 +293,11 @@ impl OpdsBrowserState {
                 let mut clicked_crumb = None;
                 for (idx, crumb) in self.breadcrumbs.iter().enumerate() {
                     if idx > 0 {
-                        ui.label(RichText::new("›").size(14.0).color(sec_text));
+                        ui.add(
+                            IconLabel::new(Icon::ArrowRight, "")
+                                .size(14.0)
+                                .color(sec_text),
+                        );
                     }
                     let is_last = idx == self.breadcrumbs.len() - 1;
                     let crumb_btn = egui::Button::new(
@@ -303,7 +326,7 @@ impl OpdsBrowserState {
                     if !self.search_query.is_empty()
                         && ui
                             .add(IconButton::new(Icon::Cross, ""))
-                            .on_hover_text("Очистить поиск")
+                            .on_hover_text(t.extra.clear_search)
                             .clicked()
                     {
                         self.search_query.clear();
@@ -323,22 +346,34 @@ impl OpdsBrowserState {
                         && has_remote_search
                     {
                         if let Some(feed) = &self.current_feed {
-                            if let Some(cur) = self.current_url.clone() {
-                                self.history.push((cur, self.breadcrumbs.clone()));
+                            match self.active_auth(settings) {
+                                Ok(auth) => {
+                                    if let Some(cur) = self.current_url.clone() {
+                                        self.history.push((cur, self.breadcrumbs.clone()));
+                                    }
+                                    self.breadcrumbs.push(OpdsBreadcrumb {
+                                        title: format!(
+                                            "{}: {}",
+                                            t.search,
+                                            self.search_query.trim()
+                                        ),
+                                        url: String::new(),
+                                    });
+                                    self.is_loading = true;
+                                    self.error_message = None;
+                                    self.client.search(
+                                        feed.search_template.clone(),
+                                        feed.search_descriptor_url.clone(),
+                                        self.search_query.trim(),
+                                        auth,
+                                    );
+                                }
+                                Err(err) => {
+                                    self.is_loading = false;
+                                    self.error_message =
+                                        Some(format_opds_auth_error(err, settings.ui_language));
+                                }
                             }
-                            self.breadcrumbs.push(OpdsBreadcrumb {
-                                title: format!("🔍 {}", self.search_query.trim()),
-                                url: String::new(),
-                            });
-                            self.is_loading = true;
-                            self.error_message = None;
-                            let auth = self.active_auth(settings);
-                            self.client.search(
-                                feed.search_template.clone(),
-                                feed.search_descriptor_url.clone(),
-                                self.search_query.trim(),
-                                auth,
-                            );
                         }
                     }
                 });
@@ -348,7 +383,7 @@ impl OpdsBrowserState {
             ui.separator();
             ui.add_space(4.0);
 
-            self.render_downloads_banner(ui, theme);
+            self.render_downloads_banner(ui, theme, settings.ui_language);
 
             if self.is_loading {
                 ui.centered_and_justified(|ui| {
@@ -587,10 +622,16 @@ impl OpdsBrowserState {
         }
     }
 
-    fn render_downloads_banner(&mut self, ui: &mut egui::Ui, theme: &ReaderTheme) {
+    fn render_downloads_banner(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: &ReaderTheme,
+        lang: crate::i18n::UiLanguage,
+    ) {
         if self.downloads.is_empty() {
             return;
         }
+        let t = lang.t();
 
         let active_downloads: Vec<_> = self
             .downloads
@@ -649,7 +690,10 @@ impl OpdsBrowserState {
                             }
                         }
                         DownloadStatus::Queued => {
-                            let text = format!("В очереди: {}", item.title);
+                            let text = crate::i18n::fill(
+                                t.extra.queued_download,
+                                &[("{title}", &item.title)],
+                            );
                             ui.add(IconLabel::new(Icon::Recent, &text).size(12.0));
                         }
                         _ => {}
@@ -681,7 +725,7 @@ impl OpdsBrowserState {
         card_frame.show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 let cover_size = Vec2::new(72.0, 104.0);
-                let auth = self.active_auth(settings);
+                let auth = self.active_auth(settings).ok().flatten();
                 let opt_tex = entry
                     .thumbnail_url
                     .as_deref()
@@ -847,12 +891,18 @@ impl OpdsBrowserState {
             },
         );
 
-        let downloads_dir = AppSettings::get_settings_path()
-            .parent()
-            .map(|p| p.join("downloads"))
-            .unwrap_or_else(|| PathBuf::from("downloads"));
+        let downloads_dir = crate::platform::downloads::downloads_dir();
 
-        let auth = self.active_auth(settings);
+        let auth = match self.active_auth(settings) {
+            Ok(auth) => auth,
+            Err(err) => {
+                if let Some(item) = self.downloads.get_mut(&download_id) {
+                    item.status =
+                        DownloadStatus::Failed(format_opds_auth_error(err, settings.ui_language));
+                }
+                return;
+            }
+        };
         let author = entry.authors.first().cloned().unwrap_or_default();
         self.client.download(
             &download_id,

@@ -105,7 +105,10 @@ impl DocxDocument {
             let file = archive
                 .by_index(i)
                 .map_err(|e| DocumentError::Corrupted(format!("Ошибка архива DOCX: {e}")))?;
-            let name = file.name().to_string();
+            let name = file
+                .name()
+                .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?
+                .to_string();
             if !crate::document::is_safe_archive_path(&name) {
                 return Err(DocumentError::Corrupted(format!(
                     "Небезопасный путь в архиве DOCX: {name}"

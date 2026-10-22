@@ -503,10 +503,15 @@ impl TextView {
 
                     for book in settings.recent_books.iter().take(4) {
                         let sec_str = t.section_num.replace("{}", &(book.chapter + 1).to_string());
-                        let label = if book.author.is_empty() {
-                            format!("{} ({})", book.title, sec_str)
+                        let title = if book.title.is_empty() {
+                            t.extra.default_untitled
                         } else {
-                            format!("{} — {} ({})", book.author, book.title, sec_str)
+                            &book.title
+                        };
+                        let label = if book.author.is_empty() {
+                            format!("{title} ({sec_str})")
+                        } else {
+                            format!("{} — {title} ({sec_str})", book.author)
                         };
                         if ui
                             .add(IconButton::new(Icon::Book, &label).font_size(14.0))

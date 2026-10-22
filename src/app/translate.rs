@@ -29,7 +29,36 @@ fn map_lang_code(code: &str) -> &str {
     }
 }
 
-fn fetch_google_translation(text: &str, target_lang: &str) -> Result<(String, String), String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranslationError {
+    MissingApiKey,
+    InvalidKey,
+    QuotaExceeded,
+    TooManyRequests,
+    NoTranslation,
+    EmptyTranslation,
+    Provider(String),
+}
+
+fn format_translation_error(err: &TranslationError, lang: crate::i18n::UiLanguage) -> String {
+    let t = lang.t();
+    match err {
+        TranslationError::MissingApiKey => t.extra.translate_missing_api_key.to_string(),
+        TranslationError::InvalidKey => t.extra.translate_invalid_key.to_string(),
+        TranslationError::QuotaExceeded => t.extra.translate_quota_exceeded.to_string(),
+        TranslationError::TooManyRequests => t.extra.translate_too_many_requests.to_string(),
+        TranslationError::NoTranslation => t.extra.translate_no_translation.to_string(),
+        TranslationError::EmptyTranslation => t.extra.translate_empty_translation.to_string(),
+        TranslationError::Provider(message) => {
+            crate::i18n::fill(t.extra.translate_provider_error, &[("{error}", message)])
+        }
+    }
+}
+
+fn fetch_google_translation(
+    text: &str,
+    target_lang: &str,
+) -> Result<(String, String), TranslationError> {
     let tl = map_lang_code(target_lang);
     let url = format!(
         "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}",
@@ -46,15 +75,16 @@ fn fetch_google_translation(text: &str, target_lang: &str) -> Result<(String, St
         .get(&url)
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .call()
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| TranslationError::Provider(e.to_string()))?;
 
     let mut body = String::new();
     resp.body_mut()
         .as_reader()
         .read_to_string(&mut body)
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| TranslationError::Provider(e.to_string()))?;
 
-    let val: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("{e}"))?;
+    let val: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| TranslationError::Provider(e.to_string()))?;
 
     let mut translated = String::new();
     if let Some(arr) = val.get(0).and_then(|v| v.as_array()) {
@@ -66,7 +96,9 @@ fn fetch_google_translation(text: &str, target_lang: &str) -> Result<(String, St
     }
 
     if translated.is_empty() {
-        return Err("Empty translation returned".to_string());
+        return Err(TranslationError::Provider(
+            "Empty translation returned".to_string(),
+        ));
     }
 
     let detected = val
@@ -100,10 +132,10 @@ fn fetch_deepl_translation(
     text: &str,
     target_lang: &str,
     api_key: &str,
-) -> Result<(String, String), String> {
+) -> Result<(String, String), TranslationError> {
     let key = api_key.trim();
     if key.is_empty() {
-        return Err("API ключ DeepL не указан".to_string());
+        return Err(TranslationError::MissingApiKey);
     }
 
     let is_free = key.ends_with(":fx");
@@ -124,7 +156,8 @@ fn fetch_deepl_translation(
         "text": [text],
         "target_lang": target
     });
-    let payload_bytes = serde_json::to_vec(&payload).map_err(|e| format!("{e}"))?;
+    let payload_bytes =
+        serde_json::to_vec(&payload).map_err(|e| TranslationError::Provider(e.to_string()))?;
 
     let mut resp = agent
         .post(endpoint)
@@ -132,41 +165,45 @@ fn fetch_deepl_translation(
         .header("Content-Type", "application/json")
         .header("User-Agent", "QuietReader/0.7.1")
         .send(&payload_bytes)
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| TranslationError::Provider(e.to_string()))?;
 
     if resp.status().as_u16() == 403 {
-        return Err("Неверный API ключ DeepL (403 Forbidden)".to_string());
+        return Err(TranslationError::InvalidKey);
     } else if resp.status().as_u16() == 456 {
-        return Err("Превышена квота символов DeepL (456 Quota Exceeded)".to_string());
+        return Err(TranslationError::QuotaExceeded);
     } else if resp.status().as_u16() == 429 {
-        return Err("Слишком много запросов к DeepL (429 Too Many Requests)".to_string());
+        return Err(TranslationError::TooManyRequests);
     } else if !resp.status().is_success() {
         let mut err_body = String::new();
         let _ = resp.body_mut().as_reader().read_to_string(&mut err_body);
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&err_body) {
             if let Some(msg) = val.get("message").and_then(|m| m.as_str()) {
-                return Err(format!("DeepL: {}", msg));
+                return Err(TranslationError::Provider(format!("DeepL: {msg}")));
             }
         }
-        return Err(format!("DeepL HTTP {}", resp.status()));
+        return Err(TranslationError::Provider(format!(
+            "DeepL HTTP {}",
+            resp.status()
+        )));
     }
 
     let mut body = String::new();
     resp.body_mut()
         .as_reader()
         .read_to_string(&mut body)
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| TranslationError::Provider(e.to_string()))?;
 
-    let val: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("{e}"))?;
+    let val: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| TranslationError::Provider(e.to_string()))?;
     if let Some(err_msg) = val.get("message").and_then(|m| m.as_str()) {
-        return Err(err_msg.to_string());
+        return Err(TranslationError::Provider(err_msg.to_string()));
     }
 
     let trans = val
         .get("translations")
         .and_then(|t| t.as_array())
         .and_then(|arr| arr.first())
-        .ok_or_else(|| "Не удалось получить перевод от DeepL".to_string())?;
+        .ok_or(TranslationError::NoTranslation)?;
 
     let translated_text = trans
         .get("text")
@@ -180,7 +217,7 @@ fn fetch_deepl_translation(
         .to_lowercase();
 
     if translated_text.is_empty() {
-        return Err("DeepL вернул пустой перевод".to_string());
+        return Err(TranslationError::EmptyTranslation);
     }
 
     Ok((translated_text, detected_lang))
@@ -196,7 +233,7 @@ struct WorkerTask {
 struct WorkerResponse {
     original: String,
     _target_lang: String,
-    result: Result<(String, String), String>,
+    result: Result<(String, String), TranslationError>,
 }
 
 pub struct TranslateState {
@@ -207,7 +244,7 @@ pub struct TranslateState {
     pub target_lang: String,
     pub provider: TranslationProvider,
     pub is_loading: bool,
-    pub error: Option<String>,
+    pub error: Option<TranslationError>,
     pub copy_feedback_timer: Option<std::time::Instant>,
     pub editing_api_key: bool,
     pub temp_api_key: String,
@@ -557,8 +594,12 @@ impl TranslateView {
                         ui.vertical_centered(|ui| {
                             ui.add_space(15.0);
                             ui.label(
-                                RichText::new(format!("{}: {}", t.translate_error, err))
-                                    .color(Color32::RED),
+                                RichText::new(format!(
+                                    "{}: {}",
+                                    t.translate_error,
+                                    format_translation_error(err, settings.ui_language)
+                                ))
+                                .color(Color32::RED),
                             );
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {

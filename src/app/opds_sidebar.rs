@@ -1,7 +1,8 @@
 use super::icons::{Icon, IconButton, paint_icon};
 use super::opds_view::OpdsBrowserState;
 use super::theme::ReaderTheme;
-use crate::opds::OpdsCatalog;
+use crate::i18n::format_opds_auth_error;
+use crate::opds::{OpdsCatalog, validate_catalog_url};
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, Vec2};
 
@@ -130,7 +131,7 @@ impl OpdsBrowserState {
                     }
 
                     if let Some(cat) = catalog_to_open {
-                        self.open_catalog(&cat);
+                        self.open_catalog(&cat, settings);
                     }
                     if let Some(del_id) = catalog_to_delete {
                         settings.opds_catalogs.retain(|c| c.id != del_id);
@@ -208,11 +209,12 @@ impl OpdsBrowserState {
                     {
                         let raw_name = self.new_name.trim();
                         let url = self.new_url.trim();
+                        let uses_auth = self.new_has_auth && !self.new_user.trim().is_empty();
                         if url.is_empty() {
-                            self.add_error = Some("Укажите адрес каталога (URL)".to_string());
-                        } else if !url.starts_with("http://") && !url.starts_with("https://") {
+                            self.add_error = Some(t.opds_url_required.to_string());
+                        } else if let Err(err) = validate_catalog_url(url, uses_auth) {
                             self.add_error =
-                                Some("Адрес должен начинаться с http:// или https://".to_string());
+                                Some(format_opds_auth_error(err, settings.ui_language));
                         } else {
                             let name = if raw_name.is_empty() {
                                 url.trim_start_matches("http://")
@@ -252,7 +254,7 @@ impl OpdsBrowserState {
                             self.new_user.clear();
                             self.new_pass.clear();
                             self.add_error = None;
-                            self.open_catalog(&new_cat);
+                            self.open_catalog(&new_cat, settings);
                         }
                     }
                     if ui

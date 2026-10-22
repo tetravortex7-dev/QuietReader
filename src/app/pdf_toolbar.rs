@@ -1,3 +1,4 @@
+use super::icons::{Icon, IconButton};
 use super::pdf_view::{PdfViewState, truncate_str};
 use super::theme::ReaderTheme;
 use crate::settings::PdfSettings;
@@ -16,11 +17,16 @@ impl PdfViewState {
         lang: crate::i18n::UiLanguage,
     ) {
         let t = lang.t();
+        let copied_text =
+            |preview: &str| crate::i18n::fill(t.extra.pdf_copied_prefix, &[("{preview}", preview)]);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
 
             if ui
-                .add_enabled(self.current_page > 0, egui::Button::new("◀"))
+                .add_enabled(
+                    self.current_page > 0,
+                    IconButton::new(Icon::ArrowLeft, "").min_size(Vec2::new(28.0, 24.0)),
+                )
                 .on_hover_text(t.prev_page)
                 .clicked()
             {
@@ -52,7 +58,10 @@ impl PdfViewState {
             ui.label(RichText::new(format!("{} {page_count}", t.page_of)).size(13.0));
 
             if ui
-                .add_enabled(self.current_page + 1 < page_count, egui::Button::new("▶"))
+                .add_enabled(
+                    self.current_page + 1 < page_count,
+                    IconButton::new(Icon::ArrowRight, "").min_size(Vec2::new(28.0, 24.0)),
+                )
                 .on_hover_text(t.next_page)
                 .clicked()
             {
@@ -62,7 +71,11 @@ impl PdfViewState {
 
             ui.separator();
 
-            if ui.button("−").on_hover_text(t.zoom_out).clicked() {
+            if ui
+                .add(IconButton::new(Icon::Minus, "").min_size(Vec2::new(26.0, 24.0)))
+                .on_hover_text(t.zoom_out)
+                .clicked()
+            {
                 super::paged_common::zoom_out(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
@@ -79,13 +92,17 @@ impl PdfViewState {
                 );
             }
 
-            if ui.button("+").on_hover_text(t.zoom_in).clicked() {
+            if ui
+                .add(IconButton::new(Icon::Plus, "").min_size(Vec2::new(26.0, 24.0)))
+                .on_hover_text(t.zoom_in)
+                .clicked()
+            {
                 super::paged_common::zoom_in(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
             if ui
                 .selectable_label(settings.fit_mode == "FitWidth", t.fit_width_btn)
-                .on_hover_text("Масштабировать по ширине окна")
+                .on_hover_text(t.fit_width)
                 .clicked()
             {
                 settings.fit_mode = "FitWidth".to_string();
@@ -94,7 +111,7 @@ impl PdfViewState {
 
             if ui
                 .selectable_label(settings.fit_mode == "FitWindow", t.fit_window_btn)
-                .on_hover_text("Уместить страницу целиком в окно")
+                .on_hover_text(t.fit_window)
                 .clicked()
             {
                 settings.fit_mode = "FitWindow".to_string();
@@ -105,7 +122,7 @@ impl PdfViewState {
 
             if ui
                 .button(t.rotate_clockwise)
-                .on_hover_text("Повернуть страницы на 90° по часовой стрелке")
+                .on_hover_text(t.extra.pdf_rotate_tip)
                 .clicked()
             {
                 settings.rotation = (settings.rotation + 90) % 360;
@@ -152,7 +169,7 @@ impl PdfViewState {
 
             if ui
                 .selectable_label(settings.layout == "Single", t.single_page_btn)
-                .on_hover_text("Одиночная страница")
+                .on_hover_text(t.extra.pdf_single_tip)
                 .clicked()
             {
                 settings.layout = "Single".to_string();
@@ -161,7 +178,7 @@ impl PdfViewState {
 
             if ui
                 .selectable_label(settings.layout == "Double", t.double_page_btn)
-                .on_hover_text("Две страницы (разворот)")
+                .on_hover_text(t.extra.pdf_double_tip)
                 .clicked()
             {
                 settings.layout = "Double".to_string();
@@ -170,7 +187,7 @@ impl PdfViewState {
 
             if ui
                 .selectable_label(settings.layout == "Continuous", t.scroll_btn)
-                .on_hover_text("Непрерывный вертикальный свиток страниц")
+                .on_hover_text(t.extra.pdf_scroll_tip)
                 .clicked()
             {
                 settings.layout = "Continuous".to_string();
@@ -182,18 +199,22 @@ impl PdfViewState {
             if !self.selected_text.is_empty() {
                 if ui
                     .button(RichText::new(t.copy).strong().color(theme.accent_color()))
-                    .on_hover_text("Скопировать выделенный текст (Ctrl+C)")
+                    .on_hover_text(t.extra.pdf_copy_selected_tip)
                     .clicked()
                 {
                     ui.ctx().copy_text(self.selected_text.clone());
                     let preview = truncate_str(&self.selected_text, 35);
-                    *status_message = Some(format!("Скопировано: \"{preview}\""));
-                    self.copy_notification =
-                        Some((format!("Скопировано: \"{preview}\""), Instant::now()));
+                    let copied = copied_text(&preview);
+                    *status_message = Some(copied.clone());
+                    self.copy_notification = Some((copied, Instant::now()));
                 }
                 if ui
-                    .small_button("X")
-                    .on_hover_text("Снять выделение")
+                    .add(
+                        IconButton::new(Icon::Close, "")
+                            .font_size(11.0)
+                            .min_size(Vec2::splat(20.0)),
+                    )
+                    .on_hover_text(t.extra.pdf_clear_selection_tip)
                     .clicked()
                 {
                     self.selection_start = None;
@@ -203,7 +224,7 @@ impl PdfViewState {
                 }
             } else {
                 ui.label(
-                    RichText::new("Выделение: зажмите ЛКМ на странице")
+                    RichText::new(t.extra.pdf_selection_hint)
                         .size(11.5)
                         .italics()
                         .color(theme.text_color().gamma_multiply(0.65)),
@@ -229,6 +250,9 @@ impl PdfViewState {
         lang: crate::i18n::UiLanguage,
         on_translate: &mut Option<String>,
     ) {
+        let t = lang.t();
+        let copied_text =
+            |preview: &str| crate::i18n::fill(t.extra.pdf_copied_prefix, &[("{preview}", preview)]);
         if !self.selected_text.is_empty() {
             let ctrl_c = ctx.input(|i| {
                 (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::C)
@@ -236,9 +260,9 @@ impl PdfViewState {
             if ctrl_c {
                 ctx.copy_text(self.selected_text.clone());
                 let preview = truncate_str(&self.selected_text, 35);
-                *status_message = Some(format!("Скопировано в буфер: \"{preview}\""));
-                self.copy_notification =
-                    Some((format!("Скопировано: \"{preview}\""), Instant::now()));
+                let copied = copied_text(&preview);
+                *status_message = Some(copied.clone());
+                self.copy_notification = Some((copied, Instant::now()));
             }
         }
 
@@ -253,14 +277,14 @@ impl PdfViewState {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if ui
-                                .button(RichText::new("Скопировать (Ctrl+C)").size(12.0))
+                                .button(RichText::new(t.extra.pdf_copy_btn).size(12.0))
                                 .clicked()
                             {
                                 ctx.copy_text(self.selected_text.clone());
                                 let preview = truncate_str(&self.selected_text, 35);
-                                *status_message = Some(format!("Скопировано: \"{preview}\""));
-                                self.copy_notification =
-                                    Some((format!("Скопировано: \"{preview}\""), Instant::now()));
+                                let copied = copied_text(&preview);
+                                *status_message = Some(copied.clone());
+                                self.copy_notification = Some((copied, Instant::now()));
                             }
                             if ui
                                 .button(RichText::new(lang.t().translate_selection).size(12.0))
@@ -268,7 +292,14 @@ impl PdfViewState {
                             {
                                 *on_translate = Some(self.selected_text.clone());
                             }
-                            if ui.small_button("X").clicked() {
+                            if ui
+                                .add(
+                                    IconButton::new(Icon::Close, "")
+                                        .font_size(11.0)
+                                        .min_size(Vec2::splat(20.0)),
+                                )
+                                .clicked()
+                            {
                                 self.selection_start = None;
                                 self.selection_current = None;
                                 self.selection_dirty = false;

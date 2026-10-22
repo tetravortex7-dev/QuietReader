@@ -21,6 +21,16 @@ fn test_corrupted_and_truncated_pdf_handling() {
 }
 
 #[test]
+fn test_empty_pdf_file_returns_corrupted() {
+    let dir = unique_test_dir("pdf_empty");
+    let path = dir.join("empty.pdf");
+    std::fs::write(&path, b"").unwrap();
+    let result = PdfDocument::from_file(&path);
+    assert!(matches!(result, Err(DocumentError::Corrupted(_))));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_pdf_reading_order_two_columns_and_gutter() {
     use crate::document::pdf::text::{GlyphEntry, group_and_sort_glyphs};
     let mut glyphs = Vec::new();
@@ -151,6 +161,13 @@ startxref
         page_img.rgba.len(),
         (page_img.width * page_img.height * 4) as usize
     );
+
+    let page_img_again = comic
+        .load_page_image(0)
+        .expect("Повторная страница PDF должна использовать кэш");
+    assert_eq!(page_img_again.width, page_img.width);
+    assert_eq!(page_img_again.height, page_img.height);
+    assert_eq!(comic.extract_page_text(0), comic.extract_page_text(0));
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

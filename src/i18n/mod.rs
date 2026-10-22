@@ -194,6 +194,110 @@ pub fn t(lang: UiLanguage) -> &'static Translations {
     lang.t()
 }
 
+pub fn fill(template: &str, values: &[(&str, &str)]) -> String {
+    let mut result = template.to_string();
+    for (key, value) in values {
+        result = result.replace(key, value);
+    }
+    result
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FontText {
+    pub badge: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HotkeyText {
+    pub keys: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExtraTranslations {
+    pub default_document_title: &'static str,
+    pub default_unknown_author: &'static str,
+    pub default_untitled: &'static str,
+    pub default_comic_title: &'static str,
+    pub default_section: &'static str,
+    pub default_page: &'static str,
+    pub default_chapter: &'static str,
+    pub default_part: &'static str,
+    pub default_no_text: &'static str,
+    pub default_word_document: &'static str,
+    pub default_text_document: &'static str,
+    pub default_section_plain: &'static str,
+    pub default_section_page: &'static str,
+    pub default_pdf_document: &'static str,
+    pub default_djvu_document: &'static str,
+    pub default_mobi_document: &'static str,
+    pub default_chapter_part: &'static str,
+    pub default_lines_range: &'static str,
+    pub comic_total_pages: &'static str,
+    pub comic_pages_range: &'static str,
+    pub document_unsupported_paged: &'static str,
+    pub comic_decode_crash: &'static str,
+    pub page_decode_crash: &'static str,
+    pub decode_stream_crashed: &'static str,
+    pub page_load_error_detail: &'static str,
+    pub page_error_detail: &'static str,
+    pub page_loading_number: &'static str,
+    pub copy_page_done: &'static str,
+    pub copy_section_done: &'static str,
+    pub status_assoc_error: &'static str,
+    pub status_assoc_success: &'static str,
+    pub status_all_tabs_closed: &'static str,
+    pub status_tab_loading: &'static str,
+    pub status_tab_error: &'static str,
+    pub status_tab_active: &'static str,
+    pub status_opened_comic: &'static str,
+    pub status_opened_comic_total: &'static str,
+    pub status_opened_book_resume: &'static str,
+    pub status_opened_book_author: &'static str,
+    pub status_opened_book: &'static str,
+    pub toc_all_pages: &'static str,
+    pub toc_pages: &'static str,
+    pub clear_search: &'static str,
+    pub queued_download: &'static str,
+    pub pdf_rotate_tip: &'static str,
+    pub pdf_single_tip: &'static str,
+    pub pdf_double_tip: &'static str,
+    pub pdf_scroll_tip: &'static str,
+    pub pdf_copy_selected_tip: &'static str,
+    pub pdf_clear_selection_tip: &'static str,
+    pub pdf_selection_hint: &'static str,
+    pub pdf_copied_prefix: &'static str,
+    pub pdf_copy_btn: &'static str,
+    pub seconds_suffix: &'static str,
+    pub pixels_per_second_suffix: &'static str,
+    pub tts_chapter_paragraph: &'static str,
+    pub tts_playback_error: &'static str,
+    pub translate_missing_api_key: &'static str,
+    pub translate_invalid_key: &'static str,
+    pub translate_quota_exceeded: &'static str,
+    pub translate_too_many_requests: &'static str,
+    pub translate_no_translation: &'static str,
+    pub translate_empty_translation: &'static str,
+    pub translate_provider_error: &'static str,
+    pub opds_network_error: &'static str,
+    pub opds_read_response_error: &'static str,
+    pub opds_http_status: &'static str,
+    pub opds_opensearch_error: &'static str,
+    pub opds_invalid_opensearch: &'static str,
+    pub opds_no_search_interface: &'static str,
+    pub opds_download_connect_error: &'static str,
+    pub opds_download_server_error: &'static str,
+    pub opds_create_file_error: &'static str,
+    pub opds_transfer_error: &'static str,
+    pub opds_write_file_error: &'static str,
+    pub opds_flush_error: &'static str,
+    pub opds_move_file_error: &'static str,
+    pub format_desc_mobi: &'static str,
+    pub format_desc_azw3: &'static str,
+    pub format_desc_log: &'static str,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Translations {
     pub open_file: &'static str,
@@ -240,6 +344,7 @@ pub struct Translations {
     pub settings_title: &'static str,
     pub back_to_reading: &'static str,
     pub save_settings_error: &'static str,
+    pub secrets_storage_error: &'static str,
     pub tab_fonts: &'static str,
     pub tab_appearance: &'static str,
     pub tab_autoscroll: &'static str,
@@ -501,6 +606,12 @@ pub struct Translations {
     pub opds_retry: &'static str,
     pub opds_no_results: &'static str,
     pub opds_select_catalog: &'static str,
+    pub opds_url_required: &'static str,
+    pub opds_invalid_url: &'static str,
+    pub opds_unsupported_scheme: &'static str,
+    pub opds_https_required: &'static str,
+    pub opds_response_too_large: &'static str,
+    pub opds_download_too_large: &'static str,
 
     pub bookmarks: &'static str,
     pub bookmarks_tooltip: &'static str,
@@ -566,6 +677,10 @@ pub struct Translations {
     pub auto_crop_margins_tooltip: &'static str,
     pub crop_sensitivity: &'static str,
     pub crop_tolerance: &'static str,
+
+    pub extra: ExtraTranslations,
+    pub fonts: [FontText; 9],
+    pub hotkeys: [HotkeyText; 18],
 }
 
 #[cfg(all(test, feature = "enable_tests"))]

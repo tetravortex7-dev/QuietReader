@@ -12,6 +12,7 @@ pub mod document_loader;
 pub mod fonts;
 pub mod icons;
 pub mod input;
+pub mod localized_document;
 pub mod opds_sidebar;
 pub mod opds_view;
 pub mod paged_common;
@@ -338,7 +339,11 @@ impl eframe::App for QuietReaderApp {
                 }
             }
             if actions.toggle_search {
-                if self.view_kind() == DocumentViewKind::Text && self.document.is_some() {
+                if matches!(
+                    self.view_kind(),
+                    DocumentViewKind::Text | DocumentViewKind::Pdf
+                ) && self.document.is_some()
+                {
                     self.search.toggle();
                 }
             }
@@ -729,18 +734,27 @@ impl eframe::App for QuietReaderApp {
                 }
             });
 
-        if self.view_kind() == DocumentViewKind::Text && self.document.is_some() {
+        let mut pdf_page_target = None;
+        if matches!(
+            self.view_kind(),
+            DocumentViewKind::Text | DocumentViewKind::Pdf
+        ) && self.document.is_some()
+        {
             SearchView::render(
                 &ctx,
                 &mut self.search,
-                self.document.as_deref(),
+                self.document.as_ref(),
                 &mut self.current_chapter,
                 &mut self.last_rendered_chapter,
                 &mut self.pending_scroll_y,
+                &mut pdf_page_target,
                 self.font_size,
                 &self.theme,
                 self.settings.ui_language,
             );
+        }
+        if let Some(page) = pdf_page_target {
+            self.pdf_view.go_to_page(page);
         }
 
         let has_text_content = self
@@ -874,8 +888,16 @@ impl eframe::App for QuietReaderApp {
         }
         if save_settings_action {
             self.flush_settings_now();
-            if crate::settings::AppSettings::last_save_error().is_none() {
-                self.status_message = Some("Настройки сохранены".to_string());
+            if crate::settings::AppSettings::last_save_error().is_none()
+                && crate::settings::AppSettings::last_secret_error().is_none()
+            {
+                self.status_message = Some(
+                    self.settings
+                        .ui_language
+                        .t()
+                        .status_settings_saved
+                        .to_string(),
+                );
             }
         }
         if register_assoc_action {

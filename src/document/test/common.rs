@@ -2,6 +2,33 @@ use crate::test::util::unique_test_dir;
 use crate::*;
 
 #[test]
+fn test_xml_fb2_requires_fictionbook_root() {
+    use crate::document::registry::{DocumentFormat, Fb2Format};
+
+    let dir = unique_test_dir("xml_fb2");
+    let generic_xml = dir.join("generic.xml");
+    std::fs::write(
+        &generic_xml,
+        r#"<?xml version="1.0" encoding="utf-8"?><root><item>value</item></root>"#,
+    )
+    .unwrap();
+    assert!(!Fb2Format.probe(&generic_xml));
+    assert!(document::open_document(&generic_xml).is_err());
+
+    let fb2_xml = dir.join("book.xml");
+    std::fs::write(
+        &fb2_xml,
+        r#"<?xml version="1.0" encoding="utf-8"?><FictionBook><body><section><title><p>Title</p></title><p>Text</p></section></body></FictionBook>"#,
+    )
+    .unwrap();
+    assert!(Fb2Format.probe(&fb2_xml));
+    let doc = document::open_document(&fb2_xml).expect("FictionBook XML must open as FB2");
+    assert_eq!(doc.format_name(), "FB2");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_registry_docx_rtf_doc_support() {
     use crate::document::FORMAT_REGISTRY;
 

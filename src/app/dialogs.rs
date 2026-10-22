@@ -23,9 +23,9 @@ impl Dialogs {
             .add_filter(
                 t.format_all_supported,
                 &[
-                    "pdf", "djvu", "djv", "fb2", "epub", "mobi", "prc", "azw", "azw3", "docx",
-                    "doc", "rtf", "txt", "md", "markdown", "log", "cbz", "cbr", "cb7", "zip",
-                    "rar", "7z", "xml",
+                    "pdf", "djvu", "djv", "fb2", "fb2.zip", "epub", "mobi", "prc", "azw", "azw3",
+                    "docx", "doc", "rtf", "txt", "md", "markdown", "log", "cbz", "cbr", "cb7",
+                    "zip", "rar", "7z", "xml",
                 ],
             )
             .add_filter(t.format_word, &["docx", "doc", "dot"])
@@ -34,7 +34,7 @@ impl Dialogs {
             .add_filter(t.format_djvu, &["djvu", "djv"])
             .add_filter(t.format_comics, &["cbz", "cbr", "cb7", "zip", "rar", "7z"])
             .add_filter(t.format_epub, &["epub"])
-            .add_filter(t.format_fb2, &["fb2", "xml"])
+            .add_filter(t.format_fb2, &["fb2", "fb2.zip", "xml"])
             .add_filter("Kindle / MOBI / AZW3", &["mobi", "prc", "azw", "azw3"])
             .add_filter(t.format_txt, &["txt", "md", "markdown", "log"])
             .pick_files()
@@ -83,9 +83,9 @@ impl Dialogs {
 
                 ui.horizontal(|ui| {
                     if ui.small_button(t.select_all).clicked() {
-                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS_INFO
+                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS
                             .iter()
-                            .map(|(ext, _)| ext.to_string())
+                            .map(|ext| ext.to_string())
                             .collect();
                         *on_save_settings = true;
                     }
@@ -113,7 +113,7 @@ impl Dialogs {
                         egui::ScrollArea::vertical()
                             .max_height(210.0)
                             .show(ui, |ui| {
-                                for &(ext, _) in crate::platform::SUPPORTED_EXTENSIONS_INFO {
+                                for &ext in crate::platform::SUPPORTED_EXTENSIONS {
                                     let label = crate::i18n::format::format_extension_description(
                                         ext,
                                         settings.ui_language,
@@ -241,8 +241,13 @@ impl Dialogs {
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
+                                        let title = if book.title.is_empty() {
+                                            t.extra.default_untitled
+                                        } else {
+                                            &book.title
+                                        };
                                         let mut title_text =
-                                            RichText::new(&book.title).strong().size(15.0);
+                                            RichText::new(title).strong().size(15.0);
                                         if is_current {
                                             title_text = title_text.color(theme.accent_color());
                                         }

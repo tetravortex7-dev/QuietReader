@@ -92,10 +92,11 @@ fn test_mobi_format_name_by_extension() {
 
 #[test]
 fn test_ms_mobi_clean_toc_and_chapters() {
-    if !std::path::Path::new("ms.mobi").exists() {
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ms.mobi");
+    if !std::path::Path::new(fixture).exists() {
         return;
     }
-    let doc = MobiDocument::from_file("ms.mobi").unwrap();
+    let doc = MobiDocument::from_file(fixture).unwrap();
     assert_eq!(doc.metadata().title, "Материалы Сета. Часть 2");
     assert_eq!(doc.metadata().author, "Дж. Робертс");
     let chapters = Document::chapters(&doc);

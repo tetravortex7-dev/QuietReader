@@ -2,9 +2,7 @@ pub mod outline;
 pub mod text;
 
 use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use crate::document::{
     BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind, HasToc,
@@ -14,7 +12,7 @@ use crate::document::{
 pub struct PdfDocument {
     metadata: BookMetadata,
     _path: PathBuf,
-    data: Arc<Vec<u8>>,
+    pdf: hayro::hayro_syntax::Pdf,
     page_count: usize,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
@@ -23,7 +21,7 @@ pub struct PdfDocument {
 impl PdfDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
-        let mut file = File::open(path_ref).map_err(|e| {
+        let file = File::open(path_ref).map_err(|e| {
             DocumentError::Io(format!(
                 "Не удалось открыть PDF файл {}: {e}",
                 path_ref.display()
@@ -37,15 +35,32 @@ impl PdfDocument {
                 "Размер PDF файла превышает максимально допустимый лимит 300 МБ".to_string(),
             ));
         }
+        if file_len == 0 {
+            return Err(DocumentError::Corrupted(
+                "Файл не является валидным PDF документом (файл пуст)".to_string(),
+            ));
+        }
 
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать PDF файл: {e}")))?;
+        let map = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
+            DocumentError::Io(format!(
+                "Не удалось отобразить PDF файл {} в память: {e}",
+                path_ref.display()
+            ))
+        })?;
 
-        Self::from_bytes(bytes, path_ref)
+        let data = hayro::hayro_syntax::PdfData::from(std::sync::Arc::new(map));
+        Self::from_pdf_data(data, path_ref)
     }
 
     pub fn from_bytes(bytes: Vec<u8>, path: &Path) -> Result<Self, DocumentError> {
+        Self::from_pdf_data(bytes.into(), path)
+    }
+
+    fn from_pdf_data(
+        data: hayro::hayro_syntax::PdfData,
+        path: &Path,
+    ) -> Result<Self, DocumentError> {
+        let bytes = data.as_ref();
         if bytes.len() < 4 || !bytes.starts_with(b"%PDF") {
             if let Some(pos) = bytes[..bytes.len().min(1024)]
                 .windows(4)
@@ -60,9 +75,7 @@ impl PdfDocument {
             }
         }
 
-        let data = Arc::new(bytes);
-
-        let pdf = hayro::hayro_syntax::Pdf::new(data.clone()).map_err(|e| {
+        let pdf = hayro::hayro_syntax::Pdf::new(data).map_err(|e| {
             DocumentError::Corrupted(format!("Ошибка парсинга PDF документа: {e:?}"))
         })?;
 
@@ -112,7 +125,7 @@ impl PdfDocument {
         Ok(Self {
             metadata: BookMetadata { title, author },
             _path: path.to_path_buf(),
-            data,
+            pdf,
             page_count,
             chapters,
             toc,
@@ -189,10 +202,7 @@ impl PageContent for PdfDocument {
             )));
         }
 
-        let pdf = hayro::hayro_syntax::Pdf::new(self.data.clone())
-            .map_err(|e| DocumentError::Corrupted(format!("Ошибка парсинга PDF: {e:?}")))?;
-
-        let pages = pdf.pages();
+        let pages = self.pdf.pages();
         let page = pages.get(index).ok_or_else(|| {
             DocumentError::Corrupted(format!("Страница {} не найдена", index + 1))
         })?;
@@ -277,8 +287,7 @@ impl PageContent for PdfDocument {
             return None;
         }
 
-        let pdf = hayro::hayro_syntax::Pdf::new(self.data.clone()).ok()?;
-        let pages = pdf.pages();
+        let pages = self.pdf.pages();
         let page = pages.get(index)?;
 
         text::extract_page_text(page)
@@ -289,8 +298,7 @@ impl PageContent for PdfDocument {
             return None;
         }
 
-        let pdf = hayro::hayro_syntax::Pdf::new(self.data.clone()).ok()?;
-        let pages = pdf.pages();
+        let pages = self.pdf.pages();
         let page = pages.get(index)?;
 
         text::extract_page_spans(page)

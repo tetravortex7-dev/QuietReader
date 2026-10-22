@@ -1,10 +1,20 @@
 use crate::opds::{OpdsCatalog, default_opds_catalogs};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+const DEEPL_SECRET_KEY: &str = "deepl_api_key";
+
 static LAST_SAVE_ERROR: Mutex<Option<String>> = Mutex::new(None);
+static LAST_SECRET_ERROR: Mutex<Option<String>> = Mutex::new(None);
+static LAST_SECRET_SNAPSHOT: Mutex<Option<SecretSnapshot>> = Mutex::new(None);
+
+#[derive(Clone, PartialEq, Eq, Default)]
+struct SecretSnapshot {
+    deepl_api_key: Option<String>,
+    opds_passwords: BTreeMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
@@ -153,11 +163,28 @@ impl TranslationProvider {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct TranslationSettings {
     pub provider: TranslationProvider,
+    #[serde(skip)]
     pub deepl_api_key: String,
+}
+
+impl std::fmt::Debug for TranslationSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TranslationSettings")
+            .field("provider", &self.provider)
+            .field(
+                "deepl_api_key",
+                &if self.deepl_api_key.is_empty() {
+                    ""
+                } else {
+                    "<redacted>"
+                },
+            )
+            .finish()
+    }
 }
 
 fn default_schema_version() -> u32 {
@@ -266,6 +293,12 @@ impl Default for AppSettings {
     }
 }
 
+pub(crate) fn fallback_settings_path(base: PathBuf) -> PathBuf {
+    let dir = base.join("QuietReader");
+    crate::platform::permissions::create_private_dir(&dir);
+    dir.join("settings.json")
+}
+
 impl AppSettings {
     pub fn last_save_error() -> Option<String> {
         LAST_SAVE_ERROR.lock().ok().and_then(|guard| guard.clone())
@@ -273,6 +306,25 @@ impl AppSettings {
 
     pub fn clear_save_error() {
         if let Ok(mut guard) = LAST_SAVE_ERROR.lock() {
+            *guard = None;
+        }
+    }
+
+    pub fn last_secret_error() -> Option<String> {
+        LAST_SECRET_ERROR
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    fn set_secret_error(error: String) {
+        if let Ok(mut guard) = LAST_SECRET_ERROR.lock() {
+            *guard = Some(error);
+        }
+    }
+
+    fn clear_secret_error() {
+        if let Ok(mut guard) = LAST_SECRET_ERROR.lock() {
             *guard = None;
         }
     }
@@ -289,13 +341,13 @@ impl AppSettings {
 
         if let Some(app_data) = std::env::var_os("APPDATA") {
             let dir = PathBuf::from(app_data).join("QuietReader");
-            let _ = std::fs::create_dir_all(&dir);
+            crate::platform::permissions::create_private_dir(&dir);
             return dir.join("settings.json");
         }
 
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
             let dir = PathBuf::from(xdg).join("QuietReader");
-            let _ = std::fs::create_dir_all(&dir);
+            crate::platform::permissions::create_private_dir(&dir);
             return dir.join("settings.json");
         }
         if let Some(home) = std::env::var_os("HOME") {
@@ -304,16 +356,37 @@ impl AppSettings {
             } else {
                 PathBuf::from(home).join(".config/QuietReader")
             };
-            let _ = std::fs::create_dir_all(&dir);
+            crate::platform::permissions::create_private_dir(&dir);
             return dir.join("settings.json");
         }
 
-        PathBuf::from("quietreader_settings.json")
+        fallback_settings_path(std::env::temp_dir())
     }
 
     pub fn load() -> Self {
+        Self::clear_secret_error();
         let path = Self::get_settings_path();
-        Self::load_from_path(&path)
+        let bak_path = Self::make_backup_path(&path);
+        let legacy = Self::read_legacy_secret_entries(&path)
+            .or_else(|| Self::read_legacy_secret_entries(&bak_path))
+            .unwrap_or_default();
+        let mut settings = Self::load_from_path(&path);
+        settings.apply_secrets(&legacy);
+        if legacy.is_empty() {
+            if let Ok(mut guard) = LAST_SECRET_SNAPSHOT.lock() {
+                *guard = Some(settings.secret_snapshot());
+            }
+        } else {
+            match settings.store_secrets() {
+                Ok(()) => {
+                    Self::clear_secret_error();
+                    let _ = settings.save_to_path(&path);
+                }
+                Err(error) => Self::set_secret_error(error),
+            }
+        }
+        Self::sanitize_auxiliary_files(&path);
+        settings
     }
 
     fn make_backup_path(path: &Path) -> PathBuf {
@@ -327,11 +400,304 @@ impl AppSettings {
         bak_path
     }
 
+    fn opds_secret_key(catalog_id: &str) -> String {
+        format!("opds_password:{catalog_id}")
+    }
+
+    fn extract_legacy_secret_entries(content: &str) -> Vec<(String, String)> {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+            return Vec::new();
+        };
+        let mut entries = Vec::new();
+        if let Some(key) = value
+            .get("translation")
+            .and_then(|translation| translation.get("deepl_api_key"))
+            .and_then(|key| key.as_str())
+            && !key.is_empty()
+        {
+            entries.push((DEEPL_SECRET_KEY.to_string(), key.to_string()));
+        }
+        if let Some(catalogs) = value
+            .get("opds_catalogs")
+            .and_then(|catalogs| catalogs.as_array())
+        {
+            for catalog in catalogs {
+                let Some(id) = catalog.get("id").and_then(|id| id.as_str()) else {
+                    continue;
+                };
+                let Some(password) = catalog
+                    .get("password")
+                    .and_then(|password| password.as_str())
+                else {
+                    continue;
+                };
+                if !id.is_empty() && !password.is_empty() {
+                    entries.push((Self::opds_secret_key(id), password.to_string()));
+                }
+            }
+        }
+        entries
+    }
+
+    fn sanitize_secret_fields(content: &str) -> Option<String> {
+        let mut value = match serde_json::from_str::<serde_json::Value>(content) {
+            Ok(value) => value,
+            Err(_) => return Self::redact_secret_text(content),
+        };
+        let mut changed = false;
+        if let Some(translation) = value
+            .get_mut("translation")
+            .and_then(|translation| translation.as_object_mut())
+            && translation.remove("deepl_api_key").is_some()
+        {
+            changed = true;
+        }
+        if let Some(catalogs) = value
+            .get_mut("opds_catalogs")
+            .and_then(|catalogs| catalogs.as_array_mut())
+        {
+            for catalog in catalogs {
+                if let Some(object) = catalog.as_object_mut()
+                    && object.remove("password").is_some()
+                {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return None;
+        }
+        serde_json::to_string_pretty(&value).ok()
+    }
+
+    fn redact_secret_text(content: &str) -> Option<String> {
+        let mut result = String::with_capacity(content.len());
+        let mut cursor = 0;
+        let mut changed = false;
+
+        while let Some(relative) = content[cursor..].find("\"deepl_api_key\"") {
+            let key_start = cursor + relative;
+            let key_end = key_start + "\"deepl_api_key\"".len();
+            let Some((value_start, value_end)) = Self::json_string_value_bounds(content, key_end)
+            else {
+                cursor = key_end;
+                continue;
+            };
+            result.push_str(&content[cursor..value_start + 1]);
+            result.push('"');
+            cursor = value_end;
+            changed = true;
+        }
+        result.push_str(&content[cursor..]);
+
+        let mut second = String::with_capacity(result.len());
+        let mut cursor = 0;
+        while let Some(relative) = result[cursor..].find("\"password\"") {
+            let key_start = cursor + relative;
+            let key_end = key_start + "\"password\"".len();
+            let Some((value_start, value_end)) = Self::json_string_value_bounds(&result, key_end)
+            else {
+                cursor = key_end;
+                continue;
+            };
+            second.push_str(&result[cursor..value_start + 1]);
+            second.push('"');
+            cursor = value_end;
+            changed = true;
+        }
+        second.push_str(&result[cursor..]);
+
+        if changed { Some(second) } else { None }
+    }
+
+    fn json_string_value_bounds(content: &str, key_end: usize) -> Option<(usize, usize)> {
+        let bytes = content.as_bytes();
+        let mut index = key_end;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if bytes.get(index) != Some(&b':') {
+            return None;
+        }
+        index += 1;
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if bytes.get(index) != Some(&b'"') {
+            return None;
+        }
+        let value_start = index;
+        index += 1;
+        let mut escaped = false;
+        while index < bytes.len() {
+            match bytes[index] {
+                b'\\' if !escaped => escaped = true,
+                b'"' if !escaped => return Some((value_start, index + 1)),
+                _ => escaped = false,
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn write_settings_file(path: &Path, content: &str) -> std::io::Result<()> {
+        std::fs::write(path, content)?;
+        crate::platform::permissions::restrict_file(path);
+        Ok(())
+    }
+
+    fn write_secret_safe_copy(source: &Path, destination: &Path) -> std::io::Result<()> {
+        let content = std::fs::read_to_string(source)?;
+        if let Some(sanitized) = Self::sanitize_secret_fields(&content) {
+            Self::write_settings_file(destination, &sanitized)
+        } else {
+            std::fs::copy(source, destination)?;
+            crate::platform::permissions::restrict_file(destination);
+            Ok(())
+        }
+    }
+
+    fn sanitize_existing_file(path: &Path) {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let Some(sanitized) = Self::sanitize_secret_fields(&content) else {
+            return;
+        };
+        let tmp_path = path.with_extension(format!("sanitize.{}", std::process::id()));
+        if Self::write_settings_file(&tmp_path, &sanitized).is_ok() {
+            let _ = std::fs::rename(&tmp_path, path);
+        } else {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        crate::platform::permissions::restrict_file(path);
+    }
+
+    fn sanitize_auxiliary_files(path: &Path) {
+        Self::sanitize_existing_file(&Self::make_backup_path(path));
+        Self::sanitize_existing_file(&path.with_extension("corrupted"));
+    }
+
+    fn read_legacy_secret_entries(path: &Path) -> Option<Vec<(String, String)>> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let entries = Self::extract_legacy_secret_entries(&content);
+        if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        }
+    }
+
+    fn secret_snapshot(&self) -> SecretSnapshot {
+        SecretSnapshot {
+            deepl_api_key: if self.translation.deepl_api_key.is_empty() {
+                None
+            } else {
+                Some(self.translation.deepl_api_key.clone())
+            },
+            opds_passwords: self
+                .opds_catalogs
+                .iter()
+                .filter_map(|catalog| {
+                    catalog
+                        .password
+                        .as_ref()
+                        .filter(|password| !password.is_empty())
+                        .map(|password| (catalog.id.clone(), password.clone()))
+                })
+                .collect(),
+        }
+    }
+
+    fn store_secrets(&self) -> Result<(), String> {
+        let snapshot = self.secret_snapshot();
+        let previous = LAST_SECRET_SNAPSHOT
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
+        if previous.as_ref() == Some(&snapshot) {
+            return Ok(());
+        }
+        let previous = previous.unwrap_or_default();
+
+        if snapshot.deepl_api_key != previous.deepl_api_key {
+            match snapshot.deepl_api_key.as_deref() {
+                Some(value) => crate::platform::secrets::store(DEEPL_SECRET_KEY, value)?,
+                None => crate::platform::secrets::delete(DEEPL_SECRET_KEY)?,
+            }
+        }
+
+        for (catalog_id, password) in &snapshot.opds_passwords {
+            if previous.opds_passwords.get(catalog_id) != Some(password) {
+                crate::platform::secrets::store(&Self::opds_secret_key(catalog_id), password)?;
+            }
+        }
+
+        for catalog_id in previous.opds_passwords.keys() {
+            if !snapshot.opds_passwords.contains_key(catalog_id) {
+                crate::platform::secrets::delete(&Self::opds_secret_key(catalog_id))?;
+            }
+        }
+
+        if let Ok(mut guard) = LAST_SECRET_SNAPSHOT.lock() {
+            *guard = Some(snapshot);
+        }
+        Ok(())
+    }
+
+    fn apply_secrets(&mut self, legacy: &[(String, String)]) {
+        let mut first_error = None;
+        let legacy_deepl = legacy
+            .iter()
+            .find(|(key, _)| key == DEEPL_SECRET_KEY)
+            .map(|(_, value)| value.clone());
+        match crate::platform::secrets::load(DEEPL_SECRET_KEY) {
+            Ok(Some(value)) => self.translation.deepl_api_key = value,
+            Ok(None) => {
+                if let Some(value) = legacy_deepl {
+                    self.translation.deepl_api_key = value;
+                }
+            }
+            Err(error) => {
+                first_error = Some(error);
+                if let Some(value) = legacy_deepl {
+                    self.translation.deepl_api_key = value;
+                }
+            }
+        }
+
+        for catalog in &mut self.opds_catalogs {
+            let key = Self::opds_secret_key(&catalog.id);
+            let legacy_password = legacy
+                .iter()
+                .find(|(entry_key, _)| entry_key == &key)
+                .map(|(_, value)| value.clone());
+            match crate::platform::secrets::load(&key) {
+                Ok(Some(value)) => catalog.password = Some(value),
+                Ok(None) => {
+                    if let Some(value) = legacy_password {
+                        catalog.password = Some(value);
+                    }
+                }
+                Err(error) => {
+                    first_error = Some(error);
+                    if let Some(value) = legacy_password {
+                        catalog.password = Some(value);
+                    }
+                }
+            }
+        }
+
+        if let Some(error) = first_error {
+            Self::set_secret_error(error);
+        }
+    }
+
     pub fn migrate_from_file(&mut self, path: &Path) {
         if self.schema_version < CURRENT_SETTINGS_SCHEMA_VERSION {
             let bak_path = Self::make_backup_path(path);
             if path.exists() {
-                let _ = std::fs::copy(path, &bak_path);
+                let _ = Self::write_secret_safe_copy(path, &bak_path);
             }
 
             for book in &self.recent_books {
@@ -378,20 +744,21 @@ impl AppSettings {
             if let Ok(content) = std::fs::read_to_string(path) {
                 match serde_json::from_str::<AppSettings>(&content) {
                     Ok(mut settings) => {
+                        crate::platform::permissions::restrict_file(path);
                         settings.migrate_from_file(path);
                         return settings;
                     }
                     Err(_) => {
                         if !bak_path.exists() {
-                            let _ = std::fs::copy(path, &bak_path);
+                            let _ = Self::write_secret_safe_copy(path, &bak_path);
                         }
                         let corrupted_path = path.with_extension("corrupted");
-                        let _ = std::fs::copy(path, &corrupted_path);
+                        let _ = Self::write_secret_safe_copy(path, &corrupted_path);
                     }
                 }
             } else {
                 let corrupted_path = path.with_extension("corrupted");
-                let _ = std::fs::copy(path, &corrupted_path);
+                let _ = Self::write_secret_safe_copy(path, &corrupted_path);
             }
         }
 
@@ -409,7 +776,14 @@ impl AppSettings {
 
     pub fn save(&self) -> Result<(), String> {
         let path = Self::get_settings_path();
-        self.save_to_path(&path)
+        let secret_result = self.store_secrets();
+        let save_result = self.save_to_path(&path);
+        Self::sanitize_auxiliary_files(&path);
+        match secret_result {
+            Ok(()) => Self::clear_secret_error(),
+            Err(error) => Self::set_secret_error(error),
+        }
+        save_result
     }
 
     pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
@@ -417,7 +791,7 @@ impl AppSettings {
             let _ = std::fs::create_dir_all(parent);
         }
         let content = serde_json::to_string_pretty(self).map_err(|e| {
-            let err = format!("Ошибка сериализации настроек: {e}");
+            let err = format!("failed to serialize settings: {e}");
             if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
                 *lock = Some(err.clone());
             }
@@ -431,12 +805,14 @@ impl AppSettings {
             let mut file = std::fs::File::create(&tmp_path)?;
             file.write_all(content.as_bytes())?;
             file.sync_all()?;
+            drop(file);
+            crate::platform::permissions::restrict_file(&tmp_path);
             Ok(())
         })();
 
         if let Err(e) = write_res {
             let _ = std::fs::remove_file(&tmp_path);
-            let err = format!("Ошибка записи временного файла настроек: {e}");
+            let err = format!("failed to write temporary settings file: {e}");
             if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
                 *lock = Some(err.clone());
             }
@@ -459,13 +835,15 @@ impl AppSettings {
 
         if let Some(e) = rename_err {
             let _ = std::fs::remove_file(&tmp_path);
-            let err = format!("Ошибка сохранения настроек {}: {e}", path.display());
+            let err = format!("failed to save settings {}: {e}", path.display());
             if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
                 *lock = Some(err.clone());
             }
             return Err(err);
         }
 
+        crate::platform::permissions::restrict_file(path);
+        Self::sanitize_auxiliary_files(path);
         if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
             *lock = None;
         }
@@ -514,7 +892,7 @@ impl AppSettings {
                 title: if title.is_empty() {
                     path.file_name()
                         .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "Без названия".to_string())
+                        .unwrap_or_default()
                 } else {
                     title.to_string()
                 },

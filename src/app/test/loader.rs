@@ -73,7 +73,7 @@ fn test_book_tab_loading_and_update_lifecycle() {
     use std::path::PathBuf;
 
     let path = PathBuf::from("sample_book.pdf");
-    let tab = BookTab::new_loading(path.clone(), 77);
+    let tab = BookTab::new_loading(path.clone(), 77, crate::i18n::UiLanguage::En);
     assert!(tab.is_loading);
     assert!(tab.document.is_none());
     assert!(tab.load_error.is_none());
@@ -88,7 +88,11 @@ fn test_obsolete_response_discard_on_tab_close_and_reopen() {
     use std::path::PathBuf;
 
     let path = PathBuf::from("chapter1.fb2");
-    let mut tabs = vec![BookTab::new_loading(path.clone(), 1)];
+    let mut tabs = vec![BookTab::new_loading(
+        path.clone(),
+        1,
+        crate::i18n::UiLanguage::En,
+    )];
 
     tabs.clear();
     let stale_resp_id = 1u64;
@@ -97,7 +101,11 @@ fn test_obsolete_response_discard_on_tab_close_and_reopen() {
         .position(|t| t.file_path == path && t.request_id == stale_resp_id);
     assert_eq!(matching, None);
 
-    tabs.push(BookTab::new_loading(path.clone(), 2));
+    tabs.push(BookTab::new_loading(
+        path.clone(),
+        2,
+        crate::i18n::UiLanguage::En,
+    ));
 
     let matching_stale = tabs
         .iter()

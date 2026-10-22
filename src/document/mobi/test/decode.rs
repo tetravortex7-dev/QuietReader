@@ -3,7 +3,7 @@ use crate::document::mobi::decode::*;
 #[test]
 fn test_decompress_palmdoc_plain() {
     let plain = b"Hello world!";
-    let decompressed = decompress_palmdoc(plain);
+    let decompressed = decompress_palmdoc(plain).expect("decompress");
     assert_eq!(decompressed, plain);
 }
 
@@ -16,7 +16,7 @@ fn test_decompress_palmdoc_repeat() {
     data.push(b1 as u8);
     data.push(b2 as u8);
 
-    let decompressed = decompress_palmdoc(&data);
+    let decompressed = decompress_palmdoc(&data).expect("decompress");
     assert_eq!(decompressed, b"abcabc");
 }
 

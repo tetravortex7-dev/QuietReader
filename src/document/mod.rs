@@ -245,7 +245,7 @@ pub trait Document: Send + Sync {
         &[]
     }
     fn format_name(&self) -> &'static str {
-        "Документ"
+        "Document"
     }
     fn has_custom_toc(&self) -> bool {
         !self.toc().is_empty()
@@ -269,6 +269,7 @@ pub trait Document: Send + Sync {
 pub const MAX_ARCHIVE_ENTRIES: usize = 10_000;
 pub const MAX_SINGLE_ENTRY_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_TOTAL_UNPACK_BYTES: u64 = 500 * 1024 * 1024;
+pub const MAX_FOLDER_DEPTH: usize = 32;
 
 pub fn is_safe_archive_path(p: &str) -> bool {
     let trimmed = p.trim();

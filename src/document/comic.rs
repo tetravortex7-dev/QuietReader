@@ -1,12 +1,53 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use zip::ZipArchive;
 
 use crate::document::{
     BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind, HasToc,
     PageContent, PageInfo, TocItem,
 };
+
+static SEVENZ_CACHE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+struct SevenZCache {
+    dir: PathBuf,
+    files: HashMap<String, PathBuf>,
+}
+
+impl SevenZCache {
+    fn new() -> Result<Self, DocumentError> {
+        let parent = std::env::temp_dir().join("QuietReader").join("comic-cache");
+        std::fs::create_dir_all(&parent)
+            .map_err(|e| DocumentError::Io(format!("Не удалось создать каталог кэша CB7: {e}")))?;
+        let id = SEVENZ_CACHE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = parent.join(format!("{}-{id}", std::process::id()));
+        std::fs::create_dir(&dir)
+            .map_err(|e| DocumentError::Io(format!("Не удалось создать кэш CB7: {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
+                let _ = std::fs::remove_dir_all(&dir);
+                return Err(DocumentError::Io(format!(
+                    "Не удалось ограничить доступ к кэшу CB7: {e}"
+                )));
+            }
+        }
+        Ok(Self {
+            dir,
+            files: HashMap::new(),
+        })
+    }
+}
+
+impl Drop for SevenZCache {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComicArchiveKind {
@@ -24,6 +65,7 @@ pub struct ComicDocument {
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
     is_manga: bool,
+    sevenz_cache: Option<SevenZCache>,
 }
 
 impl ComicDocument {
@@ -56,7 +98,9 @@ impl ComicDocument {
                         .map_err(|e| DocumentError::Io(format!("{}: {e}", path_ref.display())))?;
                     if n >= 4 && &magic[0..4] == b"PK\x03\x04" {
                         ComicArchiveKind::Zip
-                    } else if n >= 7 && &magic[0..7] == b"Rar!\x1a\x07\x00" {
+                    } else if (n >= 7 && &magic[0..7] == b"Rar!\x1a\x07\x00")
+                        || (n >= 8 && &magic[0..8] == b"Rar!\x1a\x07\x01\x00")
+                    {
                         ComicArchiveKind::Rar
                     } else if n >= 6 && &magic[0..6] == b"7z\xbc\xaf\x27\x1c" {
                         ComicArchiveKind::SevenZ
@@ -70,10 +114,19 @@ impl ComicDocument {
             }
         };
 
-        let (mut pages, comic_info_xml) = match kind {
-            ComicArchiveKind::Folder => scan_folder(path_ref)?,
-            ComicArchiveKind::Zip => scan_zip(path_ref)?,
-            ComicArchiveKind::Rar => scan_rar(path_ref)?,
+        let (mut pages, comic_info_xml, sevenz_cache) = match kind {
+            ComicArchiveKind::Folder => {
+                let (pages, info) = scan_folder(path_ref)?;
+                (pages, info, None)
+            }
+            ComicArchiveKind::Zip => {
+                let (pages, info) = scan_zip(path_ref)?;
+                (pages, info, None)
+            }
+            ComicArchiveKind::Rar => {
+                let (pages, info) = scan_rar(path_ref)?;
+                (pages, info, None)
+            }
             ComicArchiveKind::SevenZ => scan_sevenz(path_ref)?,
         };
 
@@ -134,6 +187,7 @@ impl ComicDocument {
             chapters,
             toc,
             is_manga,
+            sevenz_cache,
         })
     }
 }
@@ -239,26 +293,21 @@ impl PageContent for ComicDocument {
                 crate::document::read_bounded(handle, max_single, &mut total, max_total)?
             }
             ComicArchiveKind::SevenZ => {
-                let (mut found_bytes, mut err_msg, mut total) = (None, None, 0u64);
-                let target = &page.archive_path;
-                sevenz_rust::decompress_file_with_extract_fn(&self.path, "", |entry, reader, _| {
-                    if entry.name() == target {
-                        match crate::document::read_bounded(
-                            reader, max_single, &mut total, max_total,
-                        ) {
-                            Ok(buf) => found_bytes = Some(buf),
-                            Err(e) => err_msg = Some(e),
-                        }
-                        Ok(false)
-                    } else {
-                        Ok(true)
-                    }
-                })
-                .map_err(|e| DocumentError::Corrupted(format!("Ошибка 7z: {e}")))?;
-                if let Some(e) = err_msg {
-                    return Err(e);
+                let cache = self
+                    .sevenz_cache
+                    .as_ref()
+                    .ok_or_else(|| DocumentError::Corrupted("Кэш CB7 недоступен".to_string()))?;
+                let cached = cache
+                    .files
+                    .get(&page.archive_path)
+                    .ok_or_else(|| DocumentError::Corrupted("Не найден в 7z".to_string()))?;
+                let meta = std::fs::metadata(cached)?;
+                if meta.len() > max_single {
+                    return Err(DocumentError::LimitExceeded(
+                        "Превышен лимит 50 МБ".to_string(),
+                    ));
                 }
-                found_bytes.ok_or_else(|| DocumentError::Corrupted("Не найден в 7z".to_string()))?
+                std::fs::read(cached)?
             }
         };
 
@@ -333,6 +382,29 @@ pub fn is_supported_image(name: &str) -> bool {
     )
 }
 
+pub fn zip_contains_supported_image(path: &Path) -> bool {
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    let Ok(mut zip) = ZipArchive::new(file) else {
+        return false;
+    };
+    if zip.len() > crate::document::MAX_ARCHIVE_ENTRIES {
+        return false;
+    }
+    for i in 0..zip.len() {
+        if let Ok(entry) = zip.by_index(i)
+            && !entry.is_dir()
+            && let Ok(name) = entry.name()
+            && crate::document::is_safe_archive_path(&name)
+            && is_supported_image(&name)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_safe_path(p: &str) -> bool {
     crate::document::is_safe_archive_path(p)
 }
@@ -366,18 +438,28 @@ fn scan_folder(folder: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), Docume
     fn visit_dir(
         root: &Path,
         current: &Path,
+        depth: usize,
         pages: &mut Vec<PageInfo>,
         comic_info: &mut Option<Vec<u8>>,
     ) {
+        if depth > crate::document::MAX_FOLDER_DEPTH {
+            return;
+        }
         if let Ok(entries) = std::fs::read_dir(current) {
             for entry in entries.flatten() {
                 if pages.len() >= crate::document::MAX_ARCHIVE_ENTRIES {
                     break;
                 }
                 let path = entry.path();
-                if path.is_dir() {
-                    visit_dir(root, &path, pages, comic_info);
-                } else if path.is_file() {
+                let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if metadata.file_type().is_symlink() {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    visit_dir(root, &path, depth + 1, pages, comic_info);
+                } else if metadata.is_file() {
                     let rel = path.strip_prefix(root).unwrap_or(&path);
                     let rel_str = rel.to_string_lossy().replace('\\', "/");
 
@@ -393,7 +475,7 @@ fn scan_folder(folder: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), Docume
         }
     }
 
-    visit_dir(folder, folder, &mut pages, &mut comic_info);
+    visit_dir(folder, folder, 0, &mut pages, &mut comic_info);
     Ok((pages, comic_info))
 }
 
@@ -415,7 +497,10 @@ fn scan_zip(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentErr
 
     for i in 0..zip.len() {
         if let Ok(entry) = zip.by_index(i) {
-            let name = entry.name().to_string();
+            let name = entry
+                .name()
+                .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?
+                .to_string();
             if !is_safe_path(&name) {
                 return Err(DocumentError::Corrupted(format!(
                     "Обнаружен небезопасный путь в архиве: {name}"
@@ -504,14 +589,20 @@ fn scan_rar(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentErr
     Ok((pages, comic_info))
 }
 
-fn scan_sevenz(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentError> {
+fn scan_sevenz(
+    path: &Path,
+) -> Result<(Vec<PageInfo>, Option<Vec<u8>>, Option<SevenZCache>), DocumentError> {
     let mut pages = Vec::new();
     let mut comic_info = None;
     let mut entry_count = 0usize;
     let mut total_unpacked = 0u64;
     let mut sec_err: Option<DocumentError> = None;
+    let mut cache = SevenZCache::new()?;
 
     sevenz_rust::decompress_file_with_extract_fn(path, "", |entry, reader, _| {
+        if sec_err.is_some() {
+            return Ok(false);
+        }
         entry_count += 1;
         if entry_count > crate::document::MAX_ARCHIVE_ENTRIES {
             sec_err = Some(DocumentError::LimitExceeded(
@@ -548,6 +639,28 @@ fn scan_sevenz(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), Document
                 comic_info = Some(b);
             }
         } else if is_supported_image(&name) {
+            let mut total_page = 0u64;
+            let bytes = match crate::document::read_bounded(
+                reader,
+                crate::document::MAX_SINGLE_ENTRY_BYTES,
+                &mut total_page,
+                crate::document::MAX_SINGLE_ENTRY_BYTES,
+            ) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    sec_err = Some(e);
+                    return Ok(false);
+                }
+            };
+            let cache_name = format!("page_{}.img", cache.files.len());
+            let cache_path = cache.dir.join(cache_name);
+            if let Err(e) = std::fs::write(&cache_path, bytes) {
+                sec_err = Some(DocumentError::Io(format!(
+                    "Не удалось сохранить страницу CB7: {e}"
+                )));
+                return Ok(false);
+            }
+            cache.files.insert(entry.name().to_string(), cache_path);
             pages.push(make_page_info(entry.name().to_string(), path_obj));
         }
         Ok(true)
@@ -557,7 +670,7 @@ fn scan_sevenz(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), Document
     if let Some(err) = sec_err {
         return Err(err);
     }
-    Ok((pages, comic_info))
+    Ok((pages, comic_info, Some(cache)))
 }
 
 fn build_comic_chapters(

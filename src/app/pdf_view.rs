@@ -1,4 +1,7 @@
-use super::document_loader::format_document_error;
+use super::document_loader::{
+    ERR_DECODE_STREAM_CRASH, ERR_PAGE_DECODE_CRASH, ERR_PAGED_UNSUPPORTED, format_page_error,
+};
+use super::icons::{Icon, IconLabel};
 use super::theme::ReaderTheme;
 use crate::document::{DecodedImage, Document, DocumentError, PageTextSpan};
 use crate::settings::PdfSettings;
@@ -109,7 +112,7 @@ fn spawn_pdf_worker(
                         Ok((img, spans, bbox))
                     } else {
                         Err(DocumentError::Unsupported(
-                            "Документ не поддерживает постраничный режим".to_string(),
+                            ERR_PAGED_UNSUPPORTED.to_string(),
                         ))
                     }
                 }));
@@ -126,9 +129,7 @@ fn spawn_pdf_worker(
                         Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     ),
                     Err(_) => (
-                        Err(DocumentError::Corrupted(
-                            "Аварийный сбой при декодировании страницы".to_string(),
-                        )),
+                        Err(DocumentError::Corrupted(ERR_PAGE_DECODE_CRASH.to_string())),
                         None,
                         Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     ),
@@ -282,7 +283,13 @@ impl PdfViewState {
         .max_pan
     }
 
-    fn poll_responses(&mut self, ctx: &egui::Context, status_message: &mut Option<String>) {
+    fn poll_responses(
+        &mut self,
+        ctx: &egui::Context,
+        status_message: &mut Option<String>,
+        lang: crate::i18n::UiLanguage,
+    ) {
+        let t = lang.t();
         loop {
             match self.resp_rx.try_recv() {
                 Ok(resp) => {
@@ -366,10 +373,13 @@ impl PdfViewState {
                             }
                         }
                         Err(e) => {
-                            let msg = format_document_error(&e);
-                            *status_message = Some(format!(
-                                "Ошибка загрузки страницы {}: {msg}",
-                                resp.page_idx + 1
+                            let msg = format_page_error(&e, lang);
+                            *status_message = Some(crate::i18n::fill(
+                                t.extra.page_load_error_detail,
+                                &[
+                                    ("{page}", &(resp.page_idx + 1).to_string()),
+                                    ("{error}", &msg),
+                                ],
                             ));
                             self.failed_pages.insert(resp.page_idx, msg);
                         }
@@ -378,10 +388,15 @@ impl PdfViewState {
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     for (page_idx, _) in self.pending_pages.drain() {
-                        let msg = "Поток декодирования аварийно завершился".to_string();
+                        let msg = format_page_error(
+                            &DocumentError::Corrupted(ERR_DECODE_STREAM_CRASH.to_string()),
+                            lang,
+                        );
                         self.failed_pages.insert(page_idx, msg.clone());
-                        *status_message =
-                            Some(format!("Ошибка загрузки страницы {}: {msg}", page_idx + 1));
+                        *status_message = Some(crate::i18n::fill(
+                            t.extra.page_load_error_detail,
+                            &[("{page}", &(page_idx + 1).to_string()), ("{error}", &msg)],
+                        ));
                     }
                     let (tx, rx) = spawn_pdf_worker(
                         self.active_generation.clone(),
@@ -470,7 +485,7 @@ impl PdfViewState {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn render_page_with_selection<'a>(
+    fn render_page_with_selection(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
@@ -480,7 +495,7 @@ impl PdfViewState {
         rotation: i32,
         uv_rect: Rect,
         auto_crop: bool,
-        selected_spans_collector: &mut Vec<&'a str>,
+        selected_spans_collector: &mut Vec<String>,
     ) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let painter = ui.painter();
@@ -599,10 +614,7 @@ impl PdfViewState {
                             Color32::from_rgba_unmultiplied(33, 150, 243, 90),
                         );
                         if self.selection_dirty {
-                            unsafe {
-                                let span_ptr: *const str = span.text.as_str();
-                                selected_spans_collector.push(&*span_ptr);
-                            }
+                            selected_spans_collector.push(span.text.clone());
                         }
                     }
                 }
@@ -628,7 +640,7 @@ impl PdfViewState {
         lang: crate::i18n::UiLanguage,
         on_translate: &mut Option<String>,
     ) {
-        self.poll_responses(ctx, status_message);
+        self.poll_responses(ctx, status_message, lang);
 
         if settings.smart_dark != self.last_smart_dark
             || theme.bg_color() != self.last_theme_bg
@@ -643,7 +655,7 @@ impl PdfViewState {
         let format_label = document
             .as_ref()
             .map(|d| d.format_name())
-            .unwrap_or("Документ");
+            .unwrap_or(lang.t().extra.default_document_title);
         let page_count = self.page_count(document);
         if page_count == 0 {
             ui.centered_and_justified(|ui| {
@@ -748,14 +760,19 @@ impl PdfViewState {
                                 );
                                 ui.add_space(12.0);
                             } else if let Some(err) = self.failed_pages.get(&p) {
-                                ui.label(
-                                    RichText::new(format!("Ошибка страницы {}: {err}", p + 1))
+                                let label =
+                                    format!("{} {}: {err}", lang.t().page_load_error, p + 1);
+                                ui.add(
+                                    IconLabel::new(Icon::Warning, &label)
+                                        .size(13.0)
                                         .color(theme.accent_color()),
                                 );
                             } else {
                                 ui.add_space(28.0);
-                                ui.label(
-                                    RichText::new(format!("⏳ Загрузка страницы {}...", p + 1))
+                                let label = format!("{} {}...", lang.t().page_loading, p + 1);
+                                ui.add(
+                                    IconLabel::new(Icon::Hourglass, &label)
+                                        .size(14.0)
                                         .color(theme.text_color()),
                                 );
                                 ui.add_space(28.0);
@@ -859,8 +876,9 @@ impl PdfViewState {
                     } else if let Some(err) = self.failed_pages.get(&p) {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.4);
-                            ui.label(
-                                RichText::new(format!("❌ Ошибка страницы {}: {err}", p + 1))
+                            let label = format!("{} {}: {err}", lang.t().page_load_error, p + 1);
+                            ui.add(
+                                IconLabel::new(Icon::Warning, &label)
                                     .size(16.0)
                                     .color(theme.accent_color()),
                             );
@@ -868,8 +886,9 @@ impl PdfViewState {
                     } else {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.45);
-                            ui.label(
-                                RichText::new(format!("⏳ Загрузка страницы {}...", p + 1))
+                            let label = format!("{} {}...", lang.t().page_loading, p + 1);
+                            ui.add(
+                                IconLabel::new(Icon::Hourglass, &label)
                                     .size(18.0)
                                     .color(theme.text_color()),
                             );

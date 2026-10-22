@@ -208,14 +208,21 @@ impl TocView {
                             };
 
                             if has_custom_toc {
-                                egui::CollapsingHeader::new(format!("Все страницы ({page_count})"))
-                                    .default_open(false)
-                                    .show(ui, |ui| {
-                                        render_pages_virtual(ui);
-                                    });
+                                egui::CollapsingHeader::new(crate::i18n::fill(
+                                    t.extra.toc_all_pages,
+                                    &[("{count}", &page_count.to_string())],
+                                ))
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    render_pages_virtual(ui);
+                                });
                             } else {
                                 ui.label(
-                                    RichText::new(format!("Страницы ({page_count}):")).strong(),
+                                    RichText::new(crate::i18n::fill(
+                                        t.extra.toc_pages,
+                                        &[("{count}", &page_count.to_string())],
+                                    ))
+                                    .strong(),
                                 );
                                 ui.add_space(4.0);
                                 render_pages_virtual(ui);

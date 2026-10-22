@@ -140,6 +140,43 @@ fn test_safe_archive_path_checks() {
 }
 
 #[test]
+fn test_rar5_magic_and_fb2_zip_not_comic() {
+    use crate::document::registry::{ComicFormat, DocumentFormat, Fb2ZipFormat};
+    use std::io::Write;
+
+    let dir = unique_test_dir("rar5_fb2zip");
+    let rar4 = dir.join("book4.bin");
+    let rar5 = dir.join("book5.bin");
+    std::fs::write(&rar4, b"Rar!\x1a\x07\x00payload").unwrap();
+    std::fs::write(&rar5, b"Rar!\x1a\x07\x01\x00payload").unwrap();
+    assert!(ComicFormat.probe(&rar4));
+    assert!(ComicFormat.probe(&rar5));
+    let rar5_err = match document::ComicDocument::from_path(&rar5) {
+        Ok(_) => panic!("RAR5 test file is not a valid archive"),
+        Err(e) => e.to_string(),
+    };
+    assert!(rar5_err.contains("RAR"));
+
+    let zip_path = dir.join("book.zip");
+    let file = std::fs::File::create(&zip_path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    zip.start_file("book.fb2", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(
+        br#"<FictionBook><body><section><title><p>Title</p></title><p>Text</p></section></body></FictionBook>"#,
+    )
+    .unwrap();
+    zip.finish().unwrap();
+
+    assert!(Fb2ZipFormat.probe(&zip_path));
+    assert!(!ComicFormat.probe(&zip_path));
+    let doc = document::open_document(&zip_path).expect("ZIP with FB2 must open as a book");
+    assert_eq!(doc.format_name(), "FB2");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_is_safe_archive_path_percent_encoding_traversal() {
     use document::is_safe_archive_path;
     assert!(is_safe_archive_path("OEBPS/ch1.xhtml"));

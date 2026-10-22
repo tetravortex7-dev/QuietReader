@@ -42,5 +42,9 @@ fn test_reader_core_bookmarks_and_search() {
     let hits = ReaderCore::search_in_document(&doc, "needle");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].chapter_index, 0);
+    assert_eq!(hits[0].page_index, None);
     assert!(hits[0].snippet.contains("needle"));
+
+    let cancelled = std::sync::atomic::AtomicBool::new(true);
+    assert!(ReaderCore::search_in_document_with_cancel(&doc, "needle", &cancelled).is_empty());
 }

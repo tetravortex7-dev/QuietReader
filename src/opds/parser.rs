@@ -136,6 +136,9 @@ pub fn detect_format_and_ext(mime: &str, href: &str) -> Option<(&'static str, &'
     ];
     for (mimes, exts, badge, ext) in FORMATS {
         if mimes.iter().any(|k| m.contains(k)) || exts.iter().any(|e| h.ends_with(e)) {
+            if *ext == "fb2" && h.ends_with(".fb2.zip") {
+                return Some(("FB2.ZIP", "fb2.zip"));
+            }
             return Some((badge, ext));
         }
     }

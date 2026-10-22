@@ -7,6 +7,8 @@ use std::path::Path;
 pub mod decode;
 use decode::*;
 
+const MAX_MOBI_FILE_SIZE: u64 = 150 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct MobiDocument {
     metadata: BookMetadata,
@@ -18,6 +20,13 @@ pub struct MobiDocument {
 impl MobiDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
+        let meta = std::fs::metadata(path_ref)
+            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать MOBI/AZW файл: {e}")))?;
+        if meta.len() > MAX_MOBI_FILE_SIZE {
+            return Err(DocumentError::LimitExceeded(
+                "Размер файла MOBI/AZW превышает допустимый лимит (150 МБ)".to_string(),
+            ));
+        }
         let ext = path_ref
             .extension()
             .and_then(|s| s.to_str())
@@ -27,7 +36,7 @@ impl MobiDocument {
         let m = Mobi::from_path(path_ref)
             .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения MOBI/AZW файла: {e}")))?;
 
-        let (raw_bytes, is_kf8) = extract_raw_mobi_bytes(&m);
+        let (raw_bytes, is_kf8) = extract_raw_mobi_bytes(&m)?;
 
         let format_name = match ext.as_str() {
             "azw3" => "AZW3",
@@ -114,10 +123,15 @@ impl MobiDocument {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DocumentError> {
+        if bytes.len() as u64 > MAX_MOBI_FILE_SIZE {
+            return Err(DocumentError::LimitExceeded(
+                "Размер данных MOBI/AZW превышает допустимый лимит (150 МБ)".to_string(),
+            ));
+        }
         let m = Mobi::new(bytes.to_vec())
             .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения MOBI/AZW данных: {e}")))?;
 
-        let (raw_bytes, is_kf8) = extract_raw_mobi_bytes(&m);
+        let (raw_bytes, is_kf8) = extract_raw_mobi_bytes(&m)?;
         let format_name = if is_kf8 { "AZW3" } else { "MOBI" };
 
         let header_codepage = match m.metadata.text_encoding() {

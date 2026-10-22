@@ -1,265 +1,16 @@
-use eframe::egui::{self, Color32, Frame, Id, Order, RichText, Stroke, Vec2};
 use std::io::Cursor;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tts::Tts;
 
-use super::icons::{Icon, IconButton, IconLabel};
-use super::theme::ReaderTheme;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TtsEngineKind {
-    #[default]
-    System,
-    Edge,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TtsVoiceInfo {
-    pub id: String,
-    pub name: String,
-    pub language: String,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TtsStatus {
-    pub is_available: bool,
-    pub is_playing: bool,
-    pub is_paused: bool,
-    pub current_chapter: usize,
-    pub current_paragraph: usize,
-    pub total_paragraphs: usize,
-    pub rate: f32,
-    pub engine: TtsEngineKind,
-    pub voices: Vec<TtsVoiceInfo>,
-    pub selected_voice_id: Option<String>,
-    pub error: Option<String>,
-    pub needs_next_chapter: bool,
-}
-
-pub enum TtsCommand {
-    PlayChapter {
-        chapter_index: usize,
-        paragraph_index: usize,
-        paragraphs: Vec<String>,
-    },
-    PlayNextChapter {
-        chapter_index: usize,
-        paragraphs: Vec<String>,
-    },
-    Pause,
-    Resume,
-    Stop,
-    NextParagraph,
-    PrevParagraph,
-    SetRate(f32),
-    SetVoice(String),
-    SetEngine(TtsEngineKind),
-}
-
-fn default_edge_voices() -> Vec<TtsVoiceInfo> {
-    const VOICES: &[(&str, &str, &str)] = &[
-        ("ru-RU-SvetlanaNeural", "Светлана (Нейро)", "ru-RU"),
-        ("ru-RU-DmitryNeural", "Дмитрий (Нейро)", "ru-RU"),
-        ("en-US-JennyNeural", "Jenny (Neural)", "en-US"),
-        ("en-US-GuyNeural", "Guy (Neural)", "en-US"),
-        ("en-US-AriaNeural", "Aria (Neural)", "en-US"),
-        ("uk-UA-PolinaNeural", "Поліна (Нейро)", "uk-UA"),
-        ("uk-UA-OstapNeural", "Остап (Нейро)", "uk-UA"),
-        ("de-DE-KatjaNeural", "Katja (Neural)", "de-DE"),
-        ("de-DE-ConradNeural", "Conrad (Neural)", "de-DE"),
-        ("fr-FR-DeniseNeural", "Denise (Neural)", "fr-FR"),
-        ("fr-FR-HenriNeural", "Henri (Neural)", "fr-FR"),
-        ("es-ES-ElviraNeural", "Elvira (Neural)", "es-ES"),
-        ("es-ES-AlvaroNeural", "Alvaro (Neural)", "es-ES"),
-        ("it-IT-ElsaNeural", "Elsa (Neural)", "it-IT"),
-        ("it-IT-DiegoNeural", "Diego (Neural)", "it-IT"),
-        ("pt-BR-FranciscaNeural", "Francisca (Neural)", "pt-BR"),
-        ("pt-BR-AntonioNeural", "Antonio (Neural)", "pt-BR"),
-        ("tr-TR-EmelNeural", "Emel (Neural)", "tr-TR"),
-        ("tr-TR-AhmetNeural", "Ahmet (Neural)", "tr-TR"),
-        ("zh-CN-XiaoxiaoNeural", "Xiaoxiao (Neural)", "zh-CN"),
-        ("zh-CN-YunxiNeural", "Yunxi (Neural)", "zh-CN"),
-        ("ja-JP-NanamiNeural", "Nanami (Neural)", "ja-JP"),
-        ("ja-JP-KeitaNeural", "Keita (Neural)", "ja-JP"),
-        ("ar-SA-ZariyahNeural", "Zariyah (Neural)", "ar-SA"),
-        ("ar-SA-HamedNeural", "Hamed (Neural)", "ar-SA"),
-        ("id-ID-GadisNeural", "Gadis (Neural)", "id-ID"),
-        ("id-ID-ArdiNeural", "Ardi (Neural)", "id-ID"),
-    ];
-    VOICES
-        .iter()
-        .map(|&(id, name, lang)| TtsVoiceInfo {
-            id: id.to_string(),
-            name: name.to_string(),
-            language: lang.to_string(),
-        })
-        .collect()
-}
-
-fn format_voice_name(name: &str) -> String {
-    let s = name.trim();
-    let s = s.strip_prefix("Microsoft ").unwrap_or(s);
-    let s = s.strip_suffix(" Desktop").unwrap_or(s);
-    let s = s.strip_suffix(" Mobile").unwrap_or(s);
-    if let Some(idx) = s.find(" Online (Natural)") {
-        return s[..idx].trim().to_string();
-    }
-    s.trim().to_string()
-}
-
-pub fn voice_matches_lang(voice_lang: &str, book_lang: &str) -> bool {
-    let vl = voice_lang.to_ascii_lowercase();
-    let bl = book_lang.to_ascii_lowercase();
-    if vl.starts_with(&bl) || bl.starts_with(&vl) {
-        return true;
-    }
-    match bl.as_str() {
-        "ru" => vl.contains("ru") || vl.contains("rus"),
-        "en" => vl.contains("en") || vl.contains("eng"),
-        "uk" => vl.contains("uk") || vl.contains("ukr"),
-        "de" => vl.contains("de") || vl.contains("ger") || vl.contains("deu"),
-        "fr" => vl.contains("fr") || vl.contains("fre") || vl.contains("fra"),
-        "es" => vl.contains("es") || vl.contains("spa"),
-        "it" => vl.contains("it") || vl.contains("ita"),
-        "pt" => vl.contains("pt") || vl.contains("por"),
-        "tr" => vl.contains("tr") || vl.contains("tur"),
-        "zh" => vl.contains("zh") || vl.contains("chi") || vl.contains("cmn") || vl.contains("zho"),
-        "ja" => vl.contains("ja") || vl.contains("jpn") || vl.contains("jap"),
-        "ar" => vl.contains("ar") || vl.contains("ara"),
-        "id" => vl.contains("id") || vl.contains("ind"),
-        _ => false,
-    }
-}
-
-pub struct TtsController {
-    command_tx: Option<Sender<TtsCommand>>,
-    status: Arc<Mutex<TtsStatus>>,
-    pub show_panel: bool,
-}
-
-impl Default for TtsController {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+use super::controller::TtsController;
+use super::types::{TtsCommand, TtsEngineKind, TtsStatus, TtsVoiceInfo};
+use super::voices::default_edge_voices;
 
 impl TtsController {
-    pub fn new() -> Self {
-        let status = Arc::new(Mutex::new(TtsStatus {
-            rate: 1.0,
-            ..Default::default()
-        }));
-
-        let (tx, rx) = channel::<TtsCommand>();
-        let status_clone = Arc::clone(&status);
-
-        thread::spawn(move || {
-            Self::worker_loop(rx, status_clone);
-        });
-
-        Self {
-            command_tx: Some(tx),
-            status,
-            show_panel: false,
-        }
-    }
-
-    pub fn status(&self) -> TtsStatus {
-        self.status
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-    }
-
-    pub fn toggle_panel(&mut self) {
-        self.show_panel = !self.show_panel;
-    }
-
-    pub fn play_chapter(
-        &mut self,
-        chapter_index: usize,
-        paragraph_index: usize,
-        paragraphs: Vec<String>,
-    ) {
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::PlayChapter {
-                chapter_index,
-                paragraph_index,
-                paragraphs,
-            });
-        }
-    }
-
-    pub fn play_next_chapter(&mut self, chapter_index: usize, paragraphs: Vec<String>) {
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::PlayNextChapter {
-                chapter_index,
-                paragraphs,
-            });
-        }
-    }
-
-    pub fn pause(&mut self) {
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::Pause);
-        }
-    }
-
-    pub fn resume(&mut self) {
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::Resume);
-        }
-    }
-
-    pub fn stop(&mut self) {
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::Stop);
-        }
-    }
-
-    pub fn next_paragraph(&mut self) {
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::NextParagraph);
-        }
-    }
-
-    pub fn prev_paragraph(&mut self) {
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::PrevParagraph);
-        }
-    }
-
-    pub fn set_rate(&mut self, rate: f32) {
-        if let Ok(mut st) = self.status.lock() {
-            st.rate = rate;
-        }
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::SetRate(rate));
-        }
-    }
-
-    pub fn set_voice(&mut self, voice_id: String) {
-        if let Ok(mut st) = self.status.lock() {
-            st.selected_voice_id = Some(voice_id.clone());
-        }
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::SetVoice(voice_id));
-        }
-    }
-
-    pub fn set_engine(&mut self, engine: TtsEngineKind) {
-        if let Ok(mut st) = self.status.lock() {
-            st.engine = engine;
-        }
-        if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::SetEngine(engine));
-        }
-    }
-
-    fn worker_loop(rx: Receiver<TtsCommand>, status: Arc<Mutex<TtsStatus>>) {
+    pub(super) fn worker_loop(rx: Receiver<TtsCommand>, status: Arc<Mutex<TtsStatus>>) {
         let mut sys_tts = Tts::default().ok();
         let audio_device: Option<rodio::MixerDeviceSink> =
             rodio::DeviceSinkBuilder::open_default_sink().ok();
@@ -517,11 +268,13 @@ impl TtsController {
                                 utterance_started_at = Some(Instant::now());
                                 if let Ok(mut st) = status.lock() {
                                     st.error = None;
+                                    st.playback_failed = false;
                                 }
                             } else {
                                 is_playing = false;
                                 if let Ok(mut st) = status.lock() {
-                                    st.error = Some("Ошибка воспроизведения речи".to_string());
+                                    st.error = None;
+                                    st.playback_failed = true;
                                 }
                             }
                         } else {
@@ -735,12 +488,14 @@ impl TtsController {
                                     utterance_started_at = Some(Instant::now());
                                     if let Ok(mut st) = status.lock() {
                                         st.error = None;
+                                        st.playback_failed = false;
                                     }
                                 } else {
                                     is_playing = false;
                                     utterance_started_at = None;
                                     if let Ok(mut st) = status.lock() {
-                                        st.error = Some("Ошибка воспроизведения речи".to_string());
+                                        st.error = None;
+                                        st.playback_failed = true;
                                     }
                                 }
                             }
@@ -766,6 +521,7 @@ impl TtsController {
                                 st.voices = new_voices;
                                 st.selected_voice_id = new_selected_voice;
                                 st.error = None;
+                                st.playback_failed = false;
                             }
                             if is_playing && !is_paused && current_para < paragraphs.len() {
                                 if let Some((idx, text)) =
@@ -854,239 +610,5 @@ impl TtsController {
                 st.needs_next_chapter = needs_next;
             }
         }
-    }
-
-    pub fn render_panel(
-        &mut self,
-        ctx: &egui::Context,
-        theme: &ReaderTheme,
-        current_book_has_text: bool,
-        book_language: Option<&str>,
-        on_play_requested: &mut bool,
-        lang: crate::i18n::UiLanguage,
-    ) {
-        if !self.show_panel {
-            return;
-        }
-
-        let t = lang.t();
-        let st = self.status();
-
-        egui::Area::new(Id::unique("tts_floating_panel"))
-            .order(Order::Foreground)
-            .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -18.0))
-            .show(ctx, |ui| {
-                let frame = Frame::popup(ui.style())
-                    .fill(theme.panel_bg_color())
-                    .stroke(Stroke::new(1.0, theme.accent_color().gamma_multiply(0.4)))
-                    .corner_radius(8.0)
-                    .inner_margin(egui::Margin::symmetric(14, 10));
-
-                frame.show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            IconLabel::new(Icon::Speech, t.tts_title)
-                                .size(13.5)
-                                .strong()
-                                .color(theme.text_color()),
-                        );
-
-                        ui.add_space(6.0);
-                        ui.separator();
-                        ui.add_space(6.0);
-
-                        let is_sys = st.engine == TtsEngineKind::System;
-                        let is_edge = st.engine == TtsEngineKind::Edge;
-
-                        if ui
-                            .selectable_label(is_sys, t.tts_system)
-                            .on_hover_text(t.tts_system_tip)
-                            .clicked()
-                            && !is_sys
-                        {
-                            self.set_engine(TtsEngineKind::System);
-                        }
-                        if ui
-                            .selectable_label(is_edge, t.tts_edge)
-                            .on_hover_text(t.tts_internet_tip)
-                            .clicked()
-                            && !is_edge
-                        {
-                            self.set_engine(TtsEngineKind::Edge);
-                        }
-
-                        ui.add_space(6.0);
-                        ui.separator();
-                        ui.add_space(6.0);
-
-                        if !st.is_available {
-                            ui.label(
-                                RichText::new(t.tts_unavailable)
-                                    .color(Color32::RED)
-                                    .size(12.0),
-                            );
-                        } else if !current_book_has_text {
-                            ui.label(
-                                RichText::new(t.tts_open_text_book)
-                                    .color(theme.secondary_text_color())
-                                    .size(12.0),
-                            );
-                        } else {
-                            let prev_btn = ui
-                                .add(
-                                    IconButton::new(Icon::ChevronUp, "")
-                                        .min_size(Vec2::new(26.0, 24.0)),
-                                )
-                                .on_hover_text(t.tts_prev_paragraph);
-                            if prev_btn.clicked() {
-                                self.prev_paragraph();
-                            }
-
-                            if st.is_playing && !st.is_paused {
-                                let pause_btn = ui.add(
-                                    IconButton::new(Icon::Pause, t.tts_pause)
-                                        .min_size(Vec2::new(76.0, 24.0)),
-                                );
-                                if pause_btn.clicked() {
-                                    self.pause();
-                                }
-                            } else {
-                                let play_icon = Icon::Play;
-                                let play_label = if st.is_paused { t.tts_play } else { t.speech };
-                                let play_btn = ui.add(
-                                    IconButton::new(play_icon, play_label)
-                                        .min_size(Vec2::new(88.0, 24.0)),
-                                );
-                                if play_btn.clicked() {
-                                    if st.is_paused {
-                                        self.resume();
-                                    } else {
-                                        *on_play_requested = true;
-                                    }
-                                }
-                            }
-
-                            let next_btn = ui
-                                .add(
-                                    IconButton::new(Icon::ChevronDown, "")
-                                        .min_size(Vec2::new(26.0, 24.0)),
-                                )
-                                .on_hover_text(t.tts_next_paragraph);
-                            if next_btn.clicked() {
-                                self.next_paragraph();
-                            }
-
-                            if st.is_playing || st.is_paused {
-                                let stop_btn = ui.add(
-                                    IconButton::new(Icon::Close, t.tts_stop)
-                                        .min_size(Vec2::new(64.0, 24.0)),
-                                );
-                                if stop_btn.clicked() {
-                                    self.stop();
-                                }
-                            }
-
-                            ui.add_space(6.0);
-                            ui.separator();
-                            ui.add_space(6.0);
-
-                            let rates = [0.8, 1.0, 1.25, 1.5, 2.0];
-                            for r in rates {
-                                let is_curr = (st.rate - r).abs() < 0.05;
-                                let label = format!("{r}x");
-                                let btn = ui.selectable_label(is_curr, label);
-                                if btn.clicked() {
-                                    self.set_rate(r);
-                                }
-                            }
-
-                            let matched_voices: Vec<&TtsVoiceInfo> =
-                                if let Some(lang) = book_language {
-                                    let m: Vec<&TtsVoiceInfo> = st
-                                        .voices
-                                        .iter()
-                                        .filter(|v| voice_matches_lang(&v.language, lang))
-                                        .collect();
-                                    if m.is_empty() {
-                                        st.voices.iter().collect()
-                                    } else {
-                                        m
-                                    }
-                                } else {
-                                    st.voices.iter().collect()
-                                };
-
-                            if !matched_voices.is_empty() {
-                                ui.add_space(6.0);
-                                ui.separator();
-                                ui.add_space(6.0);
-
-                                if !matched_voices
-                                    .iter()
-                                    .any(|v| Some(&v.id) == st.selected_voice_id.as_ref())
-                                {
-                                    if let Some(first) = matched_voices.first() {
-                                        self.set_voice(first.id.clone());
-                                    }
-                                }
-
-                                let current_voice_name = st
-                                    .selected_voice_id
-                                    .as_ref()
-                                    .and_then(|id| matched_voices.iter().find(|v| v.id == *id))
-                                    .map(|v| format_voice_name(&v.name))
-                                    .unwrap_or_else(|| t.tts_voice.to_string());
-
-                                egui::ComboBox::from_id_salt("tts_voice_combo")
-                                    .selected_text(current_voice_name)
-                                    .width(150.0)
-                                    .show_ui(ui, |ui| {
-                                        for v in &matched_voices {
-                                            let is_sel =
-                                                st.selected_voice_id.as_deref() == Some(&v.id);
-                                            let clean_name = format_voice_name(&v.name);
-                                            let label = format!("{} ({})", clean_name, v.language);
-                                            if ui.selectable_label(is_sel, label).clicked() {
-                                                self.set_voice(v.id.clone());
-                                            }
-                                        }
-                                    });
-                            }
-
-                            if let Some(ref err) = st.error {
-                                ui.add_space(6.0);
-                                ui.label(RichText::new(err).size(11.5).color(Color32::RED));
-                            } else if st.is_playing || st.is_paused {
-                                ui.add_space(6.0);
-                                let status_str = format!(
-                                    "Гл. {}, абзац {}/{}",
-                                    st.current_chapter + 1,
-                                    st.current_paragraph + 1,
-                                    st.total_paragraphs
-                                );
-                                ui.label(
-                                    RichText::new(status_str)
-                                        .size(12.0)
-                                        .color(theme.accent_color())
-                                        .strong(),
-                                );
-                            }
-                        }
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .add(
-                                    IconButton::new(Icon::Close, "")
-                                        .min_size(Vec2::new(20.0, 20.0)),
-                                )
-                                .on_hover_text(t.tts_close_panel)
-                                .clicked()
-                            {
-                                self.show_panel = false;
-                            }
-                        });
-                    });
-                });
-            });
     }
 }

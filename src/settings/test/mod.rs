@@ -1,6 +1,8 @@
 mod persistence;
+mod secrets;
 
 use super::*;
+use crate::test::util::unique_test_dir;
 
 #[test]
 fn test_reading_ruler_settings_defaults() {
@@ -28,4 +30,17 @@ fn test_opds_catalogs_defaults() {
     let s = AppSettings::default();
     assert!(!s.opds_catalogs.is_empty());
     assert!(s.opds_catalogs.iter().any(|c| c.name.contains("Gutenberg")));
+}
+
+#[test]
+fn test_settings_fallback_path_is_absolute() {
+    let base = unique_test_dir("settings_fallback");
+    let path = fallback_settings_path(base.clone());
+    assert!(path.is_absolute());
+    assert!(path.starts_with(&base));
+    assert_eq!(
+        path.file_name().and_then(|n| n.to_str()),
+        Some("settings.json")
+    );
+    let _ = std::fs::remove_dir_all(base);
 }

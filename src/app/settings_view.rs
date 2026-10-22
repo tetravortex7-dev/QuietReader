@@ -58,6 +58,13 @@ impl SettingsView {
                         .strong(),
                 );
                 ui.add_space(4.0);
+            } else if let Some(err) = AppSettings::last_secret_error() {
+                ui.add(
+                    IconLabel::new(Icon::Warning, &t.secrets_storage_error.replace("{}", &err))
+                        .color(Color32::RED)
+                        .strong(),
+                );
+                ui.add_space(4.0);
             }
             ui.separator();
             ui.add_space(8.0);
@@ -580,7 +587,7 @@ impl SettingsView {
                 ui.label(t.pause_duration);
                 let resp = ui.add(
                     egui::Slider::new(&mut settings.auto_scroll.pause_duration, 0.5..=15.0)
-                        .suffix(" сек"),
+                        .suffix(t.extra.seconds_suffix),
                 );
                 if resp.drag_stopped() || resp.lost_focus() {
                     *on_save_settings = true;
@@ -601,7 +608,7 @@ impl SettingsView {
                 ui.label(t.scroll_speed);
                 let resp = ui.add(
                     egui::Slider::new(&mut settings.auto_scroll.continuous_speed, 10.0..=250.0)
-                        .suffix(" px/сек"),
+                        .suffix(t.extra.pixels_per_second_suffix),
                 );
                 if resp.drag_stopped() || resp.lost_focus() {
                     *on_save_settings = true;
@@ -714,47 +721,8 @@ impl SettingsView {
         );
         ui.add_space(6.0);
 
-        let hotkeys = [
-            ("O", "Открыть книгу или документ (файл)"),
-            ("P", "Открыть папку с мангой или комиксом"),
-            ("F / Esc", "Полноэкранный режим без панелей (вход и выход)"),
-            ("B", "Показать / скрыть оглавление книги"),
-            ("V", "Включить / приостановить чтение книги вслух (TTS)"),
-            ("L", "Включить / скрыть линейку для чтения (фокус строки)"),
-            ("J", "Открыть / закрыть окно настроек читалки"),
-            (
-                "Зажатое колёсико мыши",
-                "Захват и перетаскивание страницы вверх / вниз",
-            ),
-            ("A", "Запуск / пауза автоматической промотки текста"),
-            (
-                "Пробел / Shift+Пробел",
-                "Быстрая прокрутка на экран вниз / вверх",
-            ),
-            ("PageDown / PageUp", "Листание на страницу вниз / вверх"),
-            ("Стрелки Вниз / Вверх", "Плавный сдвиг на строку"),
-            (
-                "Стрелки Влево / Вправо",
-                "Листание страниц комикса/манги (R2L / L2R)",
-            ),
-            (
-                "Ctrl + Вправо / Влево",
-                "Переход к следующему / предыдущему разделу",
-            ),
-            (
-                "Ctrl + Плюс / Минус / 0",
-                "Увеличить / уменьшить / сбросить размер шрифта",
-            ),
-            (
-                "Ctrl + F",
-                "Поиск по тексту книги с быстрым переходом к главе",
-            ),
-            ("Ctrl + D", "Быстрая закладка текущего места чтения"),
-            ("Home / End", "Переход в начало / конец раздела или комикса"),
-        ];
-
         let stroke = egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.2));
-        for (key, desc) in hotkeys {
+        for hotkey in t.hotkeys {
             egui::Frame::new()
                 .fill(theme.bg_color())
                 .stroke(stroke)
@@ -762,9 +730,13 @@ impl SettingsView {
                 .inner_margin(egui::Margin::symmetric(10, 6))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(key).strong().color(theme.accent_color()));
+                        ui.label(
+                            RichText::new(hotkey.keys)
+                                .strong()
+                                .color(theme.accent_color()),
+                        );
                         ui.label("—");
-                        ui.label(RichText::new(desc).color(text_color));
+                        ui.label(RichText::new(hotkey.description).color(text_color));
                     });
                 });
             ui.add_space(2.0);

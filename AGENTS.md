@@ -121,3 +121,16 @@ Every new feature or capability introduced into the project must be documented i
 - Split a `test` directory into several topic files (declared in its `mod.rs`) when it grows; the 1000-line limit and the no-comments rule apply to test files too.
 - Helpers shared by tests of different modules live in `src/test/util.rs` (e.g. `unique_test_dir`); do not duplicate them.
 - New tests must be added to the matching `test` directory in the same change as the feature or fix they cover.
+
+17. Localization Policy
+
+- Any text shown to the user — labels, buttons, tooltips, errors, statuses, dialogs, and notifications — must be localized in every language supported by the project.
+- Hardcoding user-visible text in a single language is forbidden. Add a key to `Translations` in `src/i18n/mod.rs` and provide translations in all locale files (`ru`, `en`, `fr`, `es`, `zh`, `ja`, `pt`, `it`, `tr`, `uk`, `ar`, `id`).
+- A feature that adds or changes user-visible text must include all translations in the same change.
+
+18. Dependency Version Policy
+
+- Use the latest stable release of every dependency by default.
+- Using an older version is an exception that must be justified by a concrete blocker: an incompatible MSRV or toolchain, a confirmed regression or security issue, an unavailable platform target, or a transitive constraint that cannot be resolved.
+- Whenever an older version is used, provide a complete and strict report before or with the change: the selected version, the latest available version, the exact reason the latest version cannot be used, affected platforms and features, security and maintenance impact, alternatives considered, and the condition under which the dependency must be upgraded.
+- Do not silently pin, downgrade, or retain an outdated dependency.

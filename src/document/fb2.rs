@@ -1,10 +1,14 @@
 use crate::document::{
-    BookChapter, BookMetadata, Document, DocumentError, HasToc, TextContent, TocItem,
+    BookChapter, BookMetadata, Document, DocumentError, HasToc, MAX_ARCHIVE_ENTRIES,
+    MAX_SINGLE_ENTRY_BYTES, MAX_TOTAL_UNPACK_BYTES, TextContent, TocItem, is_safe_archive_path,
+    read_bounded,
 };
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::Path;
+use zip::ZipArchive;
 
 pub struct Fb2Document {
     metadata: BookMetadata,
@@ -101,6 +105,55 @@ impl Fb2Document {
         }
         let text = decode_text(bytes);
         Self::parse_xml(&text)
+    }
+
+    pub fn from_zip_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
+        let path_ref = path.as_ref();
+        let file = File::open(path_ref)
+            .map_err(|e| DocumentError::Io(format!("Не удалось открыть ZIP: {e}")))?;
+        let mut zip = ZipArchive::new(file)
+            .map_err(|e| DocumentError::Corrupted(format!("Ошибка парсинга ZIP: {e}")))?;
+
+        if zip.len() > MAX_ARCHIVE_ENTRIES {
+            return Err(DocumentError::LimitExceeded(
+                "В архиве превышен лимит количества файлов (10 000)".to_string(),
+            ));
+        }
+
+        let mut total_unpacked = 0u64;
+        for i in 0..zip.len() {
+            let entry = zip
+                .by_index(i)
+                .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?;
+            let name = entry
+                .name()
+                .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?
+                .to_string();
+            if !is_safe_archive_path(&name) {
+                return Err(DocumentError::Corrupted(format!(
+                    "Обнаружен небезопасный путь в архиве: {name}"
+                )));
+            }
+            if entry.size() > MAX_SINGLE_ENTRY_BYTES {
+                return Err(DocumentError::LimitExceeded(format!(
+                    "Файл {name} превышает лимит 50 МБ"
+                )));
+            }
+            if !name.to_ascii_lowercase().ends_with(".fb2") {
+                continue;
+            }
+            let bytes = read_bounded(
+                entry,
+                MAX_SINGLE_ENTRY_BYTES,
+                &mut total_unpacked,
+                MAX_TOTAL_UNPACK_BYTES,
+            )?;
+            return Self::from_bytes(&bytes);
+        }
+
+        Err(DocumentError::Unsupported(
+            "В ZIP-архиве не найден файл FB2".to_string(),
+        ))
     }
 
     fn parse_xml(xml: &str) -> Result<Self, DocumentError> {
@@ -805,6 +858,28 @@ fn local_name(name: &str) -> &str {
     } else {
         name
     }
+}
+
+pub fn zip_contains_fb2(path: &Path) -> bool {
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    let Ok(mut zip) = ZipArchive::new(file) else {
+        return false;
+    };
+    if zip.len() > MAX_ARCHIVE_ENTRIES {
+        return false;
+    }
+    for i in 0..zip.len() {
+        if let Ok(entry) = zip.by_index(i)
+            && !entry.is_dir()
+            && let Ok(name) = entry.name()
+            && name.to_ascii_lowercase().ends_with(".fb2")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn decode_text(bytes: &[u8]) -> String {

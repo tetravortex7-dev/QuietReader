@@ -33,6 +33,38 @@ fn test_txt_md_log_format_via_registry() {
 }
 
 #[test]
+fn test_txt_single_byte_encoding_detection() {
+    use crate::document::Document;
+
+    let cases = [
+        (
+            encoding_rs::WINDOWS_1251,
+            "Привет, мир! Это простой текст для проверки кодировки.",
+        ),
+        (
+            encoding_rs::WINDOWS_1252,
+            "Café déjà vu — naïve façade with some accents.",
+        ),
+        (
+            encoding_rs::KOI8_R,
+            "Привет, мир! Это простой текст для проверки кодировки.",
+        ),
+        (
+            encoding_rs::IBM866,
+            "Привет, мир! Это простой текст для проверки кодировки.",
+        ),
+    ];
+
+    for (encoding, text) in cases {
+        let (bytes, _, had_errors) = encoding.encode(text);
+        assert!(!had_errors);
+        let doc = document::TxtDocument::from_bytes(&bytes, "Encoded", "txt")
+            .expect("Должен декодировать однобайтовую кодировку");
+        assert_eq!(doc.chapters()[0].paragraphs[0], text);
+    }
+}
+
+#[test]
 fn test_utf16_txt_decoding_and_pageup_prev_chapter() {
     use crate::document::Document;
     let text = "Привет, мир!\n\nВторой абзац.";

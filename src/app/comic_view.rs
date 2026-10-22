@@ -1,4 +1,7 @@
-use super::document_loader::format_document_error;
+use super::document_loader::{
+    ERR_COMIC_DECODE_CRASH, ERR_DECODE_STREAM_CRASH, ERR_PAGED_UNSUPPORTED, format_page_error,
+};
+use super::icons::{Icon, IconButton, IconLabel};
 use super::theme::ReaderTheme;
 use crate::document::{DecodedImage, Document, DocumentError};
 use crate::settings::ComicSettings;
@@ -58,7 +61,7 @@ fn spawn_comic_worker() -> (Sender<LoadRequest>, Receiver<LoadResponse>) {
                         page_content.load_page_image(page_idx)
                     } else {
                         Err(DocumentError::Unsupported(
-                            "Документ не поддерживает постраничный режим".to_string(),
+                            ERR_PAGED_UNSUPPORTED.to_string(),
                         ))
                     }
                 }));
@@ -82,9 +85,7 @@ fn spawn_comic_worker() -> (Sender<LoadRequest>, Receiver<LoadResponse>) {
                         egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
                     ),
                     Err(_) => (
-                        Err(DocumentError::Corrupted(
-                            "Аварийный сбой при декодировании страницы комикса".to_string(),
-                        )),
+                        Err(DocumentError::Corrupted(ERR_COMIC_DECODE_CRASH.to_string())),
                         egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
                     ),
                 };
@@ -181,7 +182,13 @@ impl ComicViewState {
         self.pan_offset = Vec2::ZERO;
     }
 
-    fn poll_responses(&mut self, ctx: &egui::Context, status_message: &mut Option<String>) {
+    fn poll_responses(
+        &mut self,
+        ctx: &egui::Context,
+        status_message: &mut Option<String>,
+        lang: crate::i18n::UiLanguage,
+    ) {
+        let t = lang.t();
         loop {
             match self.resp_rx.try_recv() {
                 Ok(resp) => {
@@ -215,10 +222,13 @@ impl ComicViewState {
                             self.textures.insert(resp.page_idx, (texture, counter));
                         }
                         Err(e) => {
-                            let msg = format_document_error(&e);
-                            *status_message = Some(format!(
-                                "Ошибка загрузки страницы {}: {msg}",
-                                resp.page_idx + 1
+                            let msg = format_page_error(&e, lang);
+                            *status_message = Some(crate::i18n::fill(
+                                t.extra.page_load_error_detail,
+                                &[
+                                    ("{page}", &(resp.page_idx + 1).to_string()),
+                                    ("{error}", &msg),
+                                ],
                             ));
                             self.failed_pages.insert(resp.page_idx, msg);
                         }
@@ -227,10 +237,15 @@ impl ComicViewState {
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     for page_idx in self.pending_pages.drain() {
-                        let msg = "Поток декодирования аварийно завершился".to_string();
+                        let msg = format_page_error(
+                            &DocumentError::Corrupted(ERR_DECODE_STREAM_CRASH.to_string()),
+                            lang,
+                        );
                         self.failed_pages.insert(page_idx, msg.clone());
-                        *status_message =
-                            Some(format!("Ошибка загрузки страницы {}: {msg}", page_idx + 1));
+                        *status_message = Some(crate::i18n::fill(
+                            t.extra.page_load_error_detail,
+                            &[("{page}", &(page_idx + 1).to_string()), ("{error}", &msg)],
+                        ));
                     }
                     let (tx, rx) = spawn_comic_worker();
                     self.req_tx = tx;
@@ -294,7 +309,10 @@ impl ComicViewState {
 
             let prev_enabled = self.current_page > 0;
             if ui
-                .add_enabled(prev_enabled, egui::Button::new("◀"))
+                .add_enabled(
+                    prev_enabled,
+                    IconButton::new(Icon::ArrowLeft, "").min_size(Vec2::new(28.0, 24.0)),
+                )
                 .on_hover_text(t.prev_page)
                 .clicked()
             {
@@ -327,7 +345,10 @@ impl ComicViewState {
 
             let next_enabled = self.current_page + 1 < page_count;
             if ui
-                .add_enabled(next_enabled, egui::Button::new("▶"))
+                .add_enabled(
+                    next_enabled,
+                    IconButton::new(Icon::ArrowRight, "").min_size(Vec2::new(28.0, 24.0)),
+                )
                 .on_hover_text(t.next_page)
                 .clicked()
             {
@@ -338,7 +359,11 @@ impl ComicViewState {
 
             let is_manga_active = settings.reading_mode == "Manga";
             if ui
-                .selectable_label(is_manga_active, t.manga_mode_btn)
+                .add(
+                    IconButton::new(Icon::Book, t.manga_mode_btn)
+                        .selected(is_manga_active)
+                        .min_size(Vec2::new(96.0, 24.0)),
+                )
                 .clicked()
             {
                 settings.reading_mode = "Manga".to_string();
@@ -346,7 +371,11 @@ impl ComicViewState {
 
             let is_comic_active = settings.reading_mode == "Comic";
             if ui
-                .selectable_label(is_comic_active, t.comic_mode_btn)
+                .add(
+                    IconButton::new(Icon::Book, t.comic_mode_btn)
+                        .selected(is_comic_active)
+                        .min_size(Vec2::new(96.0, 24.0)),
+                )
                 .clicked()
             {
                 settings.reading_mode = "Comic".to_string();
@@ -380,7 +409,11 @@ impl ComicViewState {
 
             ui.separator();
 
-            if ui.button("−").on_hover_text(t.zoom_out).clicked() {
+            if ui
+                .add(IconButton::new(Icon::Minus, "").min_size(Vec2::new(26.0, 24.0)))
+                .on_hover_text(t.zoom_out)
+                .clicked()
+            {
                 super::paged_common::zoom_out(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
@@ -397,7 +430,11 @@ impl ComicViewState {
                 );
             }
 
-            if ui.button("+").on_hover_text(t.zoom_in).clicked() {
+            if ui
+                .add(IconButton::new(Icon::Plus, "").min_size(Vec2::new(26.0, 24.0)))
+                .on_hover_text(t.zoom_in)
+                .clicked()
+            {
                 super::paged_common::zoom_in(&mut settings.zoom_percent, &mut settings.fit_mode);
             }
 
@@ -462,9 +499,13 @@ impl ComicViewState {
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let badge_txt = if is_manga { "🍙 Manga" } else { "🎨 Comic" };
-                ui.label(
-                    RichText::new(badge_txt)
+                let badge_txt = if is_manga {
+                    t.manga_mode_btn
+                } else {
+                    t.comic_mode_btn
+                };
+                ui.add(
+                    IconLabel::new(Icon::Book, badge_txt)
                         .size(11.0)
                         .strong()
                         .color(theme.accent_color()),
@@ -487,7 +528,7 @@ impl ComicViewState {
         status_message: &mut Option<String>,
         lang: crate::i18n::UiLanguage,
     ) {
-        self.poll_responses(ctx, status_message);
+        self.poll_responses(ctx, status_message, lang);
 
         if settings.smart_dark != self.last_smart_dark
             || theme.bg_color() != self.last_theme_bg
@@ -509,6 +550,7 @@ impl ComicViewState {
 
         self.current_page = self.current_page.min(page_count.saturating_sub(1));
         let is_manga = self.is_effective_manga(document, settings);
+        let t = lang.t();
 
         ui.add_space(2.0);
         self.render_toolbar(ui, page_count, settings, theme, is_manga, lang);
@@ -569,14 +611,18 @@ impl ComicViewState {
                                 ui.add(img_widget);
                                 ui.add_space(8.0);
                             } else if let Some(err) = self.failed_pages.get(&p) {
-                                ui.label(
-                                    RichText::new(format!("Ошибка страницы {}: {err}", p + 1))
+                                let label = format!("{} {}: {err}", t.page_load_error, p + 1);
+                                ui.add(
+                                    IconLabel::new(Icon::Warning, &label)
+                                        .size(13.0)
                                         .color(theme.accent_color()),
                                 );
                             } else {
                                 ui.add_space(24.0);
-                                ui.label(
-                                    RichText::new(format!("⏳ Загрузка страницы {}...", p + 1))
+                                let label = format!("{} {}...", t.page_loading, p + 1);
+                                ui.add(
+                                    IconLabel::new(Icon::Hourglass, &label)
+                                        .size(14.0)
                                         .color(theme.text_color()),
                                 );
                                 ui.add_space(24.0);
@@ -697,18 +743,24 @@ impl ComicViewState {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.4);
                             ui.label(
-                                RichText::new(format!("Ошибка страницы {}: {err}", p + 1))
-                                    .size(16.0)
-                                    .color(theme.accent_color()),
+                                RichText::new(crate::i18n::fill(
+                                    t.extra.page_error_detail,
+                                    &[("{page}", &(p + 1).to_string()), ("{error}", err)],
+                                ))
+                                .size(16.0)
+                                .color(theme.accent_color()),
                             );
                         });
                     } else {
                         ui.vertical_centered(|ui| {
                             ui.add_space(avail_size.y * 0.45);
                             ui.label(
-                                RichText::new(format!("Загрузка страницы {}...", p + 1))
-                                    .size(18.0)
-                                    .color(theme.text_color()),
+                                RichText::new(crate::i18n::fill(
+                                    t.extra.page_loading_number,
+                                    &[("{page}", &(p + 1).to_string())],
+                                ))
+                                .size(18.0)
+                                .color(theme.text_color()),
                             );
                         });
                     }

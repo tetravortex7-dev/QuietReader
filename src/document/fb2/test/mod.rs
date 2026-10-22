@@ -1,4 +1,5 @@
 use crate::document::{Document, DocumentError, Fb2Document};
+use crate::test::util::unique_test_dir;
 use crate::*;
 
 #[test]
@@ -468,4 +469,41 @@ fn test_fb2_explicit_toc_links_with_percent_decoding() {
     assert_eq!(doc.toc().len(), 1);
     assert_eq!(doc.toc()[0].title, "Глава первая");
     assert_eq!(doc.toc()[0].chapter_index, 0);
+}
+
+#[test]
+fn test_fb2_zip_opens_through_registry() {
+    use std::io::Write;
+
+    let dir = unique_test_dir("fb2_zip");
+    let xml = r#"<FictionBook><description><title-info><book-title>ZIP Book</book-title></title-info></description><body><section><title><p>Глава</p></title><p>Текст из FB2.ZIP.</p></section></body></FictionBook>"#;
+
+    for file_name in ["book.fb2.zip", "book.zip"] {
+        let path = dir.join(file_name);
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("BOOK.FB2", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+        zip.finish().unwrap();
+
+        let doc = document::open_document(&path).expect("Должен открыть FB2.ZIP");
+        assert_eq!(doc.format_name(), "FB2");
+        assert_eq!(doc.metadata().title, "ZIP Book");
+        assert_eq!(doc.chapters()[0].paragraphs[0], "Текст из FB2.ZIP.");
+    }
+
+    let empty_zip_path = dir.join("empty.zip");
+    let file = std::fs::File::create(&empty_zip_path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    zip.start_file("notes.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"not fb2").unwrap();
+    zip.finish().unwrap();
+    assert!(matches!(
+        Fb2Document::from_zip_file(&empty_zip_path),
+        Err(DocumentError::Unsupported(_))
+    ));
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
