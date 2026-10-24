@@ -1,5 +1,6 @@
 pub mod bookmarks_export;
 pub mod library;
+pub mod library_export;
 pub mod license;
 
 use crate::document::Document;

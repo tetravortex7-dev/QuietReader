@@ -8,6 +8,7 @@ pub struct DocDocument {
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
     footnotes: std::collections::HashMap<String, String>,
+    note_locations: std::collections::HashMap<String, crate::document::NoteLocation>,
     header_text: Option<String>,
     footer_text: Option<String>,
 }
@@ -45,6 +46,10 @@ impl Document for DocDocument {
 
     fn footnote(&self, id: &str) -> Option<&str> {
         self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn note_location(&self, id: &str) -> Option<crate::document::NoteLocation> {
+        self.note_locations.get(id).copied()
     }
 
     fn header_text(&self) -> Option<&str> {
@@ -88,7 +93,7 @@ impl DocDocument {
             ));
         }
 
-        let (chapters, toc, metadata, footnotes, header_text, footer_text) =
+        let (chapters, toc, metadata, footnotes, note_locations, header_text, footer_text) =
             parse_doc(bytes, default_title)?;
 
         Ok(Self {
@@ -96,6 +101,7 @@ impl DocDocument {
             chapters,
             toc,
             footnotes,
+            note_locations,
             header_text,
             footer_text,
         })
@@ -117,6 +123,7 @@ fn parse_doc(
         Vec<TocItem>,
         BookMetadata,
         std::collections::HashMap<String, String>,
+        std::collections::HashMap<String, crate::document::NoteLocation>,
         Option<String>,
         Option<String>,
     ),
@@ -441,7 +448,17 @@ fn parse_doc(
         author: "Неизвестный автор".to_string(),
     };
 
-    Ok((chapters, toc, metadata, footnotes, header_text, footer_text))
+    let note_locations = crate::document::build_notes_appendix(&mut chapters, &footnotes);
+
+    Ok((
+        chapters,
+        toc,
+        metadata,
+        footnotes,
+        note_locations,
+        header_text,
+        footer_text,
+    ))
 }
 
 fn read_fat_chain(

@@ -92,6 +92,54 @@ fn test_archive_path_traversal_protection() {
 }
 
 #[test]
+fn test_cbt_path_traversal_protection() {
+    use crate::document::{ComicDocument, DocumentError};
+
+    let test_dir = unique_test_dir("cbt_traversal");
+    let cbt_path = test_dir.join("traversal.cbt");
+    let payload = b"fake_image";
+
+    {
+        let file = std::fs::File::create(&cbt_path).unwrap();
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(payload.len() as u64);
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.as_old_mut().name[..11].copy_from_slice(b"../evil.png");
+        header.set_cksum();
+        builder.append(&header, payload.as_slice()).unwrap();
+        builder.finish().unwrap();
+    }
+
+    let res = ComicDocument::from_path(&cbt_path);
+    assert!(matches!(res, Err(DocumentError::Corrupted(_))));
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_tar_magic_probe_detects_cbt() {
+    use crate::document::registry::{ComicFormat, DocumentFormat};
+
+    let dir = unique_test_dir("tar_probe");
+    let path = dir.join("book.bin");
+    {
+        let file = std::fs::File::create(&path).unwrap();
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(3);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "a.png", &b"abc"[..])
+            .unwrap();
+        builder.finish().unwrap();
+    }
+    assert!(ComicFormat.probe(&path));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_zip_bomb_and_bounded_read_protection() {
     use crate::document::{DocumentError, read_bounded};
 

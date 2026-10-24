@@ -103,6 +103,79 @@ fn test_comic_cb7_archive_uses_cached_pages() {
 }
 
 #[test]
+fn test_comic_cbt_archive_uses_cached_pages() {
+    let test_dir = unique_test_dir("comic_cbt");
+    let cbt_path = test_dir.join("test.cbt");
+
+    let mut png = Vec::new();
+    image::RgbaImage::new(6, 6)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+
+    {
+        let file = std::fs::File::create(&cbt_path).unwrap();
+        let mut builder = tar::Builder::new(file);
+        for name in ["2.png", "10.png"] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(png.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, name, png.as_slice())
+                .unwrap();
+        }
+        builder.finish().unwrap();
+    }
+
+    let doc = document::open_document(&cbt_path).expect("Должен открыть CBT архив");
+    let comic = doc.page_content().expect("CBT должен быть комиксом");
+    assert_eq!(comic.page_count(), 2);
+    assert_eq!(comic.page_name(0), "2.png");
+    assert_eq!(comic.page_name(1), "10.png");
+    for _ in 0..2 {
+        let decoded = comic.load_page_image(0).expect("Страница 0");
+        assert_eq!(decoded.width, 6);
+        assert_eq!(decoded.height, 6);
+        let decoded = comic.load_page_image(1).expect("Страница 1");
+        assert_eq!(decoded.width, 6);
+    }
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_comic_tar_extension_is_comic() {
+    let test_dir = unique_test_dir("comic_tar");
+    let tar_path = test_dir.join("volume.tar");
+
+    let mut png = Vec::new();
+    image::RgbaImage::new(3, 3)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+
+    {
+        let file = std::fs::File::create(&tar_path).unwrap();
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(png.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "page001.png", png.as_slice())
+            .unwrap();
+        builder.finish().unwrap();
+    }
+
+    let doc = document::open_document(&tar_path).expect("Должен открыть TAR архив");
+    let comic = doc.page_content().expect("TAR должен быть комиксом");
+    assert_eq!(comic.page_count(), 1);
+    assert_eq!(comic.page_name(0), "page001.png");
+    assert!(comic.load_page_image(0).is_ok());
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
 fn test_comic_folder_scan() {
     let test_dir = unique_test_dir("comic_folder");
     let folder_path = test_dir.join("MangaFolder");

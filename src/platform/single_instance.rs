@@ -120,12 +120,12 @@ pub(crate) fn parse_ipc_payload(content: &str) -> Vec<PathBuf> {
     files
 }
 
-fn build_ipc_payload(initial_file: &Option<PathBuf>) -> Vec<u8> {
+fn build_ipc_payload(files: &[PathBuf]) -> Vec<u8> {
     let mut payload = String::from("ACTIVATE\n");
-    if let Some(path) = initial_file
-        .as_deref()
-        .and_then(Path::to_str)
-        .and_then(validated_ipc_path)
+    for path in files
+        .iter()
+        .filter_map(|path| path.to_str())
+        .filter_map(validated_ipc_path)
     {
         payload.push_str(&path.to_string_lossy());
         payload.push('\n');
@@ -168,7 +168,6 @@ impl Drop for SingleInstanceGuard {
 #[cfg(windows)]
 mod win32_ipc {
     use super::{SingleInstanceGuard, get_hwnd_file_path, get_ipc_request_path};
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicIsize, Ordering};
 
     const ERROR_ALREADY_EXISTS: u32 = 183;
@@ -250,7 +249,7 @@ mod win32_ipc {
         }
     }
 
-    pub fn acquire_single_instance(initial_file: &Option<PathBuf>) -> Option<SingleInstanceGuard> {
+    pub fn acquire_single_instance(files: &[std::path::PathBuf]) -> Option<SingleInstanceGuard> {
         let mutex_name = to_wide("Local\\QuietReader_SingleInstance_Mutex_v1");
         unsafe {
             let handle = CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr());
@@ -261,7 +260,7 @@ mod win32_ipc {
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 CloseHandle(handle);
 
-                let payload = super::build_ipc_payload(initial_file);
+                let payload = super::build_ipc_payload(files);
                 let _ = super::write_private_file(&get_ipc_request_path(), &payload);
 
                 AllowSetForegroundWindow(ASFW_ANY);
@@ -319,10 +318,10 @@ mod win32_ipc {
     }
 }
 
-pub fn acquire_single_instance(initial_file: &Option<PathBuf>) -> Option<SingleInstanceGuard> {
+pub fn acquire_single_instance(files: &[std::path::PathBuf]) -> Option<SingleInstanceGuard> {
     #[cfg(windows)]
     {
-        win32_ipc::acquire_single_instance(initial_file)
+        win32_ipc::acquire_single_instance(files)
     }
     #[cfg(not(windows))]
     {
@@ -337,7 +336,7 @@ pub fn acquire_single_instance(initial_file: &Option<PathBuf>) -> Option<SingleI
                     .map(|o| o.status.success())
                     .unwrap_or(false);
             if proc_alive {
-                let payload = build_ipc_payload(initial_file);
+                let payload = build_ipc_payload(files);
                 let _ = write_private_file(&get_ipc_request_path(), &payload);
                 return None;
             }

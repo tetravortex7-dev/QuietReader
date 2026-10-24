@@ -138,9 +138,11 @@ impl BookTab {
             Some("txt") => "TXT".to_string(),
             Some("md") | Some("markdown") => "MD".to_string(),
             Some("log") => "LOG".to_string(),
+            Some("html") | Some("htm") | Some("xhtml") => "HTML".to_string(),
             Some("cbz") | Some("zip") => "CBZ".to_string(),
             Some("cbr") | Some("rar") => "CBR".to_string(),
             Some("cb7") | Some("7z") => "CB7".to_string(),
+            Some("cbt") | Some("tar") => "CBT".to_string(),
             Some(ext) => ext.to_uppercase(),
             None => "DOC".to_string(),
         }

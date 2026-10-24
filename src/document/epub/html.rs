@@ -382,7 +382,7 @@ fn looks_like_note_marker(text: &str) -> bool {
     matches!(marker, "†" | "‡" | "††" | "‡‡")
 }
 
-fn looks_like_footnote_link(fragment: &str, text: &str) -> bool {
+pub(crate) fn looks_like_footnote_link(fragment: &str, text: &str) -> bool {
     if !looks_like_note_marker(text) {
         return false;
     }

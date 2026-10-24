@@ -180,6 +180,9 @@ impl ReaderTheme {
         visuals.widgets.open.corner_radius = radius;
         visuals.window_corner_radius = radius;
         visuals.menu_corner_radius = radius;
+        visuals.widgets.hovered.bg_stroke =
+            egui::Stroke::new(1.0, self.accent_color().gamma_multiply(0.55));
+        visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, self.accent_color());
         visuals
     }
 }

@@ -162,3 +162,36 @@ fn test_text_view_virtualization_bounds_estimation() {
     let top_y_offscreen_below = 1200.0f32;
     assert!(top_y_offscreen_below > view_bot);
 }
+
+#[test]
+fn test_paged_scroll_moves_one_screen_per_gesture() {
+    use crate::app::text_view::layout::{page_index_after_wheel, page_offset};
+
+    let max_index = 17usize;
+    assert_eq!(page_index_after_wheel(0, -1.0, max_index), 1);
+    assert_eq!(page_index_after_wheel(17, -1.0, max_index), 17);
+    assert_eq!(page_index_after_wheel(3, 1.0, max_index), 2);
+    assert_eq!(page_index_after_wheel(0, 1.0, max_index), 0);
+    assert_eq!(page_index_after_wheel(2, 0.0, max_index), 2);
+
+    assert_eq!(page_offset(0, 700.0, 3000.0), 0.0);
+    assert_eq!(page_offset(2, 700.0, 3000.0), 1400.0);
+    assert_eq!(page_offset(5, 700.0, 3000.0), 3000.0);
+}
+
+#[test]
+fn test_two_column_split_balances_paragraphs() {
+    use crate::app::text_view::layout::split_paragraphs;
+
+    let even: Vec<String> = (0..4).map(|_| "0123456789".to_string()).collect();
+    assert_eq!(split_paragraphs(&even), 2);
+
+    let uneven = vec!["a".repeat(10), "b".repeat(90)];
+    assert_eq!(split_paragraphs(&uneven), 2);
+
+    let short: Vec<String> = (0..3).map(|_| "0123456789".to_string()).collect();
+    assert_eq!(split_paragraphs(&short), 2);
+
+    assert_eq!(split_paragraphs(&[]), 0);
+    assert_eq!(split_paragraphs(&["only".to_string()]), 1);
+}

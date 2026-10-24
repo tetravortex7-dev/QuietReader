@@ -15,10 +15,13 @@ pub struct TopBarActions {
     pub toggle_bookmark: bool,
     pub toggle_bookmarks_panel: bool,
     pub toggle_search: bool,
+    pub open_dictionary: bool,
     pub toggle_tts: bool,
     pub toggle_fullscreen: bool,
     pub toggle_settings: bool,
     pub toggle_reading_ruler: bool,
+    pub toggle_paragraph_mode: bool,
+    pub toggle_rsvp: bool,
     pub toggle_ambient: bool,
     pub open_update: bool,
     pub open_license: bool,
@@ -27,6 +30,9 @@ pub struct TopBarActions {
 pub fn render_top_bar(
     ui: &mut egui::Ui,
     has_document: bool,
+    text_reader: bool,
+    paragraph_mode: bool,
+    rsvp_active: bool,
     library_visible: bool,
     is_fullscreen: bool,
     show_toc: bool,
@@ -46,10 +52,13 @@ pub fn render_top_bar(
         toggle_bookmark: false,
         toggle_bookmarks_panel: false,
         toggle_search: false,
+        open_dictionary: false,
         toggle_tts: false,
         toggle_fullscreen: false,
         toggle_settings: false,
         toggle_reading_ruler: false,
+        toggle_paragraph_mode: false,
+        toggle_rsvp: false,
         toggle_ambient: false,
         open_update: false,
         open_license: false,
@@ -68,86 +77,123 @@ pub fn render_top_bar(
             egui::Layout::right_to_left(egui::Align::Center)
         };
 
-        ui.with_layout(main_layout, |ui| {
-            if icon_button(ui, Icon::OpenFile, t.open_file)
-                .on_hover_text(t.open_file_tooltip)
-                .clicked()
-            {
-                actions.open_file = true;
-            }
-            if icon_button(ui, Icon::Folder, t.open_folder)
-                .on_hover_text(t.open_folder_tooltip)
-                .clicked()
-            {
-                actions.open_folder = true;
-            }
-            if icon_button(ui, Icon::Recent, t.recent_books)
-                .on_hover_text(t.recent_books_tooltip)
-                .clicked()
-            {
-                actions.toggle_recent = true;
-            }
-            if library_visible
-                && icon_button(ui, Icon::Library, t.library_title)
-                    .on_hover_text(t.library_open_tooltip)
-                    .clicked()
-            {
-                actions.toggle_library = true;
-            }
-            if icon_button(ui, Icon::Globe, t.opds_catalogs)
-                .on_hover_text(t.opds_catalogs_tooltip)
-                .clicked()
-            {
-                actions.toggle_opds = true;
-            }
-            if has_document {
-                ui.separator();
-                let toc_text = if show_toc { t.hide_toc } else { t.toc };
-                if icon_button(ui, Icon::Toc, toc_text)
-                    .on_hover_text(t.toc_tooltip)
+        let row_height = ui.spacing().interact_size.y.max(24.0) + 6.0;
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), row_height),
+            main_layout,
+            |ui| {
+                if icon_button(ui, Icon::OpenFile, t.open_file)
+                    .on_hover_text(t.open_file_tooltip)
                     .clicked()
                 {
-                    actions.toggle_toc = true;
+                    actions.open_file = true;
                 }
-                let bm_btn =
-                    icon_button(ui, Icon::Bookmark, t.add_bookmark).on_hover_text(t.bookmark_added);
-                if bm_btn.clicked() {
-                    actions.toggle_bookmark = true;
-                }
-                if bm_btn.secondary_clicked() {
-                    actions.toggle_bookmarks_panel = true;
-                }
-                if icon_button(ui, Icon::Search, t.search)
-                    .on_hover_text(t.search_tooltip)
+                if icon_button(ui, Icon::Folder, t.open_folder)
+                    .on_hover_text(t.open_folder_tooltip)
                     .clicked()
                 {
-                    actions.toggle_search = true;
+                    actions.open_folder = true;
                 }
-                if icon_button(ui, Icon::Speech, t.speech)
-                    .on_hover_text(t.speech_tooltip)
+                if icon_button(ui, Icon::Recent, t.recent_books)
+                    .on_hover_text(t.recent_books_tooltip)
                     .clicked()
                 {
-                    actions.toggle_tts = true;
+                    actions.toggle_recent = true;
                 }
-                let ruler_text = if reading_ruler {
-                    t.hide_reading_ruler
-                } else {
-                    t.reading_ruler
-                };
-                if icon_button(ui, Icon::Ruler, ruler_text)
-                    .on_hover_text(t.reading_ruler_tooltip)
+                if library_visible
+                    && icon_button(ui, Icon::Library, t.library_title)
+                        .on_hover_text(t.library_open_tooltip)
+                        .clicked()
+                {
+                    actions.toggle_library = true;
+                }
+                if icon_button(ui, Icon::Globe, t.opds_catalogs)
+                    .on_hover_text(t.opds_catalogs_tooltip)
                     .clicked()
                 {
-                    actions.toggle_reading_ruler = true;
+                    actions.toggle_opds = true;
                 }
-                if icon_button(ui, Icon::Headphones, t.ambient)
-                    .on_hover_text(format!("{} (M)", t.ambient_tooltip))
-                    .clicked()
-                {
-                    actions.toggle_ambient = true;
+                if has_document {
+                    ui.separator();
+                    let toc_text = if show_toc { t.hide_toc } else { t.toc };
+                    if icon_button(ui, Icon::Toc, toc_text)
+                        .on_hover_text(t.toc_tooltip)
+                        .clicked()
+                    {
+                        actions.toggle_toc = true;
+                    }
+                    let bm_btn = icon_button(ui, Icon::Bookmark, t.add_bookmark)
+                        .on_hover_text(t.bookmark_added);
+                    if bm_btn.clicked() {
+                        actions.toggle_bookmark = true;
+                    }
+                    if bm_btn.secondary_clicked() {
+                        actions.toggle_bookmarks_panel = true;
+                    }
+                    if icon_button(ui, Icon::Search, t.search)
+                        .on_hover_text(t.search_tooltip)
+                        .clicked()
+                    {
+                        actions.toggle_search = true;
+                    }
+                    if icon_button(ui, Icon::Book, t.dictionary_title)
+                        .on_hover_text(t.dictionary_lookup)
+                        .clicked()
+                    {
+                        actions.open_dictionary = true;
+                    }
+                    if icon_button(ui, Icon::Speech, t.speech)
+                        .on_hover_text(t.speech_tooltip)
+                        .clicked()
+                    {
+                        actions.toggle_tts = true;
+                    }
+                    let ruler_text = if reading_ruler {
+                        t.hide_reading_ruler
+                    } else {
+                        t.reading_ruler
+                    };
+                    if icon_button(ui, Icon::Ruler, ruler_text)
+                        .on_hover_text(t.reading_ruler_tooltip)
+                        .clicked()
+                    {
+                        actions.toggle_reading_ruler = true;
+                    }
+                    if text_reader {
+                        if ui
+                            .add(
+                                IconButton::new(Icon::Fonts, t.paragraph_mode_short)
+                                    .selected(paragraph_mode),
+                            )
+                            .on_hover_text(t.paragraph_mode_desc)
+                            .clicked()
+                        {
+                            actions.toggle_paragraph_mode = true;
+                        }
+                        if ui
+                            .add(
+                                IconButton::new(Icon::Hourglass, t.rsvp_short)
+                                    .selected(rsvp_active),
+                            )
+                            .on_hover_text(t.rsvp_desc)
+                            .clicked()
+                        {
+                            actions.toggle_rsvp = true;
+                        }
+                    }
+                    if icon_button(ui, Icon::Headphones, t.ambient)
+                        .on_hover_text(format!("{} (M)", t.ambient_tooltip))
+                        .clicked()
+                    {
+                        actions.toggle_ambient = true;
+                    }
                 }
-            }
-            ui.with_layout(secondary_layout, |ui| {
+            },
+        );
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), row_height),
+            secondary_layout,
+            |ui| {
                 let license_color = if pro_active {
                     egui::Color32::from_rgb(214, 164, 52)
                 } else {
@@ -195,8 +241,8 @@ pub fn render_top_bar(
                         actions.open_update = true;
                     }
                 }
-            });
-        });
+            },
+        );
     });
 
     actions
@@ -212,6 +258,7 @@ pub fn render_bottom_bar(
     pdf_page: (usize, usize),
     comic_page: (usize, usize),
     text_chapter: (usize, usize, f32, f32),
+    text_pages_override: Option<(usize, usize)>,
     lang: crate::i18n::UiLanguage,
 ) {
     let t = lang.t();
@@ -279,7 +326,8 @@ pub fn render_bottom_bar(
                 let (ch_idx, total_chapters, cur_scroll, max_scroll) = text_chapter;
                 let (cur_page, total_pages, pct) =
                     calculate_text_pages(doc.chapters(), ch_idx, cur_scroll, max_scroll);
-                let page_info = format!("{} {cur_page}/{total_pages}", t.page_prefix);
+                let (bar_page, bar_total) = text_pages_override.unwrap_or((cur_page, total_pages));
+                let page_info = format!("{} {bar_page}/{bar_total}", t.page_prefix);
                 let mut parts = vec![page_info];
                 if total_chapters > 1 {
                     parts.push(

@@ -1,6 +1,7 @@
-use super::{Dialogs, ProUpgradeDialog, QuietReaderApp, SearchView, TranslateView};
+use super::{Dialogs, DictionaryView, ProUpgradeDialog, QuietReaderApp, SearchView, TranslateView};
 use crate::app::library_view::LibraryActions;
-use crate::core::library::LibraryMode;
+use crate::core::library::{LibraryMode, LibraryStore, restore_latest_snapshot};
+use crate::core::library_export::export_library;
 use crate::core::license::ProFeature;
 use crate::document::DocumentViewKind;
 use eframe::egui;
@@ -46,6 +47,43 @@ pub(super) fn render(
     }
     if let Some(path) = actions.library_actions.open_path.take() {
         app.load_file(path);
+    }
+    if actions.library_actions.export_all
+        && let Some(destination) = Dialogs::pick_export_folder(app.settings.ui_language)
+    {
+        let t = app.settings.ui_language.t();
+        app.status_message = Some(match export_library(&destination, &app.library.entries) {
+            Ok(report) => t
+                .library_export_done
+                .replace("{exported}", &report.exported.to_string())
+                .replace("{skipped}", &report.skipped.to_string())
+                .replace("{folder}", &report.destination.display().to_string()),
+            Err(error) => t.library_export_failed.replace("{}", &error),
+        });
+    }
+    if actions.library_actions.restore_snapshot {
+        let t = app.settings.ui_language.t();
+        app.status_message = Some(match restore_latest_snapshot(&app.library_path) {
+            Ok(snapshot) => {
+                app.library = LibraryStore::load_from_path(&app.library_path);
+                app.library_dirty = false;
+                app.show_library = true;
+                if app.library.mode == LibraryMode::Folder
+                    && let Some(folder) = app.library.library_folder.clone()
+                {
+                    app.library_view.request_scan(folder);
+                }
+                t.library_restore_done
+                    .replace("{}", &snapshot.display().to_string())
+            }
+            Err(error) => {
+                if error == "no library snapshots" {
+                    t.library_restore_missing.to_string()
+                } else {
+                    t.library_restore_failed.replace("{}", &error)
+                }
+            }
+        });
     }
     if app.library.mode == LibraryMode::ReaderOnly && app.document.is_some() {
         app.show_library = false;
@@ -217,6 +255,18 @@ pub(super) fn render(
     if let Some(text) = on_speak_translated {
         app.tts.show_panel = true;
         app.tts.play_chapter(app.current_chapter, 0, vec![text]);
+    }
+
+    DictionaryView::render(
+        &mut app.dictionary,
+        ctx,
+        &app.theme,
+        app.settings.ui_language,
+        &mut app.settings,
+    );
+    if app.dictionary.words_changed {
+        app.dictionary.words_changed = false;
+        app.mark_settings_dirty();
     }
 
     if let Some(feature) = actions.pro_required {

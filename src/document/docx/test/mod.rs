@@ -28,6 +28,7 @@ fn test_docx_images_tables_and_footnotes() {
       </w:tr>
     </w:tbl>
     <w:p><w:r><w:t>Footnote</w:t><w:footnoteReference w:id="1"/></w:r></w:p>
+    <w:p><w:r><w:t>Endnote</w:t><w:endnoteReference w:id="2"/></w:r></w:p>
   </w:body>
 </w:document>"#,
         )
@@ -49,6 +50,15 @@ fn test_docx_images_tables_and_footnotes() {
 <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:footnote w:id="1"><w:p><w:r><w:t>Footnote text.</w:t></w:r></w:p></w:footnote>
 </w:footnotes>"#,
+        )
+        .unwrap();
+
+        zip.start_file("word/endnotes.xml", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:endnote w:id="2"><w:p><w:r><w:t>Endnote text.</w:t></w:r></w:p></w:endnote>
+</w:endnotes>"#,
         )
         .unwrap();
 
@@ -89,6 +99,28 @@ fn test_docx_images_tables_and_footnotes() {
             .any(|paragraph| paragraph.contains("{{note:docx_fn_1}}"))
     );
     assert_eq!(doc.footnote("docx_fn_1"), Some("Footnote text."));
+    assert_eq!(doc.footnote("docx_en_2"), Some("Endnote text."));
+    let notes_chapter = doc.chapters().len() - 1;
+    assert_eq!(
+        doc.chapters()[notes_chapter].id.as_deref(),
+        Some(crate::document::NOTES_CHAPTER_ID)
+    );
+    assert!(
+        doc.chapters()[notes_chapter]
+            .paragraphs
+            .iter()
+            .any(|paragraph| paragraph.contains("Endnote text."))
+    );
+    assert_eq!(
+        doc.note_location("docx_fn_1")
+            .map(|location| location.chapter_index),
+        Some(notes_chapter)
+    );
+    assert_eq!(
+        doc.note_location("docx_en_2")
+            .map(|location| location.chapter_index),
+        Some(notes_chapter)
+    );
     assert_eq!(doc.header_text(), Some("Header text"));
     assert_eq!(doc.footer_text(), Some("Footer text"));
 }

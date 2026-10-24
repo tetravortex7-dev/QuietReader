@@ -549,10 +549,43 @@ fn test_fb2_footnotes_from_notes_body_and_note_links() {
   </body>
 </FictionBook>"##;
     let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
-    assert_eq!(doc.chapters().len(), 1);
+    assert_eq!(doc.chapters().len(), 2);
     assert!(doc.chapters()[0].paragraphs[0].contains("{{note:note1}}"));
     assert_eq!(doc.footnote("note1"), Some("Текст сноски."));
     assert_eq!(doc.footnote("missing"), None);
+    assert_eq!(
+        doc.note_location("note1"),
+        Some(crate::document::NoteLocation {
+            chapter_index: 1,
+            paragraph_index: 0,
+        })
+    );
+}
+
+#[test]
+fn test_fb2_plain_href_note_without_type() {
+    let xml = r##"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description><title-info><book-title>Notes</book-title></title-info></description>
+  <body>
+    <section id="chapter">
+      <p>Текст<a l:href="#n1">[1]</a>.</p>
+    </section>
+  </body>
+  <body name="notes">
+    <section id="n1"><p>Сноска без type.</p></section>
+  </body>
+</FictionBook>"##;
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+    assert!(doc.chapters()[0].paragraphs[0].contains("{{note:n1}}"));
+    assert_eq!(doc.footnote("n1"), Some("Сноска без type."));
+    assert_eq!(
+        doc.note_location("n1"),
+        Some(crate::document::NoteLocation {
+            chapter_index: 1,
+            paragraph_index: 0,
+        })
+    );
 }
 
 #[test]
@@ -624,5 +657,12 @@ fn test_fb2_footnotes_from_comments_body_strip_formatting() {
 </FictionBook>"##;
     let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
     assert_eq!(doc.footnote("comment1"), Some("Жирный комментарий"));
-    assert_eq!(doc.chapters().len(), 1);
+    assert_eq!(doc.chapters().len(), 2);
+    assert_eq!(
+        doc.note_location("comment1"),
+        Some(crate::document::NoteLocation {
+            chapter_index: 1,
+            paragraph_index: 0,
+        })
+    );
 }

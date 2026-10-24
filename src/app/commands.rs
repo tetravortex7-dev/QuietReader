@@ -42,6 +42,7 @@ impl QuietReaderApp {
                 self.mark_settings_dirty();
             }
             Command::ToggleAutoscroll => {
+                self.close_focus_reading();
                 if self.document.is_some() {
                     self.autoscroll.toggle(
                         self.current_scroll_y,
@@ -61,6 +62,7 @@ impl QuietReaderApp {
                 }
             }
             Command::ToggleTTS => {
+                self.close_focus_reading();
                 self.tts.toggle_panel();
             }
             Command::ToggleToc => {
@@ -98,7 +100,11 @@ impl QuietReaderApp {
                 }
             }
             Command::ExitFullscreen => {
-                if self.search.is_open {
+                if self.focus_read.rsvp.active {
+                    self.close_speed_reading();
+                } else if self.settings.text_paragraph_mode {
+                    self.toggle_paragraph_mode();
+                } else if self.search.is_open {
                     self.search.close();
                 } else if self.ambient.is_open {
                     self.ambient.close();
@@ -108,6 +114,18 @@ impl QuietReaderApp {
                     self.show_settings_dialog = false;
                 } else if self.show_toc {
                     self.show_toc = false;
+                } else if self.show_recent_dialog {
+                    self.show_recent_dialog = false;
+                } else if self.show_opds_dialog {
+                    self.show_opds_dialog = false;
+                } else if self.dictionary.visible {
+                    self.dictionary.visible = false;
+                } else if self.translate.is_open {
+                    self.translate.close();
+                } else if self.pro_upgrade.is_open {
+                    self.pro_upgrade.close();
+                } else if self.show_association_dialog {
+                    self.show_association_dialog = false;
                 } else if self.is_fullscreen {
                     self.set_fullscreen_mode(ctx, false);
                 }
@@ -264,17 +282,32 @@ impl QuietReaderApp {
                         }
                     }
                     DocumentViewKind::Text => {
-                        if let Some(doc) = &self.document {
-                            ReaderCore::apply_text_command(
-                                nav_cmd,
-                                doc.as_ref(),
-                                &mut self.current_chapter,
-                                &mut self.last_rendered_chapter,
-                                self.current_scroll_y,
-                                self.max_scroll_y,
-                                self.viewport_height,
-                                &mut self.pending_scroll_y,
-                            );
+                        if !self.focus_nav_command(nav_cmd) {
+                            if self.settings.text_paged_scroll
+                                && matches!(nav_cmd, Command::PageDown | Command::PageUp)
+                                && self.viewport_height > 1.0
+                            {
+                                let step = self.viewport_height;
+                                let target = if matches!(nav_cmd, Command::PageDown) {
+                                    (self.current_scroll_y + step).min(self.max_scroll_y)
+                                } else {
+                                    (self.current_scroll_y - step).max(0.0)
+                                };
+                                self.pending_scroll_y = Some(target);
+                                self.current_scroll_y = target;
+                                self.mark_settings_dirty();
+                            } else if let Some(doc) = &self.document {
+                                ReaderCore::apply_text_command(
+                                    nav_cmd,
+                                    doc.as_ref(),
+                                    &mut self.current_chapter,
+                                    &mut self.last_rendered_chapter,
+                                    self.current_scroll_y,
+                                    self.max_scroll_y,
+                                    self.viewport_height,
+                                    &mut self.pending_scroll_y,
+                                );
+                            }
                         }
                     }
                 }

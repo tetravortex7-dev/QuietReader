@@ -504,6 +504,7 @@ impl PdfViewState {
         lang: crate::i18n::UiLanguage,
         highlight_query: Option<&str>,
         on_translate: &mut Option<String>,
+        on_dictionary: &mut Option<String>,
         smart_scan_allowed: bool,
         on_pro_required: &mut Option<crate::core::license::ProFeature>,
     ) {
@@ -823,7 +824,14 @@ impl PdfViewState {
             self.selection_dirty = false;
         }
 
-        self.render_selection_popups(ctx, theme, status_message, lang, on_translate);
+        self.render_selection_popups(
+            ctx,
+            theme,
+            status_message,
+            lang,
+            on_translate,
+            on_dictionary,
+        );
     }
 }
 

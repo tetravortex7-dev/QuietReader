@@ -5,6 +5,7 @@ pub mod doc;
 pub mod docx;
 pub mod epub;
 pub mod fb2;
+pub mod html;
 pub mod mobi;
 pub mod pdf;
 pub mod registry;
@@ -17,6 +18,7 @@ pub use doc::DocDocument;
 pub use docx::DocxDocument;
 pub use epub::EpubDocument;
 pub use fb2::Fb2Document;
+pub use html::HtmlDocument;
 pub use mobi::MobiDocument;
 pub use pdf::PdfDocument;
 #[allow(unused_imports)]
@@ -149,6 +151,121 @@ impl BookChapter {
     pub fn is_empty(&self) -> bool {
         self.title.trim().is_empty() && self.paragraphs.iter().all(|p| p.trim().is_empty())
     }
+}
+
+pub const NOTES_CHAPTER_ID: &str = "__quietreader_notes__";
+pub const NOTES_CHAPTER_TITLE: &str = "Примечания";
+
+pub fn push_notes_chapter(
+    chapters: &mut Vec<BookChapter>,
+    title: String,
+    notes: &[(String, String)],
+) -> std::collections::HashMap<String, NoteLocation> {
+    if notes.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    let chapter_index = chapters.len();
+    let mut locations = std::collections::HashMap::new();
+    let mut paragraphs = Vec::with_capacity(notes.len());
+    for (index, (id, text)) in notes.iter().enumerate() {
+        paragraphs.push(format!("[{}] {}", index + 1, text));
+        locations.insert(
+            id.clone(),
+            NoteLocation {
+                chapter_index,
+                paragraph_index: index,
+            },
+        );
+    }
+    chapters.push(BookChapter {
+        id: Some(NOTES_CHAPTER_ID.to_string()),
+        title,
+        paragraphs,
+    });
+    locations
+}
+
+pub fn build_notes_appendix(
+    chapters: &mut Vec<BookChapter>,
+    notes: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, NoteLocation> {
+    if notes.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    let mut ordered: Vec<String> = Vec::new();
+    for chapter in chapters.iter() {
+        for text in std::iter::once(chapter.title.as_str())
+            .chain(chapter.paragraphs.iter().map(String::as_str))
+        {
+            for (id, _, _) in footnote_tokens(text) {
+                if notes.contains_key(id) && !ordered.iter().any(|existing| existing == id) {
+                    ordered.push(id.to_string());
+                }
+            }
+        }
+    }
+    let mut remaining: Vec<String> = notes
+        .keys()
+        .filter(|id| !ordered.contains(id))
+        .cloned()
+        .collect();
+    remaining.sort_by_key(|id| note_sort_key(id));
+    ordered.extend(remaining);
+    let ordered_notes: Vec<(String, String)> = ordered
+        .into_iter()
+        .filter_map(|id| notes.get(&id).map(|text| (id, text.clone())))
+        .collect();
+    push_notes_chapter(chapters, NOTES_CHAPTER_TITLE.to_string(), &ordered_notes)
+}
+
+pub fn locate_notes_in_chapters(
+    chapters: &[BookChapter],
+    notes: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, NoteLocation> {
+    let mut locations = std::collections::HashMap::new();
+    for (id, note) in notes {
+        let normalized = normalize_match_text(note);
+        let normalized = normalized
+            .trim_start_matches(|c: char| {
+                c.is_ascii_digit() || matches!(c, '[' | ']' | '(' | ')' | '.' | ':')
+            })
+            .trim_start();
+        if normalized.chars().count() < 6 {
+            continue;
+        }
+        let needle: String = normalized.chars().take(48).collect();
+        for (chapter_index, chapter) in chapters.iter().enumerate() {
+            if let Some(paragraph_index) = chapter
+                .paragraphs
+                .iter()
+                .position(|paragraph| normalize_match_text(paragraph).contains(&needle))
+            {
+                locations.insert(
+                    id.clone(),
+                    NoteLocation {
+                        chapter_index,
+                        paragraph_index,
+                    },
+                );
+                break;
+            }
+        }
+    }
+    locations
+}
+
+fn note_sort_key(id: &str) -> (String, u64) {
+    let split = id.rfind('_').map(|index| index + 1).unwrap_or(0);
+    let (prefix, suffix) = id.split_at(split);
+    (prefix.to_string(), suffix.parse().unwrap_or(u64::MAX))
+}
+
+fn normalize_match_text(text: &str) -> String {
+    strip_formatting_tags(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 pub const FOOTNOTE_TOKEN_PREFIX: &str = "{{note:";

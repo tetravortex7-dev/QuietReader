@@ -151,7 +151,7 @@ impl TxtDocument {
     }
 }
 
-fn decode_text_bytes_with(bytes: &[u8], encoding: Option<&str>) -> String {
+pub(crate) fn decode_text_bytes_with(bytes: &[u8], encoding: Option<&str>) -> String {
     let forced = encoding.and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()));
     if let Some(forced) = forced {
         let (decoded, _, _) = forced.decode(bytes);

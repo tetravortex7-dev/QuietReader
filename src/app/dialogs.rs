@@ -26,18 +26,22 @@ impl Dialogs {
                 &[
                     "pdf", "djvu", "djv", "fb2", "fb2.zip", "epub", "mobi", "prc", "azw", "azw3",
                     "docx", "doc", "rtf", "txt", "md", "markdown", "log", "cbz", "cbr", "cb7",
-                    "zip", "rar", "7z", "xml",
+                    "cbt", "zip", "rar", "7z", "tar", "xml", "html", "htm", "xhtml",
                 ],
             )
             .add_filter(t.format_word, &["docx", "doc", "dot"])
             .add_filter(t.format_rtf, &["rtf"])
             .add_filter(t.format_pdf, &["pdf"])
             .add_filter(t.format_djvu, &["djvu", "djv"])
-            .add_filter(t.format_comics, &["cbz", "cbr", "cb7", "zip", "rar", "7z"])
+            .add_filter(
+                t.format_comics,
+                &["cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "tar"],
+            )
             .add_filter(t.format_epub, &["epub"])
             .add_filter(t.format_fb2, &["fb2", "fb2.zip", "xml"])
             .add_filter("Kindle / MOBI / AZW3", &["mobi", "prc", "azw", "azw3"])
             .add_filter(t.format_txt, &["txt", "md", "markdown", "log"])
+            .add_filter(t.format_html, &["html", "htm", "xhtml"])
             .pick_files()
     }
 
@@ -52,6 +56,13 @@ impl Dialogs {
         let t = lang.t();
         rfd::FileDialog::new()
             .set_title(t.library_choose_folder_title)
+            .pick_folder()
+    }
+
+    pub fn pick_export_folder(lang: crate::i18n::UiLanguage) -> Option<PathBuf> {
+        let t = lang.t();
+        rfd::FileDialog::new()
+            .set_title(t.library_export_folder_title)
             .pick_folder()
     }
 

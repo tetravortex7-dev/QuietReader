@@ -10,6 +10,7 @@ pub struct DocxDocument {
     toc: Vec<TocItem>,
     images: std::collections::HashMap<String, Vec<u8>>,
     footnotes: std::collections::HashMap<String, String>,
+    note_locations: std::collections::HashMap<String, crate::document::NoteLocation>,
     header_text: Option<String>,
     footer_text: Option<String>,
 }
@@ -51,6 +52,10 @@ impl Document for DocxDocument {
 
     fn footnote(&self, id: &str) -> Option<&str> {
         self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn note_location(&self, id: &str) -> Option<crate::document::NoteLocation> {
+        self.note_locations.get(id).copied()
     }
 
     fn header_text(&self) -> Option<&str> {
@@ -111,6 +116,7 @@ impl DocxDocument {
         let mut core_xml_bytes: Option<Vec<u8>> = None;
         let mut rels_xml_bytes: Option<Vec<u8>> = None;
         let mut footnotes_xml_bytes: Option<Vec<u8>> = None;
+        let mut endnotes_xml_bytes: Option<Vec<u8>> = None;
         let mut media: Vec<(String, Vec<u8>)> = Vec::new();
         let mut header_parts: Vec<String> = Vec::new();
         let mut footer_parts: Vec<String> = Vec::new();
@@ -152,6 +158,13 @@ impl DocxDocument {
                 )?);
             } else if name == "word/footnotes.xml" {
                 footnotes_xml_bytes = Some(crate::document::read_bounded(
+                    file,
+                    crate::document::MAX_SINGLE_ENTRY_BYTES,
+                    &mut total_unpacked,
+                    crate::document::MAX_TOTAL_UNPACK_BYTES,
+                )?);
+            } else if name == "word/endnotes.xml" {
+                endnotes_xml_bytes = Some(crate::document::read_bounded(
                     file,
                     crate::document::MAX_SINGLE_ENTRY_BYTES,
                     &mut total_unpacked,
@@ -210,13 +223,17 @@ impl DocxDocument {
             });
 
         let images = build_docx_images(rels_xml_bytes.as_deref(), &media);
-        let footnotes = footnotes_xml_bytes
+        let mut footnotes = footnotes_xml_bytes
             .as_deref()
-            .map(parse_docx_footnotes)
+            .map(|xml| parse_docx_notes(xml, "footnote", "docx_fn_"))
             .unwrap_or_default();
+        if let Some(xml) = endnotes_xml_bytes.as_deref() {
+            footnotes.extend(parse_docx_notes(xml, "endnote", "docx_en_"));
+        }
         let header_text = join_story_parts(header_parts);
         let footer_text = join_story_parts(footer_parts);
-        let (chapters, toc) = Self::parse_document_xml(&doc_xml_str, &metadata.title, &images)?;
+        let (mut chapters, toc) = Self::parse_document_xml(&doc_xml_str, &metadata.title, &images)?;
+        let note_locations = crate::document::build_notes_appendix(&mut chapters, &footnotes);
 
         Ok(Self {
             metadata,
@@ -224,6 +241,7 @@ impl DocxDocument {
             toc,
             images,
             footnotes,
+            note_locations,
             header_text,
             footer_text,
         })
@@ -341,18 +359,8 @@ impl DocxDocument {
                             }
                             current_chapter_paras.push(crate::document::image_token(&relationship));
                         }
-                    } else if tag == "footnotereference" {
-                        let mut id = String::new();
-                        for attr in e.attributes().flatten() {
-                            if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
-                                id = attr.value.to_string();
-                            }
-                        }
-                        if !id.is_empty() {
-                            current_p_text.push_str(&crate::document::footnote_token(&format!(
-                                "docx_fn_{id}"
-                            )));
-                        }
+                    } else if let Some(note_id) = docx_note_reference(e) {
+                        current_p_text.push_str(&crate::document::footnote_token(&note_id));
                     } else if tag == "p" {
                         in_p = true;
                         current_p_text.clear();
@@ -404,18 +412,8 @@ impl DocxDocument {
                             }
                             current_chapter_paras.push(crate::document::image_token(&relationship));
                         }
-                    } else if tag == "footnotereference" {
-                        let mut id = String::new();
-                        for attr in e.attributes().flatten() {
-                            if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
-                                id = attr.value.to_string();
-                            }
-                        }
-                        if !id.is_empty() {
-                            current_p_text.push_str(&crate::document::footnote_token(&format!(
-                                "docx_fn_{id}"
-                            )));
-                        }
+                    } else if let Some(note_id) = docx_note_reference(e) {
+                        current_p_text.push_str(&crate::document::footnote_token(&note_id));
                     } else if in_p && tag == "pstyle" {
                         for attr in e.attributes().flatten() {
                             let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
@@ -684,14 +682,34 @@ fn join_story_parts(parts: Vec<String>) -> Option<String> {
     }
 }
 
-fn parse_docx_footnotes(xml: &[u8]) -> HashMap<String, String> {
+fn docx_note_reference(e: &quick_xml::events::BytesStart<'_>) -> Option<String> {
+    let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
+    let prefix = match tag.as_str() {
+        "footnotereference" => "docx_fn_",
+        "endnotereference" => "docx_en_",
+        _ => return None,
+    };
+    let mut id = String::new();
+    for attr in e.attributes().flatten() {
+        if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
+            id = attr.value.to_string();
+        }
+    }
+    if id.is_empty() {
+        None
+    } else {
+        Some(format!("{prefix}{id}"))
+    }
+}
+
+fn parse_docx_notes(xml: &[u8], tag_name: &str, prefix: &str) -> HashMap<String, String> {
     use quick_xml::events::Event;
     use quick_xml::reader::Reader;
 
     let xml = String::from_utf8_lossy(xml);
     let mut reader = Reader::from_str(&xml);
     reader.config_mut().trim_text(false);
-    let mut footnotes = HashMap::new();
+    let mut notes = HashMap::new();
     let mut current: Option<String> = None;
     let mut text = String::new();
     let mut buf = Vec::new();
@@ -699,7 +717,7 @@ fn parse_docx_footnotes(xml: &[u8]) -> HashMap<String, String> {
         match event {
             Event::Start(ref e) => {
                 let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
-                if tag == "footnote" {
+                if tag == tag_name {
                     let mut id = String::new();
                     for attr in e.attributes().flatten() {
                         if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
@@ -707,7 +725,7 @@ fn parse_docx_footnotes(xml: &[u8]) -> HashMap<String, String> {
                         }
                     }
                     if !id.is_empty() {
-                        current = Some(format!("docx_fn_{id}"));
+                        current = Some(format!("{prefix}{id}"));
                         text.clear();
                     }
                 } else if current.is_some() && (tag == "p" || tag == "br") {
@@ -729,12 +747,12 @@ fn parse_docx_footnotes(xml: &[u8]) -> HashMap<String, String> {
             }
             Event::End(ref e) => {
                 let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
-                if tag == "footnote"
+                if tag == tag_name
                     && let Some(id) = current.take()
                 {
                     let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
                     if !cleaned.is_empty() {
-                        footnotes.insert(id, cleaned);
+                        notes.insert(id, cleaned);
                     }
                     text.clear();
                 }
@@ -744,7 +762,7 @@ fn parse_docx_footnotes(xml: &[u8]) -> HashMap<String, String> {
         }
         buf.clear();
     }
-    footnotes
+    notes
 }
 
 fn local_name(name: &str) -> &str {

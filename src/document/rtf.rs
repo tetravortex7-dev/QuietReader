@@ -8,6 +8,7 @@ pub struct RtfDocument {
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
     footnotes: std::collections::HashMap<String, String>,
+    note_locations: std::collections::HashMap<String, crate::document::NoteLocation>,
     header_text: Option<String>,
     footer_text: Option<String>,
 }
@@ -45,6 +46,10 @@ impl Document for RtfDocument {
 
     fn footnote(&self, id: &str) -> Option<&str> {
         self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn note_location(&self, id: &str) -> Option<crate::document::NoteLocation> {
+        self.note_locations.get(id).copied()
     }
 
     fn header_text(&self) -> Option<&str> {
@@ -88,16 +93,21 @@ impl RtfDocument {
             ));
         }
 
-        let (prepared, footnotes) = preprocess_footnotes(bytes);
+        let (prepared, footnotes) = preprocess_notes(bytes, b"\\footnote", "rtf_fn_");
+        let (prepared, endnotes) = preprocess_notes(&prepared, b"\\endnote", "rtf_en_");
+        let mut notes = footnotes;
+        notes.extend(endnotes);
         let header_text = extract_rtf_groups(bytes, b"\\header");
         let footer_text = extract_rtf_groups(bytes, b"\\footer");
-        let (chapters, toc, metadata) = parse_rtf(&prepared, default_title)?;
+        let (mut chapters, toc, metadata) = parse_rtf(&prepared, default_title)?;
+        let note_locations = crate::document::build_notes_appendix(&mut chapters, &notes);
 
         Ok(Self {
             metadata,
             chapters,
             toc,
-            footnotes,
+            footnotes: notes,
+            note_locations,
             header_text,
             footer_text,
         })
@@ -317,7 +327,7 @@ fn parse_rtf(
                         }
                     }
                     "fonttbl" | "colortbl" | "stylesheet" | "pict" | "object" | "header"
-                    | "footer" | "footnote" => {
+                    | "footer" | "footnote" | "endnote" => {
                         if let Some(top) = state_stack.last_mut() {
                             top.dest = Destination::Skip;
                         }
@@ -482,10 +492,13 @@ fn parse_rtf(
     Ok((chapters, toc, metadata))
 }
 
-fn preprocess_footnotes(bytes: &[u8]) -> (Vec<u8>, std::collections::HashMap<String, String>) {
-    let needle = b"\\footnote";
+fn preprocess_notes(
+    bytes: &[u8],
+    needle: &[u8],
+    prefix: &str,
+) -> (Vec<u8>, std::collections::HashMap<String, String>) {
     let mut output = Vec::with_capacity(bytes.len());
-    let mut footnotes = std::collections::HashMap::new();
+    let mut notes = std::collections::HashMap::new();
     let mut last = 0;
     let mut search = 0;
     let mut counter = 0usize;
@@ -501,20 +514,20 @@ fn preprocess_footnotes(bytes: &[u8]) -> (Vec<u8>, std::collections::HashMap<Str
         };
         let text = rtf_group_text(&bytes[position + needle.len()..group_end]);
         if !text.is_empty() {
-            let id = format!("rtf_fn_{counter}");
+            let id = format!("{prefix}{counter}");
             counter += 1;
             output.extend_from_slice(&bytes[last..group_start]);
             let token = crate::document::footnote_token(&id);
             let escaped = token.replace('{', "\\{").replace('}', "\\}");
             output.extend_from_slice(escaped.as_bytes());
-            footnotes.insert(id, text);
+            notes.insert(id, text);
             last = group_end + 1;
         }
         search = group_end + 1;
     }
 
     output.extend_from_slice(&bytes[last..]);
-    (output, footnotes)
+    (output, notes)
 }
 
 fn extract_rtf_groups(bytes: &[u8], needle: &[u8]) -> Option<String> {

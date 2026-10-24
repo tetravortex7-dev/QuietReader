@@ -442,6 +442,7 @@ fn write_store(path: &Path, store: &LibraryStore, backup_existing: bool) -> Resu
                 path.display()
             ));
         }
+        write_snapshot(path);
     }
 
     let mut rename_error = None;
@@ -739,4 +740,88 @@ fn folder_book_title(path: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or(name)
         .to_string()
+}
+
+pub const MAX_LIBRARY_SNAPSHOTS: usize = 20;
+
+pub fn snapshot_dir(path: &Path) -> PathBuf {
+    path.parent()
+        .map(|parent| parent.join("library_backups"))
+        .unwrap_or_else(|| PathBuf::from("library_backups"))
+}
+
+pub fn latest_snapshot(path: &Path) -> Option<PathBuf> {
+    let dir = snapshot_dir(path);
+    let entries = fs::read_dir(dir).ok()?;
+    let mut best: Option<(u64, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let file_path = entry.path();
+        let Some(name) = file_path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(stamp) = snapshot_stamp(name) else {
+            continue;
+        };
+        if best
+            .as_ref()
+            .map(|(value, _)| stamp > *value)
+            .unwrap_or(true)
+        {
+            best = Some((stamp, file_path));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+pub fn restore_latest_snapshot(path: &Path) -> Result<PathBuf, String> {
+    let snapshot = latest_snapshot(path).ok_or_else(|| "no library snapshots".to_string())?;
+    let content = fs::read_to_string(&snapshot)
+        .map_err(|error| format!("failed to read snapshot {}: {error}", snapshot.display()))?;
+    let store: LibraryStore = serde_json::from_str(&content)
+        .map_err(|error| format!("invalid library snapshot {}: {error}", snapshot.display()))?;
+    if path.exists() {
+        let safety = path.with_extension("before_restore.json");
+        let _ = fs::copy(path, safety);
+    }
+    write_store(path, &store.migrated(), true)?;
+    Ok(snapshot)
+}
+
+fn snapshot_stamp(name: &str) -> Option<u64> {
+    let rest = name.strip_prefix("library_")?.strip_suffix(".json")?;
+    rest.parse::<u64>().ok()
+}
+
+fn write_snapshot(path: &Path) {
+    let dir = snapshot_dir(path);
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let target = dir.join(format!("library_{seconds}.json"));
+    if target.exists() || fs::copy(path, &target).is_err() {
+        return;
+    }
+    prune_snapshots(&dir);
+}
+
+fn prune_snapshots(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut snapshots: Vec<(u64, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name().and_then(|value| value.to_str())?;
+            snapshot_stamp(name).map(|stamp| (stamp, path))
+        })
+        .collect();
+    snapshots.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, path) in snapshots.into_iter().skip(MAX_LIBRARY_SNAPSHOTS) {
+        let _ = fs::remove_file(path);
+    }
 }

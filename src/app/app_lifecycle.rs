@@ -3,6 +3,8 @@ use super::autoscroll::AutoscrollController;
 use super::bookmarks_view::BookmarkViewState;
 use super::comic_view::ComicViewState;
 use super::dialogs::SettingsTab;
+use super::dictionary::DictionaryState;
+use super::focus_read::FocusReadState;
 use super::fonts::apply_font_family;
 use super::license_view::ProUpgradeState;
 use super::pdf_view::PdfViewState;
@@ -97,6 +99,7 @@ impl QuietReaderApp {
             .unwrap_or_else(|| std::env::temp_dir().join("QuietReader").join("covers"));
         let mut library_view = LibraryViewState::default();
         library_view.set_cover_cache_dir(cover_cache_dir);
+        let library_unlocked = !settings.has_library_pin();
 
         Self {
             tabs: Vec::new(),
@@ -129,6 +132,7 @@ impl QuietReaderApp {
             show_settings_dialog: false,
             settings_tab: SettingsTab::Fonts,
             autoscroll: AutoscrollController::default(),
+            focus_read: FocusReadState::default(),
             comic_view: ComicViewState::default(),
             pdf_view: PdfViewState::default(),
             text_images: Default::default(),
@@ -150,6 +154,7 @@ impl QuietReaderApp {
             show_opds_dialog: false,
             opds_state: crate::opds::OpdsBrowserState::new(),
             translate: TranslateState::new(),
+            dictionary: DictionaryState::new(),
             sidebar_tab: SidebarTab::Toc,
             bookmark_view_state: BookmarkViewState::default(),
             toc_view: TocViewState::default(),
@@ -157,19 +162,25 @@ impl QuietReaderApp {
             ambient,
             pro_upgrade: ProUpgradeState::default(),
             last_applied_font_family: effective_font_family,
+            swipe_accum: 0.0,
+            last_swipe_event: None,
+            last_swipe_turn: None,
+            library_unlocked,
+            library_pin_draft: String::new(),
+            library_pin_error: None,
         }
     }
 
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        initial_file: Option<PathBuf>,
+        initial_files: Vec<PathBuf>,
         settings: AppSettings,
     ) -> Self {
         let effective_font_family = settings.effective_font_family();
         apply_font_family(&cc.egui_ctx, &effective_font_family);
         let saved_tabs = settings.open_tabs.clone();
         let saved_active_idx = settings.active_tab_index;
-        let has_initial_file = initial_file.is_some();
+        let has_initial_file = !initial_files.is_empty();
         let mut app = Self::from_settings(settings);
         app.document_loader.update_ctx(&cc.egui_ctx);
         crate::platform::set_keep_screen_on(app.keep_screen_on);
@@ -193,10 +204,10 @@ impl QuietReaderApp {
             app.load_file(last_path);
         }
 
-        if let Some(path) = initial_file
-            && path.exists()
-        {
-            app.load_file(path);
+        for path in initial_files {
+            if path.exists() {
+                app.load_file(path);
+            }
         }
 
         app.show_library = if has_initial_file {

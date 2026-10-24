@@ -11,7 +11,7 @@ pub fn supports_file_association() -> bool {
 
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
     "fb2", "epub", "mobi", "azw3", "txt", "doc", "docx", "rtf", "pdf", "djvu", "cbz", "cbr", "cb7",
-    "md",
+    "cbt", "md",
 ];
 
 #[cfg(windows)]
@@ -354,6 +354,7 @@ mod windows_registry {
                 "cbz" => "application/vnd.comicbook+zip",
                 "cbr" => "application/vnd.comicbook-rar",
                 "cb7" => "application/x-cb7",
+                "cbt" => "application/vnd.comicbook+tar",
                 "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "doc" => "application/msword",
                 "rtf" => "application/rtf",
@@ -524,6 +525,26 @@ pub fn is_association_prompt_dismissed() -> bool {
 
 #[cfg(not(windows))]
 pub fn set_association_prompt_dismissed(_dismissed: bool) {}
+
+pub fn open_url(url: &str) {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+}
 
 #[allow(dead_code)]
 pub fn load_system_font_bytes(font_name: &str) -> Option<Vec<u8>> {

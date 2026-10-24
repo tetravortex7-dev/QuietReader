@@ -70,10 +70,7 @@ impl OpdsCoverManager {
             let spawn_result = thread::Builder::new()
                 .name("opds-cover-fetch".to_string())
                 .spawn(move || {
-                    let agent = ureq::Agent::config_builder()
-                        .timeout_global(Some(Duration::from_secs(6)))
-                        .build()
-                        .new_agent();
+                    let agent = crate::net::agent(Duration::from_secs(6));
 
                     let mut req = agent
                         .get(&cover_url)

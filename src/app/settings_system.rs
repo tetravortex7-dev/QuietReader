@@ -74,6 +74,9 @@ pub fn render_system_tab(
         });
     ui.add_space(8.0);
 
+    render_library_pin_section(ui, settings, theme, on_save_settings, t);
+    ui.add_space(8.0);
+
     egui::Frame::new()
         .fill(theme.bg_color())
         .stroke(card_stroke)
@@ -327,4 +330,97 @@ pub fn render_system_tab(
                 *on_save_settings = true;
             }
         });
+}
+
+fn render_library_pin_section(
+    ui: &mut egui::Ui,
+    settings: &mut AppSettings,
+    theme: &ReaderTheme,
+    on_save_settings: &mut bool,
+    t: &crate::i18n::Translations,
+) {
+    let draft_id = egui::Id::unique("library_pin_draft");
+    let confirm_id = egui::Id::unique("library_pin_confirm");
+    let error_id = egui::Id::unique("library_pin_error");
+    let mut draft: String = ui.data(|data| data.get_temp(draft_id).unwrap_or_default());
+    let mut confirm: String = ui.data(|data| data.get_temp(confirm_id).unwrap_or_default());
+    let mut error: Option<String> = ui.data(|data| data.get_temp(error_id));
+    let text_color = theme.text_color();
+
+    egui::Frame::new()
+        .fill(theme.bg_color())
+        .stroke(egui::Stroke::new(
+            1.0,
+            theme.accent_color().gamma_multiply(0.25),
+        ))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(t.library_lock_title)
+                    .strong()
+                    .color(text_color),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(t.library_lock_desc)
+                    .size(12.0)
+                    .color(text_color.gamma_multiply(0.75)),
+            );
+            ui.add_space(6.0);
+
+            if settings.has_library_pin() {
+                if ui.button(t.library_pin_remove).clicked() {
+                    settings.clear_library_pin();
+                    *on_save_settings = true;
+                    draft.clear();
+                    confirm.clear();
+                    error = None;
+                }
+            } else {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut draft)
+                            .password(true)
+                            .hint_text(t.library_pin_enter)
+                            .desired_width(130.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut confirm)
+                            .password(true)
+                            .hint_text(t.library_pin_repeat)
+                            .desired_width(130.0),
+                    );
+                });
+                ui.add_space(6.0);
+                if ui.button(t.library_pin_set).clicked() {
+                    let digits = !draft.is_empty()
+                        && draft.chars().count() >= 4
+                        && draft.chars().count() <= 12
+                        && draft.chars().all(|ch| ch.is_ascii_digit());
+                    if !digits {
+                        error = Some(t.library_pin_too_short.to_string());
+                    } else if draft != confirm {
+                        error = Some(t.library_pin_mismatch.to_string());
+                    } else {
+                        settings.set_library_pin(&draft);
+                        *on_save_settings = true;
+                        draft.clear();
+                        confirm.clear();
+                        error = None;
+                    }
+                }
+            }
+
+            if let Some(message) = error.as_deref() {
+                ui.add_space(6.0);
+                ui.label(RichText::new(message).size(12.0).color(egui::Color32::RED));
+            }
+        });
+
+    ui.data_mut(|data| {
+        data.insert_temp(draft_id, draft);
+        data.insert_temp(confirm_id, confirm);
+        data.insert_temp(error_id, error);
+    });
 }

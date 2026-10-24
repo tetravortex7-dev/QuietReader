@@ -331,3 +331,19 @@ impl std::fmt::Debug for TranslationSettings {
             .finish()
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SavedWord {
+    #[serde(default)]
+    pub word: String,
+    #[serde(default)]
+    pub definition: String,
+    #[serde(default)]
+    pub pack: String,
+    #[serde(default)]
+    pub language: String,
+    #[serde(default)]
+    pub book: String,
+    #[serde(default)]
+    pub created_at: u64,
+}

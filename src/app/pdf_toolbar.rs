@@ -264,6 +264,7 @@ impl PdfViewState {
         status_message: &mut Option<String>,
         lang: crate::i18n::UiLanguage,
         on_translate: &mut Option<String>,
+        on_dictionary: &mut Option<String>,
     ) {
         let t = lang.t();
         let copied_text =
@@ -306,6 +307,12 @@ impl PdfViewState {
                                 .clicked()
                             {
                                 *on_translate = Some(self.selected_text.clone());
+                            }
+                            if ui
+                                .button(RichText::new(lang.t().dictionary_lookup).size(12.0))
+                                .clicked()
+                            {
+                                *on_dictionary = Some(self.selected_text.clone());
                             }
                             if ui
                                 .add(

@@ -2,6 +2,7 @@ mod bookmarks_export;
 mod library;
 mod license;
 mod search;
+mod snapshots;
 
 #[test]
 fn test_reader_core_bookmarks_and_search() {

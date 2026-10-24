@@ -1,6 +1,6 @@
 use super::icons::{Icon, IconButton, paint_icon};
 use super::theme::{ReaderTheme, bookmark_color};
-use crate::core::bookmarks_export::bookmarks_to_markdown;
+use crate::core::bookmarks_export::NotesFormat;
 use crate::core::{Bookmark, BookmarkColor, BookmarkKind};
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, Vec2};
@@ -12,6 +12,16 @@ pub struct BookmarkViewState {
     pub selected_color: Option<BookmarkColor>,
     pub editing_id: Option<String>,
     pub editing_text: String,
+    pub export_format: NotesFormat,
+}
+
+fn format_label(format: NotesFormat, t: &crate::i18n::Translations) -> &'static str {
+    match format {
+        NotesFormat::Markdown => t.export_format_md,
+        NotesFormat::Csv => t.export_format_csv,
+        NotesFormat::Html => t.export_format_html,
+        NotesFormat::Text => t.export_format_txt,
+    }
 }
 
 pub struct BookmarksView;
@@ -380,7 +390,7 @@ impl BookmarksView {
 
         ui.horizontal(|ui| {
             let copy_all_btn = IconButton::new(Icon::Copy, t.copy_all_bookmarks)
-                .min_size(Vec2::new((ui.available_width() - 6.0) * 0.5, 26.0));
+                .min_size(Vec2::new(ui.available_width(), 26.0));
             if ui.add(copy_all_btn).clicked() {
                 let cur_bms: Vec<Bookmark> = settings
                     .bookmarks
@@ -388,48 +398,78 @@ impl BookmarksView {
                     .filter(|b| b.book_path == file_path)
                     .cloned()
                     .collect();
-                let conspectus = bookmarks_to_markdown(book_title, book_author, &cur_bms);
+                let conspectus = NotesFormat::Markdown.render(book_title, book_author, &cur_bms);
                 ui.ctx().copy_text(conspectus);
                 *status_message = Some(t.bookmarks_copied.to_string());
             }
+        });
 
-            let export_btn = IconButton::new(Icon::Download, t.export_markdown)
-                .min_size(Vec2::new(ui.available_width(), 26.0));
-            if ui.add(export_btn).clicked() {
-                let cur_bms: Vec<Bookmark> = settings
-                    .bookmarks
-                    .iter()
-                    .filter(|b| b.book_path == file_path)
-                    .cloned()
-                    .collect();
-                let conspectus = bookmarks_to_markdown(book_title, book_author, &cur_bms);
-
-                let safe_name = if book_title.is_empty() {
-                    "book_notes.md".to_string()
-                } else {
-                    let sanitized: String = book_title
-                        .chars()
-                        .map(|c| {
-                            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
-                                c
-                            } else {
-                                '_'
-                            }
-                        })
-                        .collect();
-                    format!("{}_notes.md", sanitized.trim())
-                };
-
-                if let Some(save_path) = rfd::FileDialog::new()
-                    .add_filter("Markdown", &["md"])
-                    .set_file_name(&safe_name)
-                    .save_file()
-                {
-                    if std::fs::write(&save_path, conspectus).is_ok() {
-                        *status_message = Some(t.bookmarks_exported.to_string());
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(t.export_format_label)
+                    .small()
+                    .color(theme.text_color()),
+            );
+            let current = format_label(state.export_format, &t);
+            egui::ComboBox::from_id_salt("bookmarks_export_format")
+                .selected_text(current)
+                .width((ui.available_width() - 8.0).max(80.0))
+                .show_ui(ui, |ui| {
+                    for format in [
+                        NotesFormat::Markdown,
+                        NotesFormat::Csv,
+                        NotesFormat::Html,
+                        NotesFormat::Text,
+                    ] {
+                        ui.selectable_value(
+                            &mut state.export_format,
+                            format,
+                            format_label(format, &t),
+                        );
                     }
+                });
+        });
+
+        let export_btn = IconButton::new(Icon::Download, t.export_notes)
+            .min_size(Vec2::new(ui.available_width(), 26.0));
+        if ui.add(export_btn).clicked() {
+            let cur_bms: Vec<Bookmark> = settings
+                .bookmarks
+                .iter()
+                .filter(|b| b.book_path == file_path)
+                .cloned()
+                .collect();
+            let ext = state.export_format.extension();
+            let conspectus = state
+                .export_format
+                .render(book_title, book_author, &cur_bms);
+
+            let safe_title = if book_title.is_empty() {
+                "book".to_string()
+            } else {
+                let sanitized: String = book_title
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                sanitized.trim().to_string()
+            };
+            let safe_name = format!("{safe_title}_notes.{ext}");
+
+            if let Some(save_path) = rfd::FileDialog::new()
+                .add_filter(format_label(state.export_format, &t), &[ext])
+                .set_file_name(&safe_name)
+                .save_file()
+            {
+                if std::fs::write(&save_path, conspectus).is_ok() {
+                    *status_message = Some(t.bookmarks_exported.to_string());
                 }
             }
-        });
+        }
     }
 }

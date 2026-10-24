@@ -16,6 +16,7 @@ pub struct MobiDocument {
     toc: Vec<TocItem>,
     images: HashMap<String, Vec<u8>>,
     footnotes: HashMap<String, String>,
+    note_locations: HashMap<String, crate::document::NoteLocation>,
     format_name: &'static str,
 }
 
@@ -110,6 +111,7 @@ impl MobiDocument {
         let metadata = BookMetadata { title, author };
 
         let (chapters, toc, footnotes) = parse_mobi_html_with_notes(&content, &metadata.title);
+        let note_locations = crate::document::locate_notes_in_chapters(&chapters, &footnotes);
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
                 "Не удалось извлечь главы из книги".to_string(),
@@ -122,6 +124,7 @@ impl MobiDocument {
             toc,
             images: collect_mobi_images(&m),
             footnotes,
+            note_locations,
             format_name,
         })
     }
@@ -191,6 +194,7 @@ impl MobiDocument {
         let metadata = BookMetadata { title, author };
 
         let (chapters, toc, footnotes) = parse_mobi_html_with_notes(&content, &metadata.title);
+        let note_locations = crate::document::locate_notes_in_chapters(&chapters, &footnotes);
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
                 "Не удалось извлечь главы из книги".to_string(),
@@ -203,6 +207,7 @@ impl MobiDocument {
             toc,
             images: collect_mobi_images(&m),
             footnotes,
+            note_locations,
             format_name,
         })
     }
@@ -598,6 +603,10 @@ impl Document for MobiDocument {
 
     fn footnote(&self, id: &str) -> Option<&str> {
         self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn note_location(&self, id: &str) -> Option<crate::document::NoteLocation> {
+        self.note_locations.get(id).copied()
     }
 }
 

@@ -25,6 +25,11 @@ pub(super) fn render(
         let actions = render_top_bar(
             ui,
             app.document.is_some() && !app.show_library,
+            app.document.is_some()
+                && !app.show_library
+                && app.view_kind() == DocumentViewKind::Text,
+            app.settings.text_paragraph_mode && !app.focus_read.rsvp.active,
+            app.focus_read.rsvp.active,
             app.library.mode != LibraryMode::ReaderOnly,
             app.is_fullscreen,
             app.show_toc,
@@ -80,7 +85,18 @@ pub(super) fn render(
                     app.search.toggle();
                 }
             }
+            if actions.open_dictionary {
+                let selection = crate::app::selection::get_selected_text(ctx);
+                if let Some(text) = selection.filter(|text| !text.trim().is_empty()) {
+                    app.dictionary
+                        .open_word(text, app.settings.ui_language, false);
+                } else {
+                    app.dictionary.visible = true;
+                    app.dictionary.refresh_installed();
+                }
+            }
             if actions.toggle_tts {
+                app.close_focus_reading();
                 app.tts.toggle_panel();
                 if app.tts.show_panel && !app.tts.status().is_playing {
                     if let Some(doc) = &app.document {
@@ -100,6 +116,16 @@ pub(super) fn render(
                     app.mark_settings_dirty();
                 } else {
                     *pro_required = Some(ProFeature::FocusTools);
+                }
+            }
+            if actions.toggle_paragraph_mode {
+                app.toggle_paragraph_mode();
+            }
+            if actions.toggle_rsvp {
+                if app.focus_read.rsvp.active {
+                    app.close_speed_reading();
+                } else {
+                    app.start_speed_reading();
                 }
             }
             if actions.toggle_ambient {

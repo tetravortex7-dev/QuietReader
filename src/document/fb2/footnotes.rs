@@ -9,13 +9,22 @@ pub(super) fn is_notes_body(name: Option<&str>) -> bool {
     )
 }
 
-pub(super) fn collect_body(body: &BodyNode, notes: &mut HashMap<String, String>) {
+pub(super) fn collect_body(
+    body: &BodyNode,
+    notes: &mut HashMap<String, String>,
+) -> Vec<(String, String)> {
+    let mut ordered = Vec::new();
     for section in &body.sections {
-        collect_section(section, notes);
+        collect_section(section, notes, &mut ordered);
     }
+    ordered
 }
 
-fn collect_section(section: &SectionNode, notes: &mut HashMap<String, String>) {
+fn collect_section(
+    section: &SectionNode,
+    notes: &mut HashMap<String, String>,
+    ordered: &mut Vec<(String, String)>,
+) {
     if let Some(id) = &section.id {
         let mut paragraphs: Vec<String> = section
             .paragraphs
@@ -32,11 +41,13 @@ fn collect_section(section: &SectionNode, notes: &mut HashMap<String, String>) {
             }
         }
         if !paragraphs.is_empty() {
-            notes.insert(id.clone(), paragraphs.join("\n"));
+            let text = paragraphs.join("\n");
+            notes.insert(id.clone(), text.clone());
+            ordered.push((id.clone(), text));
         }
     }
     for subsection in &section.subsections {
-        collect_section(subsection, notes);
+        collect_section(subsection, notes, ordered);
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "QuietReader"
-version = "0.7.1"
+version = "0.13.0"
 edition = "2024"
 description = "A fast, lightweight cross-platform ebook, document, and comic reader"
 license = "LicenseRef-Proprietary"
@@ -35,6 +35,10 @@ msedge-tts = "0.4.1"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "symphonia-mp3", "symphonia-wav"] }
 ureq = "3.5.0"
 url = "2.5.8"
+flate2 = "1.1.10"
+lzma-rs = "0.3.0"
+sha2 = "0.11.1"
+tar = "0.4.46"
 rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
 mobi = { version = "0.8.0", default-features = false }
 

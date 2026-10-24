@@ -114,10 +114,7 @@ impl OpdsClient {
         let worker_started = thread::Builder::new()
             .name("opds-worker".to_string())
             .spawn(move || {
-                let agent = ureq::Agent::config_builder()
-                    .timeout_global(Some(Duration::from_secs(15)))
-                    .build()
-                    .new_agent();
+                let agent = crate::net::agent(Duration::from_secs(15));
 
                 while let Ok(cmd) = rx_cmd.recv() {
                     match cmd {

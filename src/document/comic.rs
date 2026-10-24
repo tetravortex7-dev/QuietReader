@@ -12,27 +12,28 @@ use crate::document::{
 
 static SEVENZ_CACHE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-struct SevenZCache {
+struct ExtractedCache {
     dir: PathBuf,
     files: HashMap<String, PathBuf>,
 }
 
-impl SevenZCache {
+impl ExtractedCache {
     fn new() -> Result<Self, DocumentError> {
         let parent = std::env::temp_dir().join("QuietReader").join("comic-cache");
-        std::fs::create_dir_all(&parent)
-            .map_err(|e| DocumentError::Io(format!("Не удалось создать каталог кэша CB7: {e}")))?;
+        std::fs::create_dir_all(&parent).map_err(|e| {
+            DocumentError::Io(format!("Не удалось создать каталог кэша комикса: {e}"))
+        })?;
         let id = SEVENZ_CACHE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = parent.join(format!("{}-{id}", std::process::id()));
         std::fs::create_dir(&dir)
-            .map_err(|e| DocumentError::Io(format!("Не удалось создать кэш CB7: {e}")))?;
+            .map_err(|e| DocumentError::Io(format!("Не удалось создать кэш страниц: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Err(e) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
                 let _ = std::fs::remove_dir_all(&dir);
                 return Err(DocumentError::Io(format!(
-                    "Не удалось ограничить доступ к кэшу CB7: {e}"
+                    "Не удалось ограничить доступ к кэшу страниц: {e}"
                 )));
             }
         }
@@ -41,9 +42,18 @@ impl SevenZCache {
             files: HashMap::new(),
         })
     }
+
+    fn store(&mut self, name: &str, bytes: &[u8]) -> Result<(), DocumentError> {
+        let cache_name = format!("page_{}.img", self.files.len());
+        let cache_path = self.dir.join(cache_name);
+        std::fs::write(&cache_path, bytes)
+            .map_err(|e| DocumentError::Io(format!("Не удалось сохранить страницу: {e}")))?;
+        self.files.insert(name.to_string(), cache_path);
+        Ok(())
+    }
 }
 
-impl Drop for SevenZCache {
+impl Drop for ExtractedCache {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -54,6 +64,7 @@ pub enum ComicArchiveKind {
     Zip,
     Rar,
     SevenZ,
+    Tar,
     Folder,
 }
 
@@ -65,7 +76,7 @@ pub struct ComicDocument {
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
     is_manga: bool,
-    sevenz_cache: Option<SevenZCache>,
+    extracted_cache: Option<ExtractedCache>,
 }
 
 impl ComicDocument {
@@ -91,19 +102,22 @@ impl ComicDocument {
                 "cbz" | "zip" => ComicArchiveKind::Zip,
                 "cbr" | "rar" => ComicArchiveKind::Rar,
                 "cb7" | "7z" => ComicArchiveKind::SevenZ,
+                "cbt" | "tar" => ComicArchiveKind::Tar,
                 _ => {
-                    let mut magic = [0u8; 8];
+                    let mut header = [0u8; 262];
                     let n = File::open(path_ref)
-                        .and_then(|mut f| f.read(&mut magic))
+                        .and_then(|mut f| f.read(&mut header))
                         .map_err(|e| DocumentError::Io(format!("{}: {e}", path_ref.display())))?;
-                    if n >= 4 && &magic[0..4] == b"PK\x03\x04" {
+                    if n >= 4 && &header[0..4] == b"PK\x03\x04" {
                         ComicArchiveKind::Zip
-                    } else if (n >= 7 && &magic[0..7] == b"Rar!\x1a\x07\x00")
-                        || (n >= 8 && &magic[0..8] == b"Rar!\x1a\x07\x01\x00")
+                    } else if (n >= 7 && &header[0..7] == b"Rar!\x1a\x07\x00")
+                        || (n >= 8 && &header[0..8] == b"Rar!\x1a\x07\x01\x00")
                     {
                         ComicArchiveKind::Rar
-                    } else if n >= 6 && &magic[0..6] == b"7z\xbc\xaf\x27\x1c" {
+                    } else if n >= 6 && &header[0..6] == b"7z\xbc\xaf\x27\x1c" {
                         ComicArchiveKind::SevenZ
+                    } else if n >= 262 && &header[257..262] == b"ustar" {
+                        ComicArchiveKind::Tar
                     } else {
                         return Err(DocumentError::Unsupported(format!(
                             "Неподдерживаемый формат комикса: {}",
@@ -114,7 +128,7 @@ impl ComicDocument {
             }
         };
 
-        let (mut pages, comic_info_xml, sevenz_cache) = match kind {
+        let (mut pages, comic_info_xml, extracted_cache) = match kind {
             ComicArchiveKind::Folder => {
                 let (pages, info) = scan_folder(path_ref)?;
                 (pages, info, None)
@@ -128,6 +142,7 @@ impl ComicDocument {
                 (pages, info, None)
             }
             ComicArchiveKind::SevenZ => scan_sevenz(path_ref)?,
+            ComicArchiveKind::Tar => scan_tar(path_ref)?,
         };
 
         if pages.is_empty() {
@@ -187,7 +202,7 @@ impl ComicDocument {
             chapters,
             toc,
             is_manga,
-            sevenz_cache,
+            extracted_cache,
         })
     }
 }
@@ -245,61 +260,77 @@ impl PageContent for ComicDocument {
         let max_single = crate::document::MAX_SINGLE_ENTRY_BYTES;
         let max_total = crate::document::MAX_TOTAL_UNPACK_BYTES;
 
-        let bytes = match self.kind {
-            ComicArchiveKind::Folder => {
-                if !is_safe_path(&page.archive_path) {
-                    return Err(DocumentError::Corrupted("Небезопасный путь".to_string()));
+        let bytes =
+            match self.kind {
+                ComicArchiveKind::Folder => {
+                    if !is_safe_path(&page.archive_path) {
+                        return Err(DocumentError::Corrupted("Небезопасный путь".to_string()));
+                    }
+                    let full = self.path.join(&page.archive_path);
+                    let meta = std::fs::metadata(&full)?;
+                    if meta.len() > max_single {
+                        return Err(DocumentError::LimitExceeded(
+                            "Превышен лимит 50 МБ".to_string(),
+                        ));
+                    }
+                    std::fs::read(&full)?
                 }
-                let full = self.path.join(&page.archive_path);
-                let meta = std::fs::metadata(&full)?;
-                if meta.len() > max_single {
-                    return Err(DocumentError::LimitExceeded(
-                        "Превышен лимит 50 МБ".to_string(),
-                    ));
+                ComicArchiveKind::Zip => {
+                    let mut zip = ZipArchive::new(File::open(&self.path)?)
+                        .map_err(|e| DocumentError::Corrupted(format!("Ошибка ZIP: {e}")))?;
+                    let entry = zip
+                        .by_name(&page.archive_path)
+                        .map_err(|e| DocumentError::Corrupted(format!("Не найден в ZIP: {e}")))?;
+                    if entry.size() > max_single {
+                        return Err(DocumentError::LimitExceeded(
+                            "Превышен лимит 50 МБ".to_string(),
+                        ));
+                    }
+                    let mut total = 0u64;
+                    crate::document::read_bounded(entry, max_single, &mut total, max_total)?
                 }
-                std::fs::read(&full)?
-            }
-            ComicArchiveKind::Zip => {
-                let mut zip = ZipArchive::new(File::open(&self.path)?)
-                    .map_err(|e| DocumentError::Corrupted(format!("Ошибка ZIP: {e}")))?;
-                let entry = zip
-                    .by_name(&page.archive_path)
-                    .map_err(|e| DocumentError::Corrupted(format!("Не найден в ZIP: {e}")))?;
-                if entry.size() > max_single {
-                    return Err(DocumentError::LimitExceeded(
-                        "Превышен лимит 50 МБ".to_string(),
-                    ));
+                ComicArchiveKind::Rar => {
+                    let mut archive = unrar_rs::RarArchive::open(File::open(&self.path)?)
+                        .map_err(|e| DocumentError::Corrupted(format!("Ошибка RAR: {e}")))?;
+                    let handle = archive
+                        .by_name(&page.archive_path)
+                        .map_err(|e| DocumentError::Corrupted(format!("Не найден в RAR: {e}")))?;
+                    let mut total = 0u64;
+                    crate::document::read_bounded(handle, max_single, &mut total, max_total)?
                 }
-                let mut total = 0u64;
-                crate::document::read_bounded(entry, max_single, &mut total, max_total)?
-            }
-            ComicArchiveKind::Rar => {
-                let mut archive = unrar_rs::RarArchive::open(File::open(&self.path)?)
-                    .map_err(|e| DocumentError::Corrupted(format!("Ошибка RAR: {e}")))?;
-                let handle = archive
-                    .by_name(&page.archive_path)
-                    .map_err(|e| DocumentError::Corrupted(format!("Не найден в RAR: {e}")))?;
-                let mut total = 0u64;
-                crate::document::read_bounded(handle, max_single, &mut total, max_total)?
-            }
-            ComicArchiveKind::SevenZ => {
-                let cache = self
-                    .sevenz_cache
-                    .as_ref()
-                    .ok_or_else(|| DocumentError::Corrupted("Кэш CB7 недоступен".to_string()))?;
-                let cached = cache
-                    .files
-                    .get(&page.archive_path)
-                    .ok_or_else(|| DocumentError::Corrupted("Не найден в 7z".to_string()))?;
-                let meta = std::fs::metadata(cached)?;
-                if meta.len() > max_single {
-                    return Err(DocumentError::LimitExceeded(
-                        "Превышен лимит 50 МБ".to_string(),
-                    ));
+                ComicArchiveKind::SevenZ => {
+                    let cache = self.extracted_cache.as_ref().ok_or_else(|| {
+                        DocumentError::Corrupted("Кэш CB7 недоступен".to_string())
+                    })?;
+                    let cached = cache
+                        .files
+                        .get(&page.archive_path)
+                        .ok_or_else(|| DocumentError::Corrupted("Не найден в 7z".to_string()))?;
+                    let meta = std::fs::metadata(cached)?;
+                    if meta.len() > max_single {
+                        return Err(DocumentError::LimitExceeded(
+                            "Превышен лимит 50 МБ".to_string(),
+                        ));
+                    }
+                    std::fs::read(cached)?
                 }
-                std::fs::read(cached)?
-            }
-        };
+                ComicArchiveKind::Tar => {
+                    let cache = self.extracted_cache.as_ref().ok_or_else(|| {
+                        DocumentError::Corrupted("Кэш CBT недоступен".to_string())
+                    })?;
+                    let cached = cache
+                        .files
+                        .get(&page.archive_path)
+                        .ok_or_else(|| DocumentError::Corrupted("Не найден в TAR".to_string()))?;
+                    let meta = std::fs::metadata(cached)?;
+                    if meta.len() > max_single {
+                        return Err(DocumentError::LimitExceeded(
+                            "Превышен лимит 50 МБ".to_string(),
+                        ));
+                    }
+                    std::fs::read(cached)?
+                }
+            };
 
         decode_image_bytes(&bytes)
     }
@@ -582,13 +613,13 @@ fn scan_rar(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentErr
 
 fn scan_sevenz(
     path: &Path,
-) -> Result<(Vec<PageInfo>, Option<Vec<u8>>, Option<SevenZCache>), DocumentError> {
+) -> Result<(Vec<PageInfo>, Option<Vec<u8>>, Option<ExtractedCache>), DocumentError> {
     let mut pages = Vec::new();
     let mut comic_info = None;
     let mut entry_count = 0usize;
     let mut total_unpacked = 0u64;
     let mut sec_err: Option<DocumentError> = None;
-    let mut cache = SevenZCache::new()?;
+    let mut cache = ExtractedCache::new()?;
 
     sevenz_rust::decompress_file_with_extract_fn(path, "", |entry, reader, _| {
         if sec_err.is_some() {
@@ -643,15 +674,10 @@ fn scan_sevenz(
                     return Ok(false);
                 }
             };
-            let cache_name = format!("page_{}.img", cache.files.len());
-            let cache_path = cache.dir.join(cache_name);
-            if let Err(e) = std::fs::write(&cache_path, bytes) {
-                sec_err = Some(DocumentError::Io(format!(
-                    "Не удалось сохранить страницу CB7: {e}"
-                )));
+            if let Err(e) = cache.store(&entry.name().to_string(), &bytes) {
+                sec_err = Some(e);
                 return Ok(false);
             }
-            cache.files.insert(entry.name().to_string(), cache_path);
             pages.push(make_page_info(entry.name().to_string(), path_obj));
         }
         Ok(true)
@@ -661,6 +687,81 @@ fn scan_sevenz(
     if let Some(err) = sec_err {
         return Err(err);
     }
+    Ok((pages, comic_info, Some(cache)))
+}
+
+fn scan_tar(
+    path: &Path,
+) -> Result<(Vec<PageInfo>, Option<Vec<u8>>, Option<ExtractedCache>), DocumentError> {
+    let file =
+        File::open(path).map_err(|e| DocumentError::Io(format!("Не удалось открыть TAR: {e}")))?;
+    let mut archive = tar::Archive::new(std::io::BufReader::new(file));
+    let mut cache = ExtractedCache::new()?;
+    let mut pages = Vec::new();
+    let mut comic_info = None;
+    let mut entry_count = 0usize;
+    let mut total_unpacked = 0u64;
+
+    let entries = archive
+        .entries()
+        .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения TAR-архива: {e}")))?;
+    for entry in entries {
+        let mut entry = entry
+            .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения TAR-архива: {e}")))?;
+        entry_count += 1;
+        if entry_count > crate::document::MAX_ARCHIVE_ENTRIES {
+            return Err(DocumentError::LimitExceeded(
+                "В TAR-архиве превышен лимит количества файлов (10 000)".to_string(),
+            ));
+        }
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let name = entry
+            .path()
+            .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения TAR-архива: {e}")))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !is_safe_path(&name) {
+            return Err(DocumentError::Corrupted(format!(
+                "Обнаружен небезопасный путь в TAR-архиве: {name}"
+            )));
+        }
+        let size = entry.size();
+        if size > crate::document::MAX_SINGLE_ENTRY_BYTES {
+            return Err(DocumentError::LimitExceeded(format!(
+                "Файл {name} превышает лимит 50 МБ"
+            )));
+        }
+        total_unpacked = total_unpacked.saturating_add(size);
+        if total_unpacked > crate::document::MAX_TOTAL_UNPACK_BYTES {
+            return Err(DocumentError::LimitExceeded(
+                "Превышен общий лимит распаковки TAR-архива (500 МБ)".to_string(),
+            ));
+        }
+
+        let path_obj = Path::new(&name);
+        if is_comic_info_xml(path_obj) {
+            let limit = 5 * 1024 * 1024;
+            let mut total_xml = 0u64;
+            if let Ok(bytes) =
+                crate::document::read_bounded(&mut entry, limit, &mut total_xml, limit)
+            {
+                comic_info = Some(bytes);
+            }
+        } else if is_supported_image(&name) {
+            let mut total_page = 0u64;
+            let bytes = crate::document::read_bounded(
+                &mut entry,
+                crate::document::MAX_SINGLE_ENTRY_BYTES,
+                &mut total_page,
+                crate::document::MAX_SINGLE_ENTRY_BYTES,
+            )?;
+            cache.store(&name, &bytes)?;
+            pages.push(make_page_info(name.clone(), path_obj));
+        }
+    }
+
     Ok((pages, comic_info, Some(cache)))
 }
 

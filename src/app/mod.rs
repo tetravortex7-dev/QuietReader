@@ -8,10 +8,14 @@ pub mod bookmarks_view;
 pub mod comic_view;
 pub mod commands;
 pub mod dialogs;
+pub mod dictionary;
 pub mod document_loader;
+mod focus_read;
 pub mod fonts;
+mod gestures;
 pub mod icons;
 pub mod input;
+mod library_lock;
 pub mod library_view;
 pub mod license_view;
 pub mod localized_document;
@@ -54,8 +58,11 @@ pub use self::bars::{render_bottom_bar, render_top_bar};
 pub use self::bookmarks_view::BookmarkViewState;
 pub use self::comic_view::ComicViewState;
 pub use self::dialogs::{Dialogs, SettingsTab};
+pub use self::dictionary::{DictionaryState, DictionaryView};
 pub use self::document_loader::DocumentLoader;
+pub use self::focus_read::FocusReadState;
 pub use self::input::poll_keyboard_commands;
+use self::library_lock::LibraryLockView;
 pub use self::library_view::{LibraryActions, LibraryViewState};
 pub use self::license_view::{ProUpgradeDialog, ProUpgradeState};
 pub use self::pdf_view::PdfViewState;
@@ -110,6 +117,7 @@ pub struct QuietReaderApp {
     pub settings_tab: SettingsTab,
 
     pub autoscroll: AutoscrollController,
+    pub focus_read: FocusReadState,
     pub comic_view: ComicViewState,
     pub pdf_view: PdfViewState,
     pub text_images: TextImageState,
@@ -131,6 +139,7 @@ pub struct QuietReaderApp {
     pub show_opds_dialog: bool,
     pub opds_state: crate::opds::OpdsBrowserState,
     pub translate: TranslateState,
+    pub dictionary: DictionaryState,
     pub sidebar_tab: SidebarTab,
     pub bookmark_view_state: BookmarkViewState,
     pub toc_view: TocViewState,
@@ -138,6 +147,12 @@ pub struct QuietReaderApp {
     pub ambient: AmbientController,
     pub pro_upgrade: ProUpgradeState,
     pub last_applied_font_family: String,
+    pub swipe_accum: f32,
+    pub last_swipe_event: Option<Instant>,
+    pub last_swipe_turn: Option<Instant>,
+    pub library_unlocked: bool,
+    pub library_pin_draft: String,
+    pub library_pin_error: Option<String>,
 }
 
 impl eframe::App for QuietReaderApp {
@@ -274,6 +289,7 @@ impl eframe::App for QuietReaderApp {
         }
 
         if !self.show_library {
+            self.handle_trackpad_swipe(&ctx, view_kind, is_manga);
             match view_kind {
                 DocumentViewKind::Text => {
                     if let Some(doc) = &self.document {
@@ -403,6 +419,20 @@ impl eframe::App for QuietReaderApp {
         };
 
         if !self.show_library || status_text.is_some() {
+            let text_pages_override = if self.settings.text_paged_scroll
+                && view_kind == DocumentViewKind::Text
+                && self.viewport_height > 1.0
+                && self.max_scroll_y > 0.0
+            {
+                let total = ((self.max_scroll_y + self.viewport_height) / self.viewport_height)
+                    .ceil()
+                    .max(1.0) as usize;
+                let current = ((self.current_scroll_y / self.viewport_height).round() as usize + 1)
+                    .min(total);
+                Some((current, total))
+            } else {
+                None
+            };
             render_bottom_bar(
                 ui,
                 &self.document,
@@ -413,6 +443,7 @@ impl eframe::App for QuietReaderApp {
                 pdf_info,
                 comic_info,
                 text_info,
+                text_pages_override,
                 self.settings.ui_language,
             );
         }
@@ -473,7 +504,17 @@ impl eframe::App for QuietReaderApp {
                     .inner_margin(16.0),
             )
             .show(ui, |ui| {
-                if self.show_settings_dialog {
+                if self.show_library && !self.library_unlocked {
+                    LibraryLockView::render(
+                        ui,
+                        &self.theme,
+                        self.settings.ui_language,
+                        &mut self.library_unlocked,
+                        &self.settings,
+                        &mut self.library_pin_draft,
+                        &mut self.library_pin_error,
+                    );
+                } else if self.show_settings_dialog {
                     let mut is_autoscrolling_flag = self.autoscroll.is_active();
                     SettingsView::render(
                         ui,
@@ -563,6 +604,8 @@ impl eframe::App for QuietReaderApp {
                     }
 
                     let mut on_translate = None;
+                    let mut on_dictionary = None;
+                    let mut on_wikipedia = None;
 
                     match view_kind {
                         DocumentViewKind::Pdf => {
@@ -592,6 +635,7 @@ impl eframe::App for QuietReaderApp {
                                 self.settings.ui_language,
                                 djvu_query.as_deref(),
                                 &mut on_translate,
+                                &mut on_dictionary,
                                 smart_scan_allowed,
                                 &mut pro_required,
                             );
@@ -660,7 +704,7 @@ impl eframe::App for QuietReaderApp {
                                         .current_hit()
                                         .filter(|h| h.chapter_index == self.current_chapter)
                                         .and_then(|h| h.paragraph_index);
-                                    Some((self.search.query.as_str(), active_para))
+                                    Some((self.search.query.clone(), active_para))
                                 } else {
                                     None
                                 };
@@ -676,31 +720,37 @@ impl eframe::App for QuietReaderApp {
                             let mut on_open_opds = false;
                             let mut on_save_quote = None;
 
-                            TextView::render(
-                                ui,
-                                &ctx,
-                                &self.document,
-                                &self.current_file_path,
-                                &mut self.current_chapter,
-                                &mut self.last_rendered_chapter,
-                                &mut self.pending_scroll_y,
-                                &mut self.current_scroll_y,
-                                &mut self.viewport_height,
-                                &mut self.max_scroll_y,
-                                self.font_size,
-                                &self.theme,
-                                &mut self.settings,
-                                &mut self.text_images,
-                                &mut on_open_file,
-                                &mut on_open_folder,
-                                &mut on_load_recent,
-                                search_highlight,
-                                tts_highlight,
-                                &mut on_start_tts,
-                                &mut on_open_opds,
-                                &mut on_translate,
-                                &mut on_save_quote,
-                            );
+                            if !self.render_focus_reader(ui) {
+                                TextView::render(
+                                    ui,
+                                    &ctx,
+                                    &self.document,
+                                    &self.current_file_path,
+                                    &mut self.current_chapter,
+                                    &mut self.last_rendered_chapter,
+                                    &mut self.pending_scroll_y,
+                                    &mut self.current_scroll_y,
+                                    &mut self.viewport_height,
+                                    &mut self.max_scroll_y,
+                                    self.font_size,
+                                    &self.theme,
+                                    &mut self.settings,
+                                    &mut self.text_images,
+                                    &mut on_open_file,
+                                    &mut on_open_folder,
+                                    &mut on_load_recent,
+                                    search_highlight
+                                        .as_ref()
+                                        .map(|(query, paragraph)| (query.as_str(), *paragraph)),
+                                    tts_highlight,
+                                    &mut on_start_tts,
+                                    &mut on_open_opds,
+                                    &mut on_translate,
+                                    &mut on_dictionary,
+                                    &mut on_wikipedia,
+                                    &mut on_save_quote,
+                                );
+                            }
 
                             if let Some(text) = on_save_quote {
                                 self.save_quote_bookmark(text);
@@ -728,6 +778,14 @@ impl eframe::App for QuietReaderApp {
                         } else {
                             pro_required = Some(ProFeature::Translation);
                         }
+                    }
+                    if let Some(word) = on_dictionary {
+                        self.dictionary
+                            .open_word(word, self.settings.ui_language, false);
+                    }
+                    if let Some(word) = on_wikipedia {
+                        self.dictionary
+                            .open_word(word, self.settings.ui_language, true);
                     }
                 }
             });
@@ -770,7 +828,80 @@ impl eframe::App for QuietReaderApp {
         if register_assoc_action {
             self.register_file_association();
         }
+        self::gestures::paint_brightness(&ctx, self.settings.reading_brightness);
         self.accrue_reading_time(&ctx);
+    }
+}
+
+impl QuietReaderApp {
+    fn handle_trackpad_swipe(
+        &mut self,
+        ctx: &egui::Context,
+        view_kind: DocumentViewKind,
+        is_manga: bool,
+    ) {
+        let active = self.settings.trackpad_swipe_pages
+            && !self.show_library
+            && !self.show_settings_dialog
+            && !self.show_association_dialog
+            && !self.show_recent_dialog
+            && self.document.is_some();
+        let paged = active
+            && match view_kind {
+                DocumentViewKind::Pdf => self.settings.pdf.layout != "Continuous",
+                DocumentViewKind::Comic => self.settings.comic.reading_mode != "Webtoon",
+                DocumentViewKind::Text => false,
+            };
+        if !paged {
+            self.swipe_accum = 0.0;
+            return;
+        }
+
+        let delta = ctx.input(|input| input.smooth_scroll_delta);
+        let now = Instant::now();
+        if let Some(last) = self.last_swipe_event
+            && now.duration_since(last).as_secs_f32() > 0.4
+        {
+            self.swipe_accum = 0.0;
+        }
+        let horizontal = delta.x.abs() > delta.y.abs() * 1.5 && delta.x.abs() > 0.5;
+        if horizontal {
+            self.swipe_accum += delta.x;
+            self.last_swipe_event = Some(now);
+        } else if delta != egui::Vec2::ZERO {
+            self.swipe_accum = 0.0;
+        }
+
+        let Some(forward) = self::gestures::swipe_forward(self.swipe_accum, is_manga) else {
+            return;
+        };
+        if let Some(last) = self.last_swipe_turn
+            && now.duration_since(last).as_secs_f32() < 0.3
+        {
+            return;
+        }
+        self.swipe_accum = 0.0;
+        self.last_swipe_turn = Some(now);
+
+        match view_kind {
+            DocumentViewKind::Pdf => {
+                let total_pages = self.pdf_view.page_count(&self.document);
+                if forward {
+                    self.pdf_view.next_page(total_pages, &self.settings.pdf);
+                } else {
+                    self.pdf_view.prev_page(&self.settings.pdf);
+                }
+            }
+            DocumentViewKind::Comic => {
+                let total_pages = self.comic_view.page_count(&self.document);
+                if forward {
+                    self.comic_view.next_page(total_pages, &self.settings.comic);
+                } else {
+                    self.comic_view.prev_page(&self.settings.comic);
+                }
+            }
+            DocumentViewKind::Text => {}
+        }
     }
 }
 

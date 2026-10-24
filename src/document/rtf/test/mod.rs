@@ -22,11 +22,24 @@ fn test_rtf_document_parsing() {
 fn test_rtf_footnote_is_extracted() {
     use crate::document::Document;
 
-    let rtf_data = b"{\\rtf1\\ansi Text with note{\\footnote Footnote text.} and more.\\par}";
+    let rtf_data = b"{\\rtf1\\ansi Text with note{\\footnote Footnote text.} and end{\\endnote Endnote text.} more.\\par}";
     let doc = crate::document::RtfDocument::from_bytes(rtf_data, "Notes").unwrap();
     let paragraphs = &doc.chapters()[0].paragraphs;
     assert!(paragraphs.iter().any(|p| p.contains("{{note:rtf_fn_0}}")));
+    assert!(paragraphs.iter().any(|p| p.contains("{{note:rtf_en_0}}")));
     assert_eq!(doc.footnote("rtf_fn_0"), Some("Footnote text."));
+    assert_eq!(doc.footnote("rtf_en_0"), Some("Endnote text."));
+    let notes_chapter = doc.chapters().len() - 1;
+    assert_eq!(
+        doc.note_location("rtf_fn_0")
+            .map(|location| location.chapter_index),
+        Some(notes_chapter)
+    );
+    assert_eq!(
+        doc.note_location("rtf_en_0")
+            .map(|location| location.chapter_index),
+        Some(notes_chapter)
+    );
 }
 
 #[test]

@@ -18,6 +18,41 @@ mod shelf;
 
 const MAX_COVER_WORKERS: usize = 3;
 const MAX_COVER_TEXTURES: usize = 256;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShelfMove {
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+}
+
+pub(crate) fn shelf_move_target(
+    current: Option<usize>,
+    len: usize,
+    columns: usize,
+    movement: ShelfMove,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let last = len - 1;
+    let index = current.unwrap_or(0).min(last);
+    if current.is_none() && !matches!(movement, ShelfMove::Home | ShelfMove::End) {
+        return Some(0);
+    }
+    let columns = columns.max(1);
+    Some(match movement {
+        ShelfMove::Home => 0,
+        ShelfMove::End => last,
+        ShelfMove::Up => index.saturating_sub(columns),
+        ShelfMove::Down => (index + columns).min(last),
+        ShelfMove::Left => index.saturating_sub(1),
+        ShelfMove::Right => (index + 1).min(last),
+    })
+}
 const MAX_COVER_BYTES: usize = 128 * 1024 * 1024;
 
 pub(crate) fn cover_cache_needs_eviction(count: usize, total: usize, incoming: usize) -> bool {
@@ -168,6 +203,8 @@ pub struct LibraryActions {
     pub pick_library_folder: bool,
     pub open_path: Option<PathBuf>,
     pub save_library: bool,
+    pub export_all: bool,
+    pub restore_snapshot: bool,
 }
 
 pub struct LibraryViewState {
@@ -181,6 +218,8 @@ pub struct LibraryViewState {
     scan_generation: u64,
     last_scanned_folder: Option<PathBuf>,
     cover_loader: CoverLoader,
+    keyboard_selection: Option<PathBuf>,
+    scroll_to_selection: bool,
 }
 
 impl Default for LibraryViewState {
@@ -196,6 +235,8 @@ impl Default for LibraryViewState {
             scan_generation: 0,
             last_scanned_folder: None,
             cover_loader: CoverLoader::default(),
+            keyboard_selection: None,
+            scroll_to_selection: false,
         }
     }
 }
@@ -365,6 +406,22 @@ impl LibraryViewState {
                     library.design = design;
                     actions.save_library = true;
                 }
+            }
+
+            ui.separator();
+            if ui
+                .add(IconButton::new(Icon::Download, t.library_export_all).font_size(13.0))
+                .on_hover_text(t.library_export_all_hint)
+                .clicked()
+            {
+                actions.export_all = true;
+            }
+            if ui
+                .add(IconButton::new(Icon::Refresh, t.library_restore_snapshot).font_size(13.0))
+                .on_hover_text(t.library_restore_snapshot_hint)
+                .clicked()
+            {
+                actions.restore_snapshot = true;
             }
 
             if library.mode == LibraryMode::Shelf && library.design == UiDesignMode::Cozy {

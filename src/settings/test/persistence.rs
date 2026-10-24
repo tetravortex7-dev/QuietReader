@@ -1,4 +1,4 @@
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, SavedWord};
 use crate::test::util::unique_test_dir;
 use crate::*;
 use std::path::PathBuf;
@@ -422,6 +422,64 @@ fn test_pro_flags_persist_but_do_not_apply_without_entitlement() {
 }
 
 #[test]
+fn test_library_pin_and_saved_words() {
+    let mut settings = AppSettings::default();
+    assert!(!settings.has_library_pin());
+    assert!(settings.verify_library_pin("anything"));
+
+    settings.set_library_pin("1234");
+    assert!(settings.has_library_pin());
+    assert!(settings.verify_library_pin("1234"));
+    assert!(!settings.verify_library_pin("1235"));
+    assert!(settings.library_pin_hash.as_deref().unwrap().contains(':'));
+
+    settings.set_library_pin("987654");
+    assert!(settings.verify_library_pin("987654"));
+    assert!(!settings.verify_library_pin("1234"));
+
+    settings.clear_library_pin();
+    assert!(!settings.has_library_pin());
+    assert!(settings.verify_library_pin("1234"));
+
+    let dir = unique_test_dir("saved_words");
+    let path = dir.join("settings.json");
+    let mut settings = AppSettings::default();
+    let added = settings.save_word(SavedWord {
+        word: " Apple ".to_string(),
+        definition: "fruit".to_string(),
+        pack: "eng-rus".to_string(),
+        language: "en".to_string(),
+        book: String::new(),
+        created_at: 1,
+    });
+    assert!(added);
+    assert_eq!(settings.saved_words[0].word, "Apple");
+    assert!(!settings.save_word(SavedWord {
+        word: "apple".to_string(),
+        definition: "another".to_string(),
+        pack: "eng-rus".to_string(),
+        language: "en".to_string(),
+        book: String::new(),
+        created_at: 2,
+    }));
+    assert!(!settings.save_word(SavedWord {
+        word: "   ".to_string(),
+        definition: "empty".to_string(),
+        pack: String::new(),
+        language: String::new(),
+        book: String::new(),
+        created_at: 3,
+    }));
+    assert_eq!(settings.saved_words.len(), 1);
+    settings.save_to_path(&path).unwrap();
+    let reloaded = AppSettings::load_from_path(&path);
+    assert_eq!(reloaded.saved_words.len(), 1);
+    assert_eq!(reloaded.saved_words[0].word, "Apple");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_typography_settings_defaults_migration_and_roundtrip() {
     let dir = unique_test_dir("typography_settings");
     let path = dir.join("settings.json");
@@ -431,6 +489,8 @@ fn test_typography_settings_defaults_migration_and_roundtrip() {
     let migrated = AppSettings::load_from_path(&path);
     assert_eq!(migrated.line_height_scale, 1.45);
     assert_eq!(migrated.max_column_width, 760.0);
+    assert_eq!(migrated.reading_brightness, 1.0);
+    assert!(migrated.trackpad_swipe_pages);
     assert_eq!(
         migrated.schema_version,
         settings::CURRENT_SETTINGS_SCHEMA_VERSION
@@ -439,10 +499,14 @@ fn test_typography_settings_defaults_migration_and_roundtrip() {
     let mut settings = AppSettings::default();
     settings.line_height_scale = 1.8;
     settings.max_column_width = 980.0;
+    settings.reading_brightness = 0.7;
+    settings.trackpad_swipe_pages = false;
     settings.save_to_path(&path).unwrap();
     let reloaded = AppSettings::load_from_path(&path);
     assert_eq!(reloaded.line_height_scale, 1.8);
     assert_eq!(reloaded.max_column_width, 980.0);
+    assert_eq!(reloaded.reading_brightness, 0.7);
+    assert!(!reloaded.trackpad_swipe_pages);
 
     let mut clamped = AppSettings::default();
     clamped.line_height_scale = 5.0;

@@ -93,6 +93,7 @@ Maintainability, modularity, cross-platform compatibility, and correctness take 
 
 - Disk limit: If workspace size exceeds 3 GB, clean build artifacts (e.g., `target/`) and temporary files, preserving only source files, config, and root `QuietReader.exe`.
 - File line limit: Enforce a 1000-line limit per file (not 700). Decompose files exceeding 1000 lines into separate modules, removing duplicate code and redundant comments.
+- Localization exception: the 1000-line limit does not apply to localization files (`src/i18n/*.rs`). A single language file may freely exceed 1000 lines.
 
 11. Immutability of AGENTS.md
 
@@ -128,6 +129,7 @@ Every new feature or capability introduced into the project must be documented i
 - Any text shown to the user — labels, buttons, tooltips, errors, statuses, dialogs, and notifications — must be localized in every language supported by the project.
 - Hardcoding user-visible text in a single language is forbidden. Add a key to `Translations` in `src/i18n/mod.rs` and provide translations in all locale files (`ru`, `en`, `fr`, `es`, `zh`, `ja`, `pt`, `it`, `tr`, `uk`, `ar`, `id`).
 - A feature that adds or changes user-visible text must include all translations in the same change.
+- Localization files (`src/i18n/*.rs`) are exempt from the 1000-line limit; a single language file may freely exceed 1000 lines.
 
 18. Dependency Version Policy
 
@@ -135,3 +137,26 @@ Every new feature or capability introduced into the project must be documented i
 - Using an older version is an exception that must be justified by a concrete blocker: an incompatible MSRV or toolchain, a confirmed regression or security issue, an unavailable platform target, or a transitive constraint that cannot be resolved.
 - Whenever an older version is used, provide a complete and strict report before or with the change: the selected version, the latest available version, the exact reason the latest version cannot be used, affected platforms and features, security and maintenance impact, alternatives considered, and the condition under which the dependency must be upgraded.
 - Do not silently pin, downgrade, or retain an outdated dependency.
+
+19. UI Screenshot Verification
+
+- Always capture the whole application window, never a fixed screen area. Maximize the window, bring it to the top (`ShowWindow` with `SW_MAXIMIZE`, `SetWindowPos` with topmost flags, `BringWindowToTop`, `SetForegroundWindow`) and wait 1–2 seconds before capturing.
+- Get the real window bounds with `GetWindowRect` and size the bitmap with a margin: width `max(2000, right + 40)`, height `max(1200, bottom + 40)`. Never capture a fixed `1536x864`: DPI virtualization reports smaller screen metrics than the actual window, so the right edge (top-bar buttons, page counter, scrollbar) and the bottom edge get cut off.
+- Capture from the top-left corner with `Graphics.CopyFromScreen(0, 0, 0, 0, bitmap.Size)`; use `PrintWindow` only as a fallback.
+- After capturing, verify that the right and bottom window edges are present in the image (e.g. the fullscreen button, page counter, bottom status bar). If any edge is missing, enlarge the capture and repeat.
+- Save screenshots to `%TEMP%\opencode\*.png` and inspect them with the image reader.
+- Do not conclude that a UI element is missing, mispositioned, or unrendered until a full-window screenshot confirms it; clipped captures have repeatedly produced false conclusions.
+- For synthetic input: keep the window foreground, move the cursor with `SetCursorPos`, send events with `mouse_event`, and pass the wheel delta as a signed `int` (for example `-120`), not `uint32`. Wait 100–200 ms between events and 1–2 seconds before capturing.
+
+20. Testing Cadence
+
+- Do not run the full test suite after every small edit. During implementation use targeted checks only: `cargo check`, a single test by name (`cargo test --features enable_tests <module>::test::<name>`), or `cargo fmt --all`.
+- Run the full `cargo test --features enable_tests --all-targets` and `cargo fmt --all -- --check` only before finishing a task: before a release build, before replacing `QuietReader.exe`, before a commit, or when reporting completed work.
+- If a change touches shared layout, persistence, networking, or archive parsing, run the full suite once for that change even if it is not the final step.
+
+21. File Association Prompt During Development
+
+- Always disable the file-association prompt while developing, debugging, taking screenshots, or testing the UI: set `"dismiss_association_prompt": true` in `%APPDATA%\QuietReader\settings.json` before launching the app. The modal dialog blocks the interface and breaks synthetic input and screenshots.
+- Stop the running app before editing the settings file, write it as UTF-8 without BOM, and verify the value before launching; a running instance can overwrite the file with its in-memory settings.
+- Enable the prompt (`"dismiss_association_prompt": false`) only for a production release: restore it before the final release build and before replacing the root `QuietReader.exe`, so first-run users see the association dialog.
+

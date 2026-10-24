@@ -86,10 +86,7 @@ fn fetch_google_translation(
         url_encode(text)
     );
 
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(10)))
-        .build()
-        .new_agent();
+    let agent = crate::net::agent(Duration::from_secs(10));
 
     let mut resp = agent
         .post("https://translate.googleapis.com/translate_a/single")
@@ -167,10 +164,7 @@ fn fetch_deepl_translation(
 
     let target = map_deepl_target_lang(target_lang);
 
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(12)))
-        .build()
-        .new_agent();
+    let agent = crate::net::agent(Duration::from_secs(12));
 
     let payload = serde_json::json!({
         "text": [text],

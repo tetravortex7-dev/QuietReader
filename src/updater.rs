@@ -99,10 +99,7 @@ struct GitHubAsset {
 }
 
 pub fn check_for_updates_sync() -> Result<UpdateInfo, String> {
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(8)))
-        .build()
-        .new_agent();
+    let agent = crate::net::agent(std::time::Duration::from_secs(8));
 
     let release_res = agent
         .get(GITHUB_API_LATEST_RELEASE)

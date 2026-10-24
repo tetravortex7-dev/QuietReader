@@ -575,6 +575,132 @@ impl SettingsView {
         }
 
         ui.add_space(8.0);
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(t.brightness_title)
+                    .size(15.0)
+                    .strong()
+                    .color(text_color),
+            );
+            let mut percent = (settings.reading_brightness.clamp(0.35, 1.0) * 100.0).round() as u32;
+            let resp = ui
+                .add(egui::Slider::new(&mut percent, 35..=100).suffix("%"))
+                .on_hover_text(t.brightness_desc);
+            if resp.changed() {
+                settings.reading_brightness = percent as f32 / 100.0;
+            }
+            if resp.drag_stopped() || resp.lost_focus() {
+                *on_save_settings = true;
+            }
+        });
+        ui.label(
+            RichText::new(t.brightness_desc)
+                .size(12.0)
+                .color(text_color.gamma_multiply(0.75)),
+        );
+
+        ui.add_space(8.0);
+        if ui
+            .checkbox(
+                &mut settings.trackpad_swipe_pages,
+                RichText::new(t.trackpad_swipes_title)
+                    .strong()
+                    .size(15.0)
+                    .color(text_color),
+            )
+            .changed()
+        {
+            *on_save_settings = true;
+        }
+        ui.label(
+            RichText::new(t.trackpad_swipes_desc)
+                .size(12.0)
+                .color(text_color.gamma_multiply(0.75)),
+        );
+
+        ui.add_space(8.0);
+        if ui
+            .checkbox(
+                &mut settings.text_paged_scroll,
+                RichText::new(t.paged_scroll_title)
+                    .strong()
+                    .size(15.0)
+                    .color(text_color),
+            )
+            .changed()
+        {
+            *on_save_settings = true;
+        }
+        ui.label(
+            RichText::new(t.paged_scroll_desc)
+                .size(12.0)
+                .color(text_color.gamma_multiply(0.75)),
+        );
+
+        ui.add_space(8.0);
+        if ui
+            .checkbox(
+                &mut settings.text_two_columns,
+                RichText::new(t.two_columns_title)
+                    .strong()
+                    .size(15.0)
+                    .color(text_color),
+            )
+            .changed()
+        {
+            *on_save_settings = true;
+        }
+        ui.label(
+            RichText::new(t.two_columns_desc)
+                .size(12.0)
+                .color(text_color.gamma_multiply(0.75)),
+        );
+
+        ui.add_space(8.0);
+        if ui
+            .checkbox(
+                &mut settings.text_paragraph_mode,
+                RichText::new(t.paragraph_mode)
+                    .strong()
+                    .size(15.0)
+                    .color(text_color),
+            )
+            .changed()
+        {
+            *on_save_settings = true;
+        }
+        ui.label(
+            RichText::new(t.paragraph_mode_desc)
+                .size(12.0)
+                .color(text_color.gamma_multiply(0.75)),
+        );
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(t.rsvp_speed)
+                    .strong()
+                    .size(15.0)
+                    .color(text_color),
+            );
+            let mut wpm = settings.rsvp_wpm.clamp(100, 1000);
+            let response = ui.add(egui::Slider::new(&mut wpm, 100..=1000).step_by(25.0));
+            if response.changed() {
+                settings.rsvp_wpm = wpm;
+                *on_save_settings = true;
+            }
+            if response.drag_stopped() || response.lost_focus() {
+                *on_save_settings = true;
+            }
+        });
+        ui.label(
+            RichText::new(t.rsvp_desc)
+                .size(12.0)
+                .color(text_color.gamma_multiply(0.75)),
+        );
+
         ui.separator();
         ui.add_space(8.0);
 

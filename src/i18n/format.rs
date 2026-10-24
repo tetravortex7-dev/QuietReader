@@ -313,6 +313,7 @@ pub fn format_extension_description(ext: &str, lang: UiLanguage) -> &'static str
         "cbz" => t.format_desc_cbz,
         "cbr" => t.format_desc_cbr,
         "cb7" => t.format_desc_cb7,
+        "cbt" | "tar" => t.format_desc_cbt,
         "md" | "markdown" => t.format_desc_md,
         _ => "",
     }

@@ -1,9 +1,10 @@
 pub use crate::settings_config::{
     AmbientSettings, AutoScrollSettings, BookProgress, ComicSettings, OpdsCatalog, PdfSettings,
-    RecentBook, TranslationProvider, TranslationSettings, TtsSettings, WindowState,
+    RecentBook, SavedWord, TranslationProvider, TranslationSettings, TtsSettings, WindowState,
     default_opds_catalogs,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -54,6 +55,30 @@ fn default_max_column_width() -> f32 {
     760.0
 }
 
+fn default_reading_brightness() -> f32 {
+    1.0
+}
+
+fn default_trackpad_swipe_pages() -> bool {
+    true
+}
+
+fn default_text_paged_scroll() -> bool {
+    false
+}
+
+fn default_text_two_columns() -> bool {
+    false
+}
+
+fn default_rsvp_wpm() -> u32 {
+    300
+}
+
+fn default_library_pin_hash() -> Option<String> {
+    None
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppSettings {
@@ -73,6 +98,22 @@ pub struct AppSettings {
     pub line_height_scale: f32,
     #[serde(default = "default_max_column_width")]
     pub max_column_width: f32,
+    #[serde(default = "default_reading_brightness")]
+    pub reading_brightness: f32,
+    #[serde(default = "default_trackpad_swipe_pages")]
+    pub trackpad_swipe_pages: bool,
+    #[serde(default = "default_text_paged_scroll")]
+    pub text_paged_scroll: bool,
+    #[serde(default = "default_text_two_columns")]
+    pub text_two_columns: bool,
+    #[serde(default)]
+    pub text_paragraph_mode: bool,
+    #[serde(default = "default_rsvp_wpm")]
+    pub rsvp_wpm: u32,
+    #[serde(default = "default_library_pin_hash")]
+    pub library_pin_hash: Option<String>,
+    #[serde(default)]
+    pub saved_words: Vec<SavedWord>,
     pub theme: String,
     pub keep_screen_on: bool,
     pub show_toc: bool,
@@ -142,6 +183,14 @@ impl Default for AppSettings {
             font_family: default_font_family(),
             line_height_scale: default_line_height_scale(),
             max_column_width: default_max_column_width(),
+            reading_brightness: default_reading_brightness(),
+            trackpad_swipe_pages: default_trackpad_swipe_pages(),
+            text_paged_scroll: default_text_paged_scroll(),
+            text_two_columns: default_text_two_columns(),
+            text_paragraph_mode: false,
+            rsvp_wpm: default_rsvp_wpm(),
+            library_pin_hash: default_library_pin_hash(),
+            saved_words: Vec::new(),
             theme: "Sepia".to_string(),
             keep_screen_on: true,
             show_toc: true,
@@ -288,6 +337,7 @@ impl AppSettings {
         self.font_size = self.font_size.clamp(10.0, 48.0);
         self.line_height_scale = self.line_height_scale.clamp(1.1, 2.0);
         self.max_column_width = self.max_column_width.clamp(520.0, 1200.0);
+        self.rsvp_wpm = self.rsvp_wpm.clamp(100, 1000);
         self.schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
     }
 
@@ -432,6 +482,53 @@ impl AppSettings {
 
     pub fn effective_bionic_reading(&self) -> bool {
         self.bionic_reading && self.can_use(crate::core::license::ProFeature::FocusTools)
+    }
+
+    pub fn has_library_pin(&self) -> bool {
+        self.library_pin_hash
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+    }
+
+    pub fn set_library_pin(&mut self, pin: &str) {
+        if pin.is_empty() {
+            self.library_pin_hash = None;
+            return;
+        }
+        let salt = format!("{:016x}{:016x}", salt_seed(), salt_seed());
+        self.library_pin_hash = Some(format!("{salt}:{}", hash_pin(&salt, pin)));
+    }
+
+    pub fn clear_library_pin(&mut self) {
+        self.library_pin_hash = None;
+    }
+
+    pub fn verify_library_pin(&self, pin: &str) -> bool {
+        let Some(stored) = self.library_pin_hash.as_deref() else {
+            return true;
+        };
+        let Some((salt, expected)) = stored.split_once(':') else {
+            return false;
+        };
+        hash_pin(salt, pin).eq_ignore_ascii_case(expected)
+    }
+
+    pub fn save_word(&mut self, word: SavedWord) -> bool {
+        let normalized = word.word.trim().to_lowercase();
+        if normalized.is_empty() {
+            return false;
+        }
+        if self.saved_words.iter().any(|existing| {
+            existing.word.trim().to_lowercase() == normalized
+                && existing.pack.eq_ignore_ascii_case(&word.pack)
+        }) {
+            return false;
+        }
+        self.saved_words.push(SavedWord {
+            word: word.word.trim().to_string(),
+            ..word
+        });
+        true
     }
 
     pub fn effective_reading_ruler(&self) -> bool {
@@ -603,3 +700,27 @@ mod secrets;
 
 #[cfg(all(test, feature = "enable_tests"))]
 mod test;
+
+fn salt_seed() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    hasher.write_u128(nanos);
+    hasher.finish()
+}
+
+fn hash_pin(salt: &str, pin: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(salt.as_bytes());
+    hasher.update(b":");
+    hasher.update(pin.as_bytes());
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
+}

@@ -20,6 +20,7 @@ fn test_platform_multi_extension_selection() {
     assert!(exts.contains(&"cbz"));
     assert!(exts.contains(&"cbr"));
     assert!(exts.contains(&"cb7"));
+    assert!(exts.contains(&"cbt"));
     assert!(exts.contains(&"md"));
 
     let mut settings = AppSettings::default();

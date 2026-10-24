@@ -173,3 +173,37 @@ fn forwards_footnotes_to_the_wrapped_document() {
     assert_eq!(doc.footnote("note_1"), Some("Footnote body"));
     assert_eq!(doc.footnote("missing_note"), None);
 }
+
+#[test]
+fn localizes_notes_chapter_and_toc_title() {
+    let inner: Arc<dyn Document> = Arc::new(MockDocument {
+        metadata: BookMetadata {
+            title: "Book".to_string(),
+            author: "Author".to_string(),
+        },
+        chapters: vec![
+            BookChapter {
+                id: None,
+                title: "Chapter".to_string(),
+                paragraphs: Vec::new(),
+            },
+            BookChapter {
+                id: Some(crate::document::NOTES_CHAPTER_ID.to_string()),
+                title: crate::document::NOTES_CHAPTER_TITLE.to_string(),
+                paragraphs: vec!["[1] Note body".to_string()],
+            },
+        ],
+        toc: vec![TocItem {
+            id: None,
+            title: crate::document::NOTES_CHAPTER_TITLE.to_string(),
+            chapter_index: 1,
+            children: Vec::new(),
+        }],
+        view_kind: DocumentViewKind::Text,
+        custom_toc: true,
+    });
+    let doc = LocalizedDocument::wrap(inner, UiLanguage::En);
+    assert_eq!(doc.chapters()[1].title, "Notes");
+    assert_eq!(doc.toc()[0].title, "Notes");
+    assert_eq!(doc.chapters()[1].paragraphs[0], "[1] Note body");
+}

@@ -66,6 +66,8 @@ pub fn load_cover_thumbnail(book_path: &Path) -> Option<DecodedImage> {
         || name.ends_with(".rar")
         || name.ends_with(".cb7")
         || name.ends_with(".7z")
+        || name.ends_with(".cbt")
+        || name.ends_with(".tar")
     {
         return comic_archive_cover(book_path);
     }

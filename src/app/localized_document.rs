@@ -21,12 +21,26 @@ impl LocalizedDocument {
             title: localize_text(&inner.metadata().title, lang),
             author: localize_text(&inner.metadata().author, lang),
         };
+        let notes_title = lang.t().notes_section;
+        let notes_chapters: std::collections::HashSet<usize> = inner
+            .chapters()
+            .iter()
+            .enumerate()
+            .filter(|(_, chapter)| chapter.id.as_deref() == Some(crate::document::NOTES_CHAPTER_ID))
+            .map(|(index, _)| index)
+            .collect();
         let chapters = inner
             .chapters()
             .iter()
             .map(|chapter| BookChapter {
                 id: chapter.id.clone(),
-                title: localize_text(&chapter.title, lang),
+                title: if chapter.id.as_deref() == Some(crate::document::NOTES_CHAPTER_ID)
+                    && chapter.title.trim().is_empty()
+                {
+                    notes_title.to_string()
+                } else {
+                    localize_text(&chapter.title, lang)
+                },
                 paragraphs: chapter
                     .paragraphs
                     .iter()
@@ -37,7 +51,7 @@ impl LocalizedDocument {
         let toc = inner
             .toc()
             .iter()
-            .map(|item| localize_toc(item, lang))
+            .map(|item| localize_toc(item, lang, notes_title, &notes_chapters))
             .collect();
         Arc::new(Self {
             inner,
@@ -102,15 +116,24 @@ impl Document for LocalizedDocument {
     }
 }
 
-fn localize_toc(item: &TocItem, lang: UiLanguage) -> TocItem {
+fn localize_toc(
+    item: &TocItem,
+    lang: UiLanguage,
+    notes_title: &str,
+    notes_chapters: &std::collections::HashSet<usize>,
+) -> TocItem {
     TocItem {
         id: item.id.clone(),
-        title: localize_text(&item.title, lang),
+        title: if notes_chapters.contains(&item.chapter_index) && item.title.trim().is_empty() {
+            notes_title.to_string()
+        } else {
+            localize_text(&item.title, lang)
+        },
         chapter_index: item.chapter_index,
         children: item
             .children
             .iter()
-            .map(|child| localize_toc(child, lang))
+            .map(|child| localize_toc(child, lang, notes_title, notes_chapters))
             .collect(),
     }
 }
@@ -136,6 +159,7 @@ fn localize_text(value: &str, lang: UiLanguage) -> String {
         "Документ MOBI" => return t.extra.default_mobi_document.to_string(),
         "Документ RTF" => return t.extra.default_rtf_document.to_string(),
         "Текстовый документ" => return t.extra.default_text_document.to_string(),
+        "Примечания" => return t.notes_section.to_string(),
         "Документ не содержит текста." => {
             return t.extra.default_no_text.to_string();
         }

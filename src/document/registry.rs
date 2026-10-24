@@ -2,7 +2,7 @@ use crate::document::comic::zip_contains_supported_image;
 use crate::document::fb2::zip_contains_fb2;
 use crate::document::{
     ComicDocument, DjvuDocument, DocDocument, Document, DocumentError, DocxDocument, EpubDocument,
-    Fb2Document, MobiDocument, PdfDocument, RtfDocument, TxtDocument,
+    Fb2Document, HtmlDocument, MobiDocument, PdfDocument, RtfDocument, TxtDocument,
 };
 use std::path::Path;
 
@@ -91,7 +91,7 @@ impl DocumentFormat for ComicFormat {
         "Comic / Manga"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["cbz", "cbr", "cb7", "rar", "7z"]
+        &["cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "tar"]
     }
     fn probe(&self, path: &Path) -> bool {
         if path.is_dir() {
@@ -102,7 +102,10 @@ impl DocumentFormat for ComicFormat {
             .and_then(|e| e.to_str())
             .map(|e| e.to_lowercase())
             .unwrap_or_default();
-        if matches!(ext.as_str(), "cbz" | "cbr" | "cb7" | "rar" | "7z") {
+        if matches!(
+            ext.as_str(),
+            "cbz" | "cbr" | "cb7" | "cbt" | "rar" | "7z" | "tar"
+        ) {
             return true;
         }
         if ext == "zip" {
@@ -110,7 +113,7 @@ impl DocumentFormat for ComicFormat {
         }
         use std::io::Read;
         if let Ok(mut f) = std::fs::File::open(path) {
-            let mut magic = [0u8; 8];
+            let mut magic = [0u8; 262];
             if let Ok(n) = f.read(&mut magic) {
                 if n >= 4 && &magic[0..4] == b"PK\x03\x04" {
                     return zip_contains_supported_image(path);
@@ -118,6 +121,7 @@ impl DocumentFormat for ComicFormat {
                 if (n >= 7 && &magic[0..7] == b"Rar!\x1a\x07\x00")
                     || (n >= 8 && &magic[0..8] == b"Rar!\x1a\x07\x01\x00")
                     || (n >= 6 && &magic[0..6] == b"7z\xbc\xaf\x27\x1c")
+                    || (n >= 262 && &magic[257..262] == b"ustar")
                 {
                     return true;
                 }
@@ -301,6 +305,44 @@ impl DocumentFormat for TxtFormat {
     }
 }
 
+pub struct HtmlFormat;
+impl DocumentFormat for HtmlFormat {
+    fn name(&self) -> &'static str {
+        "HTML"
+    }
+    fn extensions(&self) -> &'static [&'static str] {
+        &["html", "htm", "xhtml"]
+    }
+    fn probe(&self, path: &Path) -> bool {
+        if !path.is_file() {
+            return false;
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+        if self.extensions().contains(&ext.as_str()) {
+            return true;
+        }
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open(path) {
+            let mut buf = [0u8; 2048];
+            if let Ok(n) = f.read(&mut buf) {
+                let head = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                return head.contains("<html")
+                    || head.contains("<!doctype html")
+                    || head.contains("<body");
+            }
+        }
+        false
+    }
+    fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = HtmlDocument::from_file(path)?;
+        Ok(Box::new(doc))
+    }
+}
+
 pub struct MobiFormat;
 impl DocumentFormat for MobiFormat {
     fn name(&self) -> &'static str {
@@ -349,6 +391,7 @@ pub static FORMAT_REGISTRY: &[&dyn DocumentFormat] = &[
     &ComicFormat,
     &EpubFormat,
     &Fb2Format,
+    &HtmlFormat,
     &MobiFormat,
     &DocxFormat,
     &RtfFormat,
@@ -398,6 +441,10 @@ pub fn open_with_registry_and_encoding(
         )
     {
         let doc = TxtDocument::from_file_with_encoding(path, encoding)?;
+        return Ok(Box::new(doc));
+    }
+    if encoding.is_some() && matches!(extension_lower(path).as_str(), "html" | "htm" | "xhtml") {
+        let doc = HtmlDocument::from_file_with_encoding(path, encoding)?;
         return Ok(Box::new(doc));
     }
     open_with_registry(path)

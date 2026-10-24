@@ -2,9 +2,12 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 mod app;
+mod cli;
 mod core;
+mod dictionary;
 mod document;
 pub mod i18n;
+mod net;
 pub mod opds;
 mod platform;
 mod settings;
@@ -12,15 +15,29 @@ mod settings_config;
 pub mod updater;
 
 use app::QuietReaderApp;
+use cli::CliAction;
 use settings::AppSettings;
 
 fn main() -> eframe::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let initial_file = std::env::args_os().nth(1).map(std::path::PathBuf::from);
-    let Some(_instance_guard) = platform::acquire_single_instance(&initial_file) else {
+    let files = match cli::parse_args(std::env::args_os().skip(1)) {
+        CliAction::Run(files) => files,
+        CliAction::Help => {
+            cli::print_help();
+            return Ok(());
+        }
+        CliAction::Version => {
+            cli::print_version();
+            return Ok(());
+        }
+        CliAction::Error(message) => {
+            cli::print_error(&message);
+            std::process::exit(2);
+        }
+    };
+    let Some(_instance_guard) = platform::acquire_single_instance(&files) else {
         return Ok(());
     };
-
     let settings = AppSettings::load();
 
     let mut viewport = eframe::egui::ViewportBuilder::default()
@@ -55,7 +72,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "QuietReader",
         native_options,
-        Box::new(move |cc| Ok(Box::new(QuietReaderApp::new(cc, initial_file, settings)))),
+        Box::new(move |cc| Ok(Box::new(QuietReaderApp::new(cc, files, settings)))),
     )
 }
 

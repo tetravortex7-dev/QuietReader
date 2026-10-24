@@ -122,6 +122,16 @@ impl LibraryViewState {
             .min(ui.ctx().content_rect().width() - 48.0)
             .max(240.0);
 
+        let mut keyboard_open = None;
+        self.handle_shelf_keyboard(ui, &entries, view, shelf_width, &mut keyboard_open);
+        if let Some(path) = keyboard_open {
+            actions.open_path = Some(path);
+        }
+
+        let selected = self.keyboard_selection.clone();
+        let mut scroll_to_selection = self.scroll_to_selection;
+        self.scroll_to_selection = false;
+
         ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -136,6 +146,8 @@ impl LibraryViewState {
                         &mut open_path,
                         &mut remove_path,
                         &mut status_change,
+                        selected.as_deref(),
+                        &mut scroll_to_selection,
                     );
                 } else {
                     self.render_shelf_grid(
@@ -148,6 +160,8 @@ impl LibraryViewState {
                         &mut open_path,
                         &mut remove_path,
                         &mut status_change,
+                        selected.as_deref(),
+                        &mut scroll_to_selection,
                     );
                 }
             });
@@ -167,6 +181,84 @@ impl LibraryViewState {
         }
     }
 
+    fn handle_shelf_keyboard(
+        &mut self,
+        ui: &egui::Ui,
+        entries: &[LibraryEntry],
+        view: ShelfViewMode,
+        shelf_width: f32,
+        open_path: &mut Option<PathBuf>,
+    ) {
+        if ui.ctx().text_edit_focused() {
+            return;
+        }
+        let (left, right, up, down, home, end, enter, escape) = ui.input(|input| {
+            (
+                input.key_pressed(egui::Key::ArrowLeft),
+                input.key_pressed(egui::Key::ArrowRight),
+                input.key_pressed(egui::Key::ArrowUp),
+                input.key_pressed(egui::Key::ArrowDown),
+                input.key_pressed(egui::Key::Home),
+                input.key_pressed(egui::Key::End),
+                input.key_pressed(egui::Key::Enter),
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        if escape {
+            if !self.search_query.is_empty() {
+                self.search_query.clear();
+            } else {
+                self.keyboard_selection = None;
+            }
+            return;
+        }
+        if self
+            .keyboard_selection
+            .as_ref()
+            .is_some_and(|path| !entries.iter().any(|entry| entry.path == *path))
+        {
+            self.keyboard_selection = None;
+        }
+        let current = self
+            .keyboard_selection
+            .as_ref()
+            .and_then(|path| entries.iter().position(|entry| entry.path == *path));
+        if enter {
+            if !ui.ctx().memory(|memory| memory.focused().is_some())
+                && let Some(index) = current
+            {
+                *open_path = Some(entries[index].path.clone());
+            }
+            return;
+        }
+        if !(left || right || up || down || home || end) {
+            return;
+        }
+        let movement = if home {
+            ShelfMove::Home
+        } else if end {
+            ShelfMove::End
+        } else if up {
+            ShelfMove::Up
+        } else if down {
+            ShelfMove::Down
+        } else if left {
+            ShelfMove::Left
+        } else {
+            ShelfMove::Right
+        };
+        let columns = if view == ShelfViewMode::Mini {
+            1
+        } else {
+            let step = CardMetrics::for_view(view).width + 30.0;
+            ((shelf_width + 6.0) / step).floor().max(1.0) as usize
+        };
+        if let Some(target) = shelf_move_target(current, entries.len(), columns, movement) {
+            self.keyboard_selection = Some(entries[target].path.clone());
+            self.scroll_to_selection = true;
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_shelf_grid(
         &mut self,
@@ -179,12 +271,14 @@ impl LibraryViewState {
         open_path: &mut Option<PathBuf>,
         remove_path: &mut Option<PathBuf>,
         status_change: &mut Option<(PathBuf, LibraryReadingStatus)>,
+        selected: Option<&Path>,
+        scroll_to_selection: &mut bool,
     ) {
         let metrics = CardMetrics::for_view(view);
         ui.horizontal_wrapped(|ui| {
             for entry in entries {
                 self.cover_loader.queue(&entry.path);
-                ui.allocate_ui_with_layout(
+                let inner = ui.allocate_ui_with_layout(
                     Vec2::new(metrics.width + 24.0, metrics.min_height + 24.0),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
@@ -210,6 +304,24 @@ impl LibraryViewState {
                             });
                     },
                 );
+                if selected == Some(entry.path.as_path()) {
+                    let accent = theme.accent_color();
+                    ui.painter().rect_filled(
+                        inner.response.rect.expand(1.0),
+                        radius + 1.0,
+                        accent.gamma_multiply(0.08),
+                    );
+                    ui.painter().rect_stroke(
+                        inner.response.rect.expand(1.0),
+                        radius + 1.0,
+                        Stroke::new(2.5, accent),
+                        StrokeKind::Inside,
+                    );
+                    if *scroll_to_selection {
+                        ui.scroll_to_rect(inner.response.rect, Some(egui::Align::Center));
+                        *scroll_to_selection = false;
+                    }
+                }
                 ui.add_space(6.0);
             }
         });
@@ -226,11 +338,13 @@ impl LibraryViewState {
         open_path: &mut Option<PathBuf>,
         remove_path: &mut Option<PathBuf>,
         status_change: &mut Option<(PathBuf, LibraryReadingStatus)>,
+        selected: Option<&Path>,
+        scroll_to_selection: &mut bool,
     ) {
         for entry in entries {
             self.cover_loader.queue(&entry.path);
             ui.vertical(|ui| {
-                egui::Frame::new()
+                let frame = egui::Frame::new()
                     .fill(card_fill(theme))
                     .stroke(Stroke::new(1.0, theme.accent_color().gamma_multiply(0.28)))
                     .corner_radius(radius)
@@ -359,6 +473,24 @@ impl LibraryViewState {
                             );
                         });
                     });
+                if selected == Some(entry.path.as_path()) {
+                    let accent = theme.accent_color();
+                    ui.painter().rect_filled(
+                        frame.response.rect,
+                        radius + 1.0,
+                        accent.gamma_multiply(0.08),
+                    );
+                    ui.painter().rect_stroke(
+                        frame.response.rect,
+                        radius + 1.0,
+                        Stroke::new(2.5, accent),
+                        StrokeKind::Inside,
+                    );
+                    if *scroll_to_selection {
+                        ui.scroll_to_rect(frame.response.rect, Some(egui::Align::Center));
+                        *scroll_to_selection = false;
+                    }
+                }
             });
             ui.add_space(4.0);
         }
