@@ -1,3 +1,5 @@
+use crate::core::BookmarkColor;
+use crate::core::library::UiDesignMode;
 use eframe::egui::Color32;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -76,6 +78,10 @@ impl ReaderTheme {
     }
 
     pub fn create_visuals(&self) -> eframe::egui::Visuals {
+        self.create_visuals_for(UiDesignMode::Cozy)
+    }
+
+    pub fn create_visuals_for(&self, design: UiDesignMode) -> eframe::egui::Visuals {
         use eframe::egui;
         let mut visuals = if self.is_dark() {
             egui::Visuals::dark()
@@ -165,6 +171,42 @@ impl ReaderTheme {
             }
             ReaderTheme::Dark => {}
         }
+
+        let radius = egui::CornerRadius::same(design.corner_radius());
+        visuals.widgets.noninteractive.corner_radius = radius;
+        visuals.widgets.inactive.corner_radius = radius;
+        visuals.widgets.hovered.corner_radius = radius;
+        visuals.widgets.active.corner_radius = radius;
+        visuals.widgets.open.corner_radius = radius;
+        visuals.window_corner_radius = radius;
+        visuals.menu_corner_radius = radius;
         visuals
+    }
+}
+
+pub fn bookmark_color(color: BookmarkColor) -> Color32 {
+    match color {
+        BookmarkColor::Yellow => Color32::from_rgb(235, 195, 60),
+        BookmarkColor::Green => Color32::from_rgb(72, 187, 120),
+        BookmarkColor::Blue => Color32::from_rgb(66, 153, 225),
+        BookmarkColor::Red => Color32::from_rgb(245, 101, 101),
+    }
+}
+
+pub fn bookmark_highlight_color(color: BookmarkColor, is_dark: bool) -> Color32 {
+    if is_dark {
+        match color {
+            BookmarkColor::Yellow => Color32::from_rgba_unmultiplied(235, 195, 60, 60),
+            BookmarkColor::Green => Color32::from_rgba_unmultiplied(72, 187, 120, 60),
+            BookmarkColor::Blue => Color32::from_rgba_unmultiplied(66, 153, 225, 60),
+            BookmarkColor::Red => Color32::from_rgba_unmultiplied(245, 101, 101, 60),
+        }
+    } else {
+        match color {
+            BookmarkColor::Yellow => Color32::from_rgba_unmultiplied(255, 235, 120, 95),
+            BookmarkColor::Green => Color32::from_rgba_unmultiplied(190, 245, 200, 95),
+            BookmarkColor::Blue => Color32::from_rgba_unmultiplied(190, 225, 255, 95),
+            BookmarkColor::Red => Color32::from_rgba_unmultiplied(255, 205, 205, 95),
+        }
     }
 }

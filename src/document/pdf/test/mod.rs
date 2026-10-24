@@ -114,6 +114,50 @@ fn test_pdf_outline_resolve_dest_clamping() {
 }
 
 #[test]
+fn test_pdf_internal_link_annotation() {
+    use crate::document::Document;
+
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Annots [4 0 R] /Contents 5 0 R >>"
+            .to_string(),
+        "<< /Type /Annot /Subtype /Link /Rect [10 10 100 40] /A << /S /GoTo /D [6 0 R /Fit] >> >>"
+            .to_string(),
+        "<< /Length 0 >>\nstream\nendstream".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Contents 7 0 R >>".to_string(),
+        "<< /Length 0 >>\nstream\nendstream".to_string(),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref_start = pdf.len();
+    pdf.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+
+    let doc = PdfDocument::from_bytes(pdf, Path::new("links.pdf")).unwrap();
+    let links = doc.page_content().unwrap().page_links(0);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target_page, 1);
+    assert!(links[0].bbox[2] > links[0].bbox[0]);
+    assert!(links[0].bbox[3] > links[0].bbox[1]);
+}
+
+#[test]
 fn test_pdf_document_parsing_and_rasterization() {
     let minimal_pdf = b"%PDF-1.4
 1 0 obj

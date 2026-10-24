@@ -6,6 +6,9 @@ use eframe::egui::{self, Color32, Frame, Id, Key, Order, RichText, ScrollArea, S
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
+
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub struct SearchState {
     pub is_open: bool,
@@ -19,6 +22,7 @@ pub struct SearchState {
     search_rx: Option<Receiver<(u64, Vec<SearchHit>)>>,
     search_cancel: Option<Arc<AtomicBool>>,
     search_generation: u64,
+    search_due: Option<(String, Instant)>,
 }
 
 impl Default for SearchState {
@@ -35,6 +39,7 @@ impl Default for SearchState {
             search_rx: None,
             search_cancel: None,
             search_generation: 0,
+            search_due: None,
         }
     }
 }
@@ -64,6 +69,21 @@ impl SearchState {
         }
         self.search_rx = None;
         self.is_searching = false;
+        self.search_due = None;
+    }
+
+    pub(crate) fn schedule_search(&mut self, ctx: &egui::Context) {
+        let query = self.query.clone();
+        self.cancel_search();
+        self.hits.clear();
+        self.current_hit_index = 0;
+        if query.trim().is_empty() {
+            self.last_searched_query = query;
+            return;
+        }
+        self.is_searching = true;
+        self.search_due = Some((query, Instant::now() + SEARCH_DEBOUNCE));
+        ctx.request_repaint_after(SEARCH_DEBOUNCE);
     }
 
     fn start_search(&mut self, ctx: &egui::Context, document: Option<&Arc<dyn Document>>) {
@@ -110,6 +130,27 @@ impl SearchState {
             self.search_rx = Some(rx);
             self.search_cancel = Some(cancel);
             self.is_searching = true;
+        }
+    }
+
+    pub(crate) fn poll_debounce(
+        &mut self,
+        ctx: &egui::Context,
+        document: Option<&Arc<dyn Document>>,
+    ) {
+        let Some((query, due)) = self.search_due.clone() else {
+            return;
+        };
+        let now = Instant::now();
+        if now < due {
+            ctx.request_repaint_after(due.saturating_duration_since(now));
+            return;
+        }
+        if query == self.query {
+            self.search_due = None;
+            self.start_search(ctx, document);
+        } else {
+            self.schedule_search(ctx);
         }
     }
 
@@ -236,8 +277,15 @@ impl SearchView {
                         }
 
                         if state.query != state.last_searched_query {
-                            state.start_search(ctx, document);
+                            let already_scheduled = state
+                                .search_due
+                                .as_ref()
+                                .is_some_and(|(pending, _)| pending == &state.query);
+                            if !already_scheduled {
+                                state.schedule_search(ctx);
+                            }
                         }
+                        state.poll_debounce(ctx, document);
 
                         let total = state.hits.len();
                         if state.query.trim().is_empty() {

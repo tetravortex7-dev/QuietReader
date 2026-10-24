@@ -444,3 +444,27 @@ pub fn is_window_fullscreen() -> bool {
 pub fn is_window_fullscreen() -> bool {
     false
 }
+
+pub fn sync_fullscreen_state(state: &mut bool) {
+    #[cfg(windows)]
+    {
+        *state = windows_fullscreen::is_window_fullscreen();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+    }
+}
+
+pub fn try_set_native_fullscreen(fullscreen: bool) -> bool {
+    #[cfg(windows)]
+    {
+        let hwnd = crate::platform::get_primary_window_hwnd();
+        crate::platform::set_window_fullscreen(hwnd, fullscreen)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = fullscreen;
+        false
+    }
+}

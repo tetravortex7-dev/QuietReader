@@ -3,7 +3,8 @@ name = "QuietReader"
 version = "0.7.1"
 edition = "2024"
 description = "A fast, lightweight cross-platform ebook, document, and comic reader"
-license = "AGPL-3.0-only"
+license = "LicenseRef-Proprietary"
+publish = false
 repository = "https://github.com/tetravortex7-dev/QuietReader"
 readme = "README.md"
 keywords = ["ebook", "reader", "epub", "pdf", "comics"]
@@ -16,17 +17,18 @@ test = false
 
 [dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "clipboard"] }
+base64 = "0.23.1"
 encoding_rs = "0.8.42"
 quick-xml = "0.42.0"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+ed25519-dalek = { version = "3.0.0", default-features = false, features = ["fast"] }
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 sevenz-rust = { version = "0.6.1", default-features = false }
 unrar-rs = { version = "0.14.1", default-features = false, features = ["crypto-host"] }
 hayro = "0.8.0"
-memmap2 = "0.9.12"
 djvu-rs = { version = "0.43.0", default-features = false, features = ["std"] }
 tts = "0.26.3"
 msedge-tts = "0.4.1"
@@ -44,6 +46,9 @@ keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
+
+[dev-dependencies]
+sevenz-rust = { version = "0.6.1", default-features = false, features = ["compress"] }
 
 [features]
 default = []

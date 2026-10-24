@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zip::ZipArchive;
 
 use crate::document::{
-    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind, HasToc,
+    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind,
     PageContent, PageInfo, TocItem,
 };
 
@@ -192,12 +192,6 @@ impl ComicDocument {
     }
 }
 
-impl HasToc for ComicDocument {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
-    }
-}
-
 impl Document for ComicDocument {
     fn metadata(&self) -> &BookMetadata {
         &self.metadata
@@ -224,10 +218,6 @@ impl Document for ComicDocument {
     }
 
     fn page_content(&self) -> Option<&dyn PageContent> {
-        Some(self)
-    }
-
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
         Some(self)
     }
 }
@@ -580,8 +570,9 @@ fn scan_rar(path: &Path) -> Result<(Vec<PageInfo>, Option<Vec<u8>>), DocumentErr
     if let Some(ci_name) = comic_info_entry_name
         && let Ok(handle) = archive.by_name(&ci_name)
     {
-        let mut bytes = Vec::new();
-        if handle.copy_to(&mut bytes).is_ok() && bytes.len() <= 5 * 1024 * 1024 {
+        let limit = 5 * 1024 * 1024;
+        let mut total = 0u64;
+        if let Ok(bytes) = crate::document::read_bounded(handle, limit, &mut total, limit) {
             comic_info = Some(bytes);
         }
     }

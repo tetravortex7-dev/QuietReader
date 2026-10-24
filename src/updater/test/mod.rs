@@ -15,6 +15,17 @@ fn test_version_parsing_and_comparison() {
 }
 
 #[test]
+fn test_read_limited_utf8_enforces_limit() {
+    let mut exact = std::io::Cursor::new(b"12345".to_vec());
+    assert_eq!(
+        read_limited_utf8(&mut exact, 5, "test").expect("exact limit"),
+        "12345"
+    );
+    let mut oversized = std::io::Cursor::new(b"123456".to_vec());
+    assert!(read_limited_utf8(&mut oversized, 5, "test").is_err());
+}
+
+#[test]
 fn test_extract_version_from_cargo_toml() {
     let sample = r#"
 [package]

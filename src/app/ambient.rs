@@ -1,106 +1,43 @@
-use super::ambient_synth::{AmbientSynth, AmbientSynthParams};
+use super::ambient_synth::{AmbientSharedParams, AmbientSynth, AmbientSynthParams};
 use super::icons::{Icon, IconButton, paint_icon};
 use super::theme::ReaderTheme;
-use eframe::egui::{self, Frame, RichText, Sense, Stroke, Vec2};
-use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+pub use crate::settings::AmbientSettings;
+use eframe::egui::{self, Color32, Frame, RichText, Sense, Stroke, Vec2};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AmbientSettings {
-    #[serde(default)]
-    pub is_playing: bool,
-    #[serde(default = "default_master_vol")]
-    pub master_volume: f32,
-    #[serde(default = "default_tone_softness")]
-    pub tone_softness: f32,
-    #[serde(default = "default_true")]
-    pub duck_during_tts: bool,
-    #[serde(default = "default_preset")]
-    pub selected_preset: Option<String>,
-    #[serde(default = "default_brown_vol")]
-    pub brown_noise_vol: f32,
-    #[serde(default)]
-    pub pink_noise_vol: f32,
-    #[serde(default)]
-    pub rain_vol: f32,
-    #[serde(default)]
-    pub fireplace_vol: f32,
-    #[serde(default)]
-    pub lofi_vol: f32,
-    #[serde(default = "default_binaural_vol")]
-    pub binaural_vol: f32,
-}
-
-fn default_master_vol() -> f32 {
-    0.65
-}
-
-fn default_tone_softness() -> f32 {
-    0.50
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_preset() -> Option<String> {
-    Some("laser_focus".to_string())
-}
-
-fn default_brown_vol() -> f32 {
-    0.75
-}
-
-fn default_binaural_vol() -> f32 {
-    0.35
-}
-
-impl Default for AmbientSettings {
-    fn default() -> Self {
-        Self {
-            is_playing: false,
-            master_volume: default_master_vol(),
-            tone_softness: default_tone_softness(),
-            duck_during_tts: default_true(),
-            selected_preset: default_preset(),
-            brown_noise_vol: default_brown_vol(),
-            pink_noise_vol: 0.0,
-            rain_vol: 0.0,
-            fireplace_vol: 0.0,
-            lofi_vol: 0.0,
-            binaural_vol: default_binaural_vol(),
-        }
-    }
-}
 
 pub struct AmbientController {
     pub is_open: bool,
     pub settings: AmbientSettings,
-    shared_params: Arc<Mutex<AmbientSynthParams>>,
+    shared_params: Arc<AmbientSharedParams>,
     audio_device: Option<rodio::MixerDeviceSink>,
     audio_player: Option<rodio::Player>,
     audio_initialized: bool,
-    timer_total_secs: Option<u64>,
-    timer_started_at: Option<Instant>,
+    audio_error: Option<String>,
+    timer_preset_minutes: Option<u64>,
+    pause_after: Option<Instant>,
+}
+
+fn params_from_settings(settings: &AmbientSettings) -> AmbientSynthParams {
+    AmbientSynthParams {
+        is_playing: settings.is_playing,
+        master_volume: settings.master_volume,
+        tone_softness: settings.tone_softness,
+        duck_during_tts: settings.duck_during_tts,
+        duck_amount: settings.duck_amount,
+        tts_is_active: false,
+        brown_noise_vol: settings.brown_noise_vol,
+        pink_noise_vol: settings.pink_noise_vol,
+        rain_vol: settings.rain_vol,
+        fireplace_vol: settings.fireplace_vol,
+        lofi_vol: settings.lofi_vol,
+        binaural_vol: settings.binaural_vol,
+    }
 }
 
 impl AmbientController {
     pub fn new(settings: AmbientSettings) -> Self {
-        let initial_params = AmbientSynthParams {
-            is_playing: settings.is_playing,
-            master_volume: settings.master_volume,
-            tone_softness: settings.tone_softness,
-            duck_during_tts: settings.duck_during_tts,
-            tts_is_active: false,
-            brown_noise_vol: settings.brown_noise_vol,
-            pink_noise_vol: settings.pink_noise_vol,
-            rain_vol: settings.rain_vol,
-            fireplace_vol: settings.fireplace_vol,
-            lofi_vol: settings.lofi_vol,
-            binaural_vol: settings.binaural_vol,
-        };
-        let shared_params = Arc::new(Mutex::new(initial_params));
+        let shared_params = Arc::new(AmbientSharedParams::new(params_from_settings(&settings)));
 
         let mut ctrl = Self {
             is_open: false,
@@ -109,31 +46,48 @@ impl AmbientController {
             audio_device: None,
             audio_player: None,
             audio_initialized: false,
-            timer_total_secs: None,
-            timer_started_at: None,
+            audio_error: None,
+            timer_preset_minutes: None,
+            pause_after: None,
         };
         if ctrl.settings.is_playing {
-            ctrl.init_audio_device();
+            if ctrl.settings.resume_on_startup {
+                ctrl.init_audio_device();
+            }
+            if ctrl.audio_player.is_none() {
+                ctrl.settings.is_playing = false;
+                ctrl.settings.timer_end_unix = None;
+                ctrl.sync_shared_params();
+            }
         }
         ctrl
     }
 
     fn init_audio_device(&mut self) {
-        if self.audio_initialized {
+        if self.audio_initialized && self.audio_player.is_some() {
             return;
         }
-        self.audio_initialized = true;
 
-        let sink: Option<rodio::MixerDeviceSink> =
-            rodio::DeviceSinkBuilder::open_default_sink().ok();
-        if let Some(ref dev) = sink {
-            let player = rodio::Player::connect_new(&dev.mixer());
-            let synth = AmbientSynth::new(Arc::clone(&self.shared_params), 44100);
-            player.append(synth);
-            player.play();
-            self.audio_player = Some(player);
-        }
-        self.audio_device = sink;
+        let sink = match rodio::DeviceSinkBuilder::open_default_sink() {
+            Ok(sink) => sink,
+            Err(error) => {
+                self.audio_initialized = false;
+                self.audio_device = None;
+                self.audio_player = None;
+                self.audio_error = Some(error.to_string());
+                return;
+            }
+        };
+
+        let sample_rate = sink.config().sample_rate().get();
+        let player = rodio::Player::connect_new(&sink.mixer());
+        let synth = AmbientSynth::new(Arc::clone(&self.shared_params), sample_rate);
+        player.append(synth);
+        player.play();
+        self.audio_device = Some(sink);
+        self.audio_player = Some(player);
+        self.audio_initialized = true;
+        self.audio_error = None;
     }
 
     pub fn toggle_panel(&mut self) {
@@ -144,26 +98,46 @@ impl AmbientController {
         self.is_open = false;
     }
 
+    pub fn suspend(&mut self) {
+        if !self.is_open && !self.settings.is_playing {
+            return;
+        }
+        self.is_open = false;
+        self.settings.is_playing = false;
+        self.pause_after = None;
+        if let Some(player) = &self.audio_player {
+            player.pause();
+        }
+        self.sync_shared_params();
+    }
+
     #[allow(dead_code)]
     pub fn is_playing(&self) -> bool {
         self.settings.is_playing
     }
 
+    pub fn audio_error(&self) -> Option<&str> {
+        self.audio_error.as_deref()
+    }
+
     pub fn toggle_play(&mut self) {
         self.settings.is_playing = !self.settings.is_playing;
+        self.pause_after = None;
         if self.settings.is_playing {
             self.init_audio_device();
             if let Some(ref p) = self.audio_player {
                 p.play();
+            } else {
+                self.settings.is_playing = false;
             }
+        } else if let Some(player) = &self.audio_player {
+            player.pause();
         }
         self.sync_shared_params();
     }
 
     pub fn set_tts_active(&mut self, active: bool) {
-        if let Ok(mut p) = self.shared_params.lock() {
-            p.tts_is_active = active;
-        }
+        self.shared_params.set_tts_active(active);
     }
 
     pub fn apply_preset(&mut self, preset_id: &str) {
@@ -207,59 +181,55 @@ impl AmbientController {
     }
 
     pub fn set_timer(&mut self, mins: Option<u64>) {
-        if let Some(m) = mins {
-            self.timer_total_secs = Some(m * 60);
-            self.timer_started_at = Some(Instant::now());
-        } else {
-            self.timer_total_secs = None;
-            self.timer_started_at = None;
-        }
+        self.timer_preset_minutes = mins;
+        self.pause_after = None;
+        self.settings.timer_end_unix = mins.map(|minutes| {
+            crate::core::license::unix_now().saturating_add(minutes.saturating_mul(60))
+        });
     }
 
     pub fn remaining_timer_seconds(&self) -> Option<u64> {
-        if let (Some(total), Some(started)) = (self.timer_total_secs, self.timer_started_at) {
-            let elapsed = started.elapsed().as_secs();
-            if elapsed < total {
-                Some(total - elapsed)
-            } else {
-                Some(0)
-            }
-        } else {
-            None
-        }
+        self.settings
+            .timer_end_unix
+            .map(|end| end.saturating_sub(crate::core::license::unix_now()))
     }
 
     pub fn tick(&mut self, ctx: &egui::Context) -> bool {
         let mut state_changed = false;
         if self.settings.is_playing {
-            if let Some(rem) = self.remaining_timer_seconds() {
-                if rem == 0 {
+            if let Some(remaining) = self.remaining_timer_seconds() {
+                if remaining == 0 {
                     self.settings.is_playing = false;
-                    self.timer_total_secs = None;
-                    self.timer_started_at = None;
+                    self.settings.timer_end_unix = None;
+                    self.timer_preset_minutes = None;
+                    self.pause_after = Some(Instant::now() + Duration::from_secs(2));
                     self.sync_shared_params();
                     state_changed = true;
-                } else if self.is_open {
-                    ctx.request_repaint_after(Duration::from_millis(500));
+                } else {
+                    let delay = if remaining <= 1 { 200 } else { 1000 };
+                    ctx.request_repaint_after(Duration::from_millis(delay));
                 }
             }
         }
+
+        if let Some(pause_at) = self.pause_after {
+            if Instant::now() >= pause_at {
+                if let Some(player) = &self.audio_player {
+                    player.pause();
+                }
+                self.pause_after = None;
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(200));
+            }
+        }
+
         state_changed
     }
 
     pub fn sync_shared_params(&mut self) {
-        if let Ok(mut p) = self.shared_params.lock() {
-            p.is_playing = self.settings.is_playing;
-            p.master_volume = self.settings.master_volume;
-            p.tone_softness = self.settings.tone_softness;
-            p.duck_during_tts = self.settings.duck_during_tts;
-            p.brown_noise_vol = self.settings.brown_noise_vol;
-            p.pink_noise_vol = self.settings.pink_noise_vol;
-            p.rain_vol = self.settings.rain_vol;
-            p.fireplace_vol = self.settings.fireplace_vol;
-            p.lofi_vol = self.settings.lofi_vol;
-            p.binaural_vol = self.settings.binaural_vol;
-        }
+        let mut params = params_from_settings(&self.settings);
+        params.tts_is_active = self.shared_params.tts_is_active();
+        self.shared_params.store(params);
     }
 
     pub fn render(
@@ -281,6 +251,8 @@ impl AmbientController {
             .resizable(false)
             .collapsible(false)
             .default_width(340.0)
+            .max_height((ctx.content_rect().height() - 80.0).max(240.0))
+            .vscroll(true)
             .anchor(egui::Align2::RIGHT_TOP, [-16.0, 50.0])
             .frame(
                 Frame::window(&ctx.global_style())
@@ -313,6 +285,15 @@ impl AmbientController {
             });
 
             ui.add_space(4.0);
+
+            if let Some(error) = self.audio_error() {
+                ui.label(
+                    RichText::new(t.ambient_audio_error.replace("{error}", error))
+                        .size(10.5)
+                        .color(Color32::from_rgb(200, 90, 70)),
+                );
+                ui.add_space(2.0);
+            }
 
             ui.horizontal(|ui| {
                 let play_icon = if self.settings.is_playing {
@@ -372,19 +353,19 @@ impl AmbientController {
             ui.add_space(2.0);
 
             ui.horizontal(|ui| {
-                let is_off = self.timer_total_secs.is_none();
+                let is_off = self.timer_preset_minutes.is_none();
                 if ui.selectable_label(is_off, t.ambient_timer_off).clicked() {
                     self.set_timer(None);
                 }
-                let is_15 = self.timer_total_secs == Some(15 * 60);
+                let is_15 = self.timer_preset_minutes == Some(15);
                 if ui.selectable_label(is_15, t.ambient_timer_15m).clicked() {
                     self.set_timer(Some(15));
                 }
-                let is_30 = self.timer_total_secs == Some(30 * 60);
+                let is_30 = self.timer_preset_minutes == Some(30);
                 if ui.selectable_label(is_30, t.ambient_timer_30m).clicked() {
                     self.set_timer(Some(30));
                 }
-                let is_60 = self.timer_total_secs == Some(60 * 60);
+                let is_60 = self.timer_preset_minutes == Some(60);
                 if ui.selectable_label(is_60, t.ambient_timer_60m).clicked() {
                     self.set_timer(Some(60));
                 }
@@ -507,6 +488,14 @@ impl AmbientController {
                 t.layer_binaural_desc,
                 &mut self.settings.binaural_vol,
             );
+            if self.settings.binaural_vol > 0.01 {
+                ui.label(
+                    RichText::new(t.ambient_headphones_hint)
+                        .size(10.0)
+                        .italics()
+                        .color(theme.secondary_text_color()),
+                );
+            }
 
             ui.add_space(4.0);
             ui.separator();
@@ -516,6 +505,26 @@ impl AmbientController {
                 .checkbox(
                     &mut self.settings.duck_during_tts,
                     RichText::new(t.ambient_duck_tts).size(12.0),
+                )
+                .changed()
+            {
+                changed = true;
+            }
+            if self.settings.duck_during_tts {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(t.ambient_duck_amount).size(11.0));
+                    let mut percent = (self.settings.duck_amount * 100.0).round() as u32;
+                    let response = ui.add(egui::Slider::new(&mut percent, 20..=90).suffix("%"));
+                    if response.changed() {
+                        self.settings.duck_amount = percent as f32 / 100.0;
+                        changed = true;
+                    }
+                });
+            }
+            if ui
+                .checkbox(
+                    &mut self.settings.resume_on_startup,
+                    RichText::new(t.ambient_resume_on_startup).size(12.0),
                 )
                 .changed()
             {

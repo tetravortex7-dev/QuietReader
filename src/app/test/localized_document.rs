@@ -41,6 +41,13 @@ impl Document for MockDocument {
     fn text_content(&self) -> Option<&dyn TextContent> {
         None
     }
+
+    fn footnote(&self, id: &str) -> Option<&str> {
+        match id {
+            "note_1" => Some("Footnote body"),
+            _ => None,
+        }
+    }
 }
 
 fn mock_doc(view_kind: DocumentViewKind, paragraph: &str) -> Arc<dyn Document> {
@@ -134,4 +141,35 @@ fn localizes_mobi_and_txt_generated_titles() {
     assert!(!doc.has_custom_toc());
     assert_eq!(doc.chapters()[0].title, "Chapter 3 (part 2)");
     assert_eq!(doc.chapters()[1].title, "Text document (lines 10–20)");
+}
+
+#[test]
+fn localizes_part_suffix_for_authored_titles() {
+    let inner: Arc<dyn Document> = Arc::new(MockDocument {
+        metadata: BookMetadata {
+            title: "Документ RTF".to_string(),
+            author: "Неизвестный автор".to_string(),
+        },
+        chapters: vec![BookChapter {
+            id: None,
+            title: "Chapter One (часть 2)".to_string(),
+            paragraphs: Vec::new(),
+        }],
+        toc: Vec::new(),
+        view_kind: DocumentViewKind::Text,
+        custom_toc: false,
+    });
+    let doc = LocalizedDocument::wrap(inner, UiLanguage::En);
+    assert_eq!(doc.metadata().title, "RTF Document");
+    assert_eq!(doc.chapters()[0].title, "Chapter One (part 2)");
+}
+
+#[test]
+fn forwards_footnotes_to_the_wrapped_document() {
+    let doc = LocalizedDocument::wrap(
+        mock_doc(DocumentViewKind::Text, "Text with a note."),
+        UiLanguage::En,
+    );
+    assert_eq!(doc.footnote("note_1"), Some("Footnote body"));
+    assert_eq!(doc.footnote("missing_note"), None);
 }

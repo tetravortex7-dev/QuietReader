@@ -5,6 +5,7 @@ use super::types::{TtsEngineKind, TtsVoiceInfo};
 use super::voices::{format_voice_name, voice_matches_lang};
 use crate::app::icons::{Icon, IconButton, IconLabel};
 use crate::app::theme::ReaderTheme;
+use crate::core::license::ProFeature;
 
 impl TtsController {
     pub fn render_panel(
@@ -15,6 +16,8 @@ impl TtsController {
         book_language: Option<&str>,
         on_play_requested: &mut bool,
         lang: crate::i18n::UiLanguage,
+        neural_tts_allowed: bool,
+        on_pro_required: &mut Option<ProFeature>,
     ) {
         if !self.show_panel {
             return;
@@ -63,7 +66,11 @@ impl TtsController {
                             .clicked()
                             && !is_edge
                         {
-                            self.set_engine(TtsEngineKind::Edge);
+                            if neural_tts_allowed {
+                                self.set_engine(TtsEngineKind::Edge);
+                            } else {
+                                *on_pro_required = Some(ProFeature::NeuralTts);
+                            }
                         }
 
                         ui.add_space(6.0);

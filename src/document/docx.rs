@@ -1,6 +1,5 @@
-use crate::document::{
-    BookChapter, BookMetadata, Document, DocumentError, HasToc, TextContent, TocItem,
-};
+use crate::document::{BookChapter, BookMetadata, Document, DocumentError, TextContent, TocItem};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -9,17 +8,15 @@ pub struct DocxDocument {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+    images: std::collections::HashMap<String, Vec<u8>>,
+    footnotes: std::collections::HashMap<String, String>,
+    header_text: Option<String>,
+    footer_text: Option<String>,
 }
 
 impl TextContent for DocxDocument {
     fn chapters(&self) -> &[BookChapter] {
         &self.chapters
-    }
-}
-
-impl HasToc for DocxDocument {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
     }
 }
 
@@ -48,8 +45,20 @@ impl Document for DocxDocument {
         Some(self)
     }
 
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
-        Some(self)
+    fn image_bytes(&self, id: &str) -> Option<Vec<u8>> {
+        self.images.get(id).cloned()
+    }
+
+    fn footnote(&self, id: &str) -> Option<&str> {
+        self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn header_text(&self) -> Option<&str> {
+        self.header_text.as_deref()
+    }
+
+    fn footer_text(&self) -> Option<&str> {
+        self.footer_text.as_deref()
     }
 }
 
@@ -100,9 +109,14 @@ impl DocxDocument {
         let mut total_unpacked = 0u64;
         let mut doc_xml_bytes: Option<Vec<u8>> = None;
         let mut core_xml_bytes: Option<Vec<u8>> = None;
+        let mut rels_xml_bytes: Option<Vec<u8>> = None;
+        let mut footnotes_xml_bytes: Option<Vec<u8>> = None;
+        let mut media: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut header_parts: Vec<String> = Vec::new();
+        let mut footer_parts: Vec<String> = Vec::new();
 
         for i in 0..archive.len() {
-            let file = archive
+            let mut file = archive
                 .by_index(i)
                 .map_err(|e| DocumentError::Corrupted(format!("Ошибка архива DOCX: {e}")))?;
             let name = file
@@ -129,6 +143,56 @@ impl DocxDocument {
                     &mut total_unpacked,
                     crate::document::MAX_TOTAL_UNPACK_BYTES,
                 )?);
+            } else if name == "word/_rels/document.xml.rels" {
+                rels_xml_bytes = Some(crate::document::read_bounded(
+                    file,
+                    crate::document::MAX_SINGLE_ENTRY_BYTES,
+                    &mut total_unpacked,
+                    crate::document::MAX_TOTAL_UNPACK_BYTES,
+                )?);
+            } else if name == "word/footnotes.xml" {
+                footnotes_xml_bytes = Some(crate::document::read_bounded(
+                    file,
+                    crate::document::MAX_SINGLE_ENTRY_BYTES,
+                    &mut total_unpacked,
+                    crate::document::MAX_TOTAL_UNPACK_BYTES,
+                )?);
+            } else if name.starts_with("word/header")
+                && name.ends_with(".xml")
+                && let Ok(bytes) = crate::document::read_bounded(
+                    &mut file,
+                    crate::document::MAX_SINGLE_ENTRY_BYTES,
+                    &mut total_unpacked,
+                    crate::document::MAX_TOTAL_UNPACK_BYTES,
+                )
+            {
+                let text = extract_docx_story_text(&bytes);
+                if !text.is_empty() {
+                    header_parts.push(text);
+                }
+            } else if name.starts_with("word/footer")
+                && name.ends_with(".xml")
+                && let Ok(bytes) = crate::document::read_bounded(
+                    &mut file,
+                    crate::document::MAX_SINGLE_ENTRY_BYTES,
+                    &mut total_unpacked,
+                    crate::document::MAX_TOTAL_UNPACK_BYTES,
+                )
+            {
+                let text = extract_docx_story_text(&bytes);
+                if !text.is_empty() {
+                    footer_parts.push(text);
+                }
+            } else if name.starts_with("word/media/")
+                && media.len() < 2_000
+                && let Ok(bytes) = crate::document::read_bounded(
+                    &mut file,
+                    crate::document::MAX_SINGLE_ENTRY_BYTES,
+                    &mut total_unpacked,
+                    crate::document::MAX_TOTAL_UNPACK_BYTES,
+                )
+            {
+                media.push((name.clone(), bytes));
             }
         }
 
@@ -145,12 +209,23 @@ impl DocxDocument {
                 author: "Неизвестный автор".to_string(),
             });
 
-        let (chapters, toc) = Self::parse_document_xml(&doc_xml_str, &metadata.title)?;
+        let images = build_docx_images(rels_xml_bytes.as_deref(), &media);
+        let footnotes = footnotes_xml_bytes
+            .as_deref()
+            .map(parse_docx_footnotes)
+            .unwrap_or_default();
+        let header_text = join_story_parts(header_parts);
+        let footer_text = join_story_parts(footer_parts);
+        let (chapters, toc) = Self::parse_document_xml(&doc_xml_str, &metadata.title, &images)?;
 
         Ok(Self {
             metadata,
             chapters,
             toc,
+            images,
+            footnotes,
+            header_text,
+            footer_text,
         })
     }
 
@@ -212,6 +287,7 @@ impl DocxDocument {
     fn parse_document_xml(
         xml: &str,
         default_title: &str,
+        images: &HashMap<String, Vec<u8>>,
     ) -> Result<(Vec<BookChapter>, Vec<TocItem>), DocumentError> {
         use quick_xml::events::Event;
         use quick_xml::reader::Reader;
@@ -227,6 +303,11 @@ impl DocxDocument {
         let mut in_t = false;
         let mut current_p_text = String::new();
         let mut is_heading = false;
+        let mut in_table = 0usize;
+        let mut in_row = false;
+        let mut in_cell = false;
+        let mut cell_text = String::new();
+        let mut row_cells: Vec<String> = Vec::new();
 
         let mut buf = Vec::new();
 
@@ -234,7 +315,45 @@ impl DocxDocument {
             match event {
                 Event::Start(ref e) => {
                     let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
-                    if tag == "p" {
+                    if tag == "tbl" {
+                        in_table = in_table.saturating_add(1);
+                    } else if tag == "tr" && in_table > 0 {
+                        in_row = true;
+                        row_cells.clear();
+                    } else if tag == "tc" && in_row {
+                        in_cell = true;
+                        cell_text.clear();
+                    } else if tag == "blip" {
+                        let mut relationship = String::new();
+                        for attr in e.attributes().flatten() {
+                            if local_name(attr.key.as_ref()).eq_ignore_ascii_case("embed") {
+                                relationship = attr.value.to_string();
+                            }
+                        }
+                        if !relationship.is_empty()
+                            && images.contains_key(&relationship)
+                            && !in_cell
+                        {
+                            let text = current_p_text.trim();
+                            if !text.is_empty() {
+                                current_chapter_paras.push(text.to_string());
+                                current_p_text.clear();
+                            }
+                            current_chapter_paras.push(crate::document::image_token(&relationship));
+                        }
+                    } else if tag == "footnotereference" {
+                        let mut id = String::new();
+                        for attr in e.attributes().flatten() {
+                            if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
+                                id = attr.value.to_string();
+                            }
+                        }
+                        if !id.is_empty() {
+                            current_p_text.push_str(&crate::document::footnote_token(&format!(
+                                "docx_fn_{id}"
+                            )));
+                        }
+                    } else if tag == "p" {
                         in_p = true;
                         current_p_text.clear();
                         is_heading = false;
@@ -267,7 +386,37 @@ impl DocxDocument {
                 }
                 Event::Empty(ref e) => {
                     let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
-                    if in_p && tag == "pstyle" {
+                    if tag == "blip" {
+                        let mut relationship = String::new();
+                        for attr in e.attributes().flatten() {
+                            if local_name(attr.key.as_ref()).eq_ignore_ascii_case("embed") {
+                                relationship = attr.value.to_string();
+                            }
+                        }
+                        if !relationship.is_empty()
+                            && images.contains_key(&relationship)
+                            && !in_cell
+                        {
+                            let text = current_p_text.trim();
+                            if !text.is_empty() {
+                                current_chapter_paras.push(text.to_string());
+                                current_p_text.clear();
+                            }
+                            current_chapter_paras.push(crate::document::image_token(&relationship));
+                        }
+                    } else if tag == "footnotereference" {
+                        let mut id = String::new();
+                        for attr in e.attributes().flatten() {
+                            if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
+                                id = attr.value.to_string();
+                            }
+                        }
+                        if !id.is_empty() {
+                            current_p_text.push_str(&crate::document::footnote_token(&format!(
+                                "docx_fn_{id}"
+                            )));
+                        }
+                    } else if in_p && tag == "pstyle" {
                         for attr in e.attributes().flatten() {
                             let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
                             if key == "val" {
@@ -307,13 +456,32 @@ impl DocxDocument {
                 }
                 Event::End(ref e) => {
                     let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
-                    if tag == "t" {
+                    if tag == "tc" && in_cell {
+                        let text = cell_text.trim();
+                        row_cells.push(text.to_string());
+                        cell_text.clear();
+                        in_cell = false;
+                    } else if tag == "tr" && in_row {
+                        let row = row_cells.join(" | ");
+                        if !row.trim().is_empty() {
+                            current_chapter_paras.push(row);
+                        }
+                        row_cells.clear();
+                        in_row = false;
+                    } else if tag == "tbl" {
+                        in_table = in_table.saturating_sub(1);
+                    } else if tag == "t" {
                         in_t = false;
                     } else if tag == "p" {
                         in_p = false;
                         let text = current_p_text.trim();
                         if !text.is_empty() {
-                            if is_heading {
+                            if in_cell {
+                                if !cell_text.is_empty() {
+                                    cell_text.push(' ');
+                                }
+                                cell_text.push_str(text);
+                            } else if is_heading {
                                 if !current_chapter_paras.is_empty()
                                     || !current_chapter_title.is_empty()
                                 {
@@ -385,6 +553,198 @@ impl DocxDocument {
 
         Ok((chapters, toc))
     }
+}
+
+fn parse_docx_relationships(xml: &str) -> HashMap<String, String> {
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut relationships = HashMap::new();
+    let mut buf = Vec::new();
+    while let Ok(event) = reader.read_event_into(&mut buf) {
+        let element = match event {
+            Event::Start(ref e) | Event::Empty(ref e) => e,
+            Event::Eof => break,
+            _ => {
+                buf.clear();
+                continue;
+            }
+        };
+        let tag = local_name(element.name().as_ref()).to_ascii_lowercase();
+        if tag == "relationship" {
+            let mut id = String::new();
+            let mut target = String::new();
+            for attr in element.attributes().flatten() {
+                match local_name(attr.key.as_ref()).to_ascii_lowercase().as_str() {
+                    "id" => id = attr.value.to_string(),
+                    "target" => target = attr.value.to_string(),
+                    _ => {}
+                }
+            }
+            if !id.is_empty() && !target.is_empty() && !target.starts_with("http") {
+                relationships.insert(id, target);
+            }
+        }
+        buf.clear();
+    }
+    relationships
+}
+
+fn build_docx_images(
+    relationships: Option<&[u8]>,
+    media: &[(String, Vec<u8>)],
+) -> HashMap<String, Vec<u8>> {
+    let Some(relationships) = relationships else {
+        return HashMap::new();
+    };
+    let xml = String::from_utf8_lossy(relationships);
+    let mut images = HashMap::new();
+    for (id, target) in parse_docx_relationships(&xml) {
+        let target = target.trim_start_matches('/');
+        let resolved = if target.starts_with("word/") {
+            target.to_string()
+        } else {
+            crate::document::epub::resolve_path("word", target)
+        };
+        let decoded = crate::document::epub::percent_decode_str(&resolved);
+        let found = media
+            .iter()
+            .find(|(name, _)| name == &resolved || name == &decoded);
+        if let Some((_, bytes)) = found
+            && image::guess_format(bytes).is_ok()
+        {
+            images.insert(id, bytes.clone());
+        }
+    }
+    images
+}
+
+fn extract_docx_story_text(xml: &[u8]) -> String {
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+
+    let xml = String::from_utf8_lossy(xml);
+    let mut reader = Reader::from_str(&xml);
+    reader.config_mut().trim_text(false);
+    let mut text = String::new();
+    let mut in_text = false;
+    let mut buf = Vec::new();
+    while let Ok(event) = reader.read_event_into(&mut buf) {
+        match event {
+            Event::Start(ref e) => {
+                let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
+                if tag == "t" {
+                    in_text = true;
+                } else if matches!(tag.as_str(), "p" | "br") {
+                    text.push(' ');
+                }
+            }
+            Event::Empty(ref e) => {
+                let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
+                if matches!(tag.as_str(), "br" | "tab") {
+                    text.push(' ');
+                }
+            }
+            Event::Text(ref e) if in_text => {
+                let raw = e.as_ref();
+                let value = quick_xml::escape::unescape(raw)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| raw.to_string());
+                text.push_str(&value);
+            }
+            Event::End(ref e) => {
+                let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
+                if tag == "t" {
+                    in_text = false;
+                } else if tag == "p" {
+                    text.push(' ');
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn join_story_parts(parts: Vec<String>) -> Option<String> {
+    let mut unique = Vec::new();
+    for part in parts {
+        if !part.is_empty() && !unique.iter().any(|existing| existing == &part) {
+            unique.push(part);
+        }
+    }
+    if unique.is_empty() {
+        None
+    } else {
+        Some(unique.join(" • "))
+    }
+}
+
+fn parse_docx_footnotes(xml: &[u8]) -> HashMap<String, String> {
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+
+    let xml = String::from_utf8_lossy(xml);
+    let mut reader = Reader::from_str(&xml);
+    reader.config_mut().trim_text(false);
+    let mut footnotes = HashMap::new();
+    let mut current: Option<String> = None;
+    let mut text = String::new();
+    let mut buf = Vec::new();
+    while let Ok(event) = reader.read_event_into(&mut buf) {
+        match event {
+            Event::Start(ref e) => {
+                let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
+                if tag == "footnote" {
+                    let mut id = String::new();
+                    for attr in e.attributes().flatten() {
+                        if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
+                            id = attr.value.to_string();
+                        }
+                    }
+                    if !id.is_empty() {
+                        current = Some(format!("docx_fn_{id}"));
+                        text.clear();
+                    }
+                } else if current.is_some() && (tag == "p" || tag == "br") {
+                    text.push(' ');
+                }
+            }
+            Event::Empty(ref e) => {
+                let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
+                if current.is_some() && tag == "br" {
+                    text.push(' ');
+                }
+            }
+            Event::Text(ref e) if current.is_some() => {
+                let raw = e.as_ref();
+                let value = quick_xml::escape::unescape(raw)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| raw.to_string());
+                text.push_str(&value);
+            }
+            Event::End(ref e) => {
+                let tag = local_name(e.name().as_ref()).to_ascii_lowercase();
+                if tag == "footnote"
+                    && let Some(id) = current.take()
+                {
+                    let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !cleaned.is_empty() {
+                        footnotes.insert(id, cleaned);
+                    }
+                    text.clear();
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    footnotes
 }
 
 fn local_name(name: &str) -> &str {

@@ -12,9 +12,26 @@ fn test_ui_languages_all() {
         let t = lang.t();
         assert!(!t.open_file.is_empty());
         assert!(!t.settings.is_empty());
+        assert!(t.loading_doc.contains("{}"));
         assert!(!t.settings_title.is_empty());
         assert!(!t.tab_fonts.is_empty());
         assert!(!t.tab_appearance.is_empty());
+        assert!(!t.tab_about.is_empty());
+        assert!(!t.about_version.is_empty());
+        assert!(!t.about_license_status.is_empty());
+        assert!(!t.about_third_party.is_empty());
+        assert!(!t.about_unrar_title.is_empty());
+        assert!(!t.about_unrar_text.is_empty());
+        assert!(!t.about_sil_title.is_empty());
+        assert!(!t.about_sil_text.is_empty());
+        assert!(!t.export_markdown.is_empty());
+        assert!(!t.bookmarks_exported.is_empty());
+        assert!(!t.library_stats_streak.is_empty());
+        assert!(!t.library_stats_reading_time.is_empty());
+        assert!(!t.library_stats_completed.is_empty());
+        assert!(t.library_stats_time_value.contains("{hours}"));
+        assert!(t.library_stats_time_value.contains("{minutes}"));
+        assert!(t.chapter_time_left.contains("{minutes}"));
         assert!(!t.interface_language.is_empty());
         assert!(!t.language_auto.is_empty());
         assert!(!t.speech.is_empty());
@@ -28,7 +45,10 @@ fn test_ui_languages_all() {
         assert!(!t.extra.default_pdf_document.is_empty());
         assert!(!t.extra.default_djvu_document.is_empty());
         assert!(!t.extra.default_mobi_document.is_empty());
+        assert!(!t.extra.default_rtf_document.is_empty());
         assert!(!t.extra.default_chapter_part.is_empty());
+        assert!(t.extra.default_chapter_part_suffix.contains("{title}"));
+        assert!(t.extra.default_chapter_part_suffix.contains("{part}"));
         assert!(!t.extra.default_lines_range.is_empty());
         assert!(!t.extra.comic_total_pages.is_empty());
         assert!(!t.extra.comic_pages_range.is_empty());
@@ -57,6 +77,15 @@ fn test_ui_languages_all() {
         let label = lang.label(t);
         assert!(!label.is_empty());
     }
+}
+
+#[test]
+fn test_opds_message_uses_localized_prefix() {
+    let err = crate::opds::OpdsError::Message("invalid XML".to_string());
+    let en = format_opds_error(&err, UiLanguage::En);
+    assert!(en.starts_with("Failed to read OPDS feed"));
+    let ru = format_opds_error(&err, UiLanguage::Ru);
+    assert!(ru.starts_with("Ошибка чтения OPDS-каталога"));
 }
 
 #[test]

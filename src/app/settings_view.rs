@@ -1,8 +1,10 @@
 use super::dialogs::SettingsTab;
 use super::fonts::apply_font_family;
 use super::icons::{Icon, IconButton, IconLabel, selectable_icon_button};
+use super::license_view::{ProUpgradeState, status_text};
 use super::theme::ReaderTheme;
-use crate::settings::AppSettings;
+use crate::core::license::ProFeature;
+use crate::settings::{AppSettings, OPEN_DYSLEXIC_FONT};
 use eframe::egui::{self, Color32, RichText, ScrollArea};
 
 pub struct SettingsView;
@@ -21,7 +23,9 @@ impl SettingsView {
         on_toggle_autoscroll: &mut bool,
         on_save_settings: &mut bool,
         on_register_association: &mut bool,
+        on_reload_text_encoding: &mut bool,
         updater: &crate::updater::UpdateChecker,
+        pro: &mut ProUpgradeState,
     ) {
         let text_color = theme.text_color();
         let accent_color = theme.accent_color();
@@ -77,6 +81,7 @@ impl SettingsView {
                     (SettingsTab::ComicsAndManga, Icon::Book, t.tab_comics),
                     (SettingsTab::Hotkeys, Icon::Keyboard, t.tab_hotkeys),
                     (SettingsTab::System, Icon::Settings, t.tab_system),
+                    (SettingsTab::About, Icon::Info, t.tab_about),
                 ];
 
                 for (tab, icon, label) in tabs {
@@ -108,6 +113,7 @@ impl SettingsView {
                                 font_size,
                                 theme,
                                 on_save_settings,
+                                pro,
                             ),
                             SettingsTab::Appearance => Self::render_appearance_tab(
                                 ui,
@@ -135,9 +141,12 @@ impl SettingsView {
                                 settings,
                                 on_register_association,
                                 on_save_settings,
+                                on_reload_text_encoding,
                                 theme,
                                 updater,
+                                pro,
                             ),
+                            SettingsTab::About => Self::render_about_tab(ui, settings, theme),
                         });
                 });
         });
@@ -150,6 +159,7 @@ impl SettingsView {
         font_size: &mut f32,
         theme: &ReaderTheme,
         on_save_settings: &mut bool,
+        pro: &mut ProUpgradeState,
     ) {
         let t = settings.ui_language.t();
         let text_color = theme.text_color();
@@ -163,7 +173,7 @@ impl SettingsView {
         ui.add_space(8.0);
 
         for font_info in super::fonts::AVAILABLE_FONTS {
-            let is_selected = settings.font_family == font_info.id;
+            let is_selected = settings.effective_font_family() == font_info.id;
             let card_family = egui::FontFamily::Name(font_info.id.into());
             let card_frame = egui::Frame::new()
                 .fill(if is_selected {
@@ -196,9 +206,7 @@ impl SettingsView {
                         .clicked()
                         && !is_selected
                     {
-                        settings.font_family = font_info.id.to_string();
-                        apply_font_family(ctx, font_info.id);
-                        *on_save_settings = true;
+                        select_font(settings, ctx, font_info.id, on_save_settings, pro);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
@@ -223,9 +231,7 @@ impl SettingsView {
                 .clicked()
                 && !is_selected
             {
-                settings.font_family = font_info.id.to_string();
-                apply_font_family(ctx, font_info.id);
-                *on_save_settings = true;
+                select_font(settings, ctx, font_info.id, on_save_settings, pro);
             }
 
             ui.add_space(4.0);
@@ -271,15 +277,62 @@ impl SettingsView {
         });
 
         ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(t.line_height_label)
+                    .size(15.0)
+                    .strong()
+                    .color(text_color),
+            );
+            let mut value = settings.line_height_scale;
+            let resp = ui
+                .add(
+                    egui::Slider::new(&mut value, 1.1..=2.0)
+                        .step_by(0.05)
+                        .suffix("×"),
+                )
+                .on_hover_text(t.line_height_tooltip);
+            if resp.changed() {
+                settings.line_height_scale = value;
+            }
+            if resp.drag_stopped() || resp.lost_focus() {
+                *on_save_settings = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(t.column_width_label)
+                    .size(15.0)
+                    .strong()
+                    .color(text_color),
+            );
+            let mut value = settings.max_column_width;
+            let resp = ui
+                .add(
+                    egui::Slider::new(&mut value, 520.0..=1200.0)
+                        .step_by(10.0)
+                        .suffix(" px"),
+                )
+                .on_hover_text(t.column_width_tooltip);
+            if resp.changed() {
+                settings.max_column_width = value;
+            }
+            if resp.drag_stopped() || resp.lost_focus() {
+                *on_save_settings = true;
+            }
+        });
+
+        ui.add_space(8.0);
+        let bionic_enabled = settings.effective_bionic_reading();
         egui::Frame::new()
-            .fill(if settings.bionic_reading {
+            .fill(if bionic_enabled {
                 theme.panel_bg_color()
             } else {
                 theme.bg_color()
             })
             .stroke(egui::Stroke::new(
-                if settings.bionic_reading { 1.5 } else { 1.0 },
-                if settings.bionic_reading {
+                if bionic_enabled { 1.5 } else { 1.0 },
+                if bionic_enabled {
                     theme.accent_color()
                 } else {
                     Color32::from_gray(120).gamma_multiply(0.3)
@@ -288,10 +341,11 @@ impl SettingsView {
             .corner_radius(6.0)
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
+                let mut bionic = bionic_enabled;
                 ui.horizontal(|ui| {
                     if ui
                         .checkbox(
-                            &mut settings.bionic_reading,
+                            &mut bionic,
                             RichText::new(t.bionic_reading_title)
                                 .strong()
                                 .size(15.0)
@@ -299,7 +353,12 @@ impl SettingsView {
                         )
                         .changed()
                     {
-                        *on_save_settings = true;
+                        if bionic && !settings.can_use(ProFeature::FocusTools) {
+                            pro.request(ProFeature::FocusTools);
+                        } else {
+                            settings.bionic_reading = bionic;
+                            *on_save_settings = true;
+                        }
                     }
                 });
                 ui.add_space(2.0);
@@ -311,15 +370,16 @@ impl SettingsView {
             });
 
         ui.add_space(8.0);
+        let ruler_enabled = settings.effective_reading_ruler();
         egui::Frame::new()
-            .fill(if settings.reading_ruler {
+            .fill(if ruler_enabled {
                 theme.panel_bg_color()
             } else {
                 theme.bg_color()
             })
             .stroke(egui::Stroke::new(
-                if settings.reading_ruler { 1.5 } else { 1.0 },
-                if settings.reading_ruler {
+                if ruler_enabled { 1.5 } else { 1.0 },
+                if ruler_enabled {
                     theme.accent_color()
                 } else {
                     Color32::from_gray(120).gamma_multiply(0.3)
@@ -328,9 +388,10 @@ impl SettingsView {
             .corner_radius(6.0)
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
+                let mut ruler = ruler_enabled;
                 if ui
                     .checkbox(
-                        &mut settings.reading_ruler,
+                        &mut ruler,
                         RichText::new(t.reading_ruler_title)
                             .strong()
                             .size(15.0)
@@ -338,7 +399,12 @@ impl SettingsView {
                     )
                     .changed()
                 {
-                    *on_save_settings = true;
+                    if ruler && !settings.can_use(ProFeature::FocusTools) {
+                        pro.request(ProFeature::FocusTools);
+                    } else {
+                        settings.reading_ruler = ruler;
+                        *on_save_settings = true;
+                    }
                 }
                 ui.add_space(2.0);
                 ui.label(
@@ -346,7 +412,7 @@ impl SettingsView {
                         .size(12.0)
                         .color(text_color.gamma_multiply(0.75)),
                 );
-                if settings.reading_ruler {
+                if ruler {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         ui.label(
@@ -399,10 +465,14 @@ impl SettingsView {
                     t.sample_text,
                     *font_size,
                     text_color,
-                    settings.bionic_reading,
+                    settings.effective_line_height_scale(),
+                    settings.effective_bionic_reading(),
                     settings.ui_language.is_rtl(),
                 );
-                ui.label(preview_job);
+                ui.vertical_centered(|ui| {
+                    ui.set_max_width(settings.effective_max_column_width());
+                    ui.label(preview_job);
+                });
             });
     }
 
@@ -742,4 +812,91 @@ impl SettingsView {
             ui.add_space(2.0);
         }
     }
+
+    fn render_about_tab(ui: &mut egui::Ui, settings: &AppSettings, theme: &ReaderTheme) {
+        let t = settings.ui_language.t();
+        let text_color = theme.text_color();
+        let secondary = text_color.gamma_multiply(0.78);
+        let status = settings.license_status();
+        let tier = if status.is_pro_active() {
+            t.license_pro_badge
+        } else {
+            t.license_free_status
+        };
+
+        ui.label(
+            RichText::new(t.tab_about)
+                .size(17.0)
+                .strong()
+                .color(text_color),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(format!(
+                "{}: v{}",
+                t.about_version,
+                crate::updater::CURRENT_VERSION
+            ))
+            .color(text_color),
+        );
+        ui.add_space(4.0);
+        ui.label(RichText::new(format!("{}: {}", t.about_license_status, tier)).color(text_color));
+        ui.label(
+            RichText::new(status_text(&t, &status))
+                .size(12.0)
+                .color(secondary),
+        );
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(t.about_third_party)
+                .size(15.0)
+                .strong()
+                .color(text_color),
+        );
+        ui.add_space(6.0);
+        let stroke = egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.25));
+        egui::Frame::new()
+            .fill(theme.bg_color())
+            .stroke(stroke)
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(t.about_unrar_title)
+                        .strong()
+                        .color(theme.accent_color()),
+                );
+                ui.label(
+                    RichText::new(t.about_unrar_text)
+                        .size(12.0)
+                        .color(secondary),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(t.about_sil_title)
+                        .strong()
+                        .color(theme.accent_color()),
+                );
+                ui.label(RichText::new(t.about_sil_text).size(12.0).color(secondary));
+            });
+    }
+}
+
+fn select_font(
+    settings: &mut AppSettings,
+    ctx: &egui::Context,
+    font_id: &str,
+    on_save_settings: &mut bool,
+    pro: &mut ProUpgradeState,
+) {
+    if font_id == OPEN_DYSLEXIC_FONT && !settings.can_use(ProFeature::FocusTools) {
+        pro.request(ProFeature::FocusTools);
+        return;
+    }
+    settings.font_family = font_id.to_string();
+    let effective_font_family = settings.effective_font_family();
+    apply_font_family(ctx, &effective_font_family);
+    *on_save_settings = true;
 }

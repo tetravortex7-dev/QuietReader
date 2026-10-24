@@ -1,6 +1,4 @@
-use crate::document::{
-    BookChapter, BookMetadata, Document, DocumentError, HasToc, TextContent, TocItem,
-};
+use crate::document::{BookChapter, BookMetadata, Document, DocumentError, TextContent, TocItem};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -9,17 +7,14 @@ pub struct RtfDocument {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+    footnotes: std::collections::HashMap<String, String>,
+    header_text: Option<String>,
+    footer_text: Option<String>,
 }
 
 impl TextContent for RtfDocument {
     fn chapters(&self) -> &[BookChapter] {
         &self.chapters
-    }
-}
-
-impl HasToc for RtfDocument {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
     }
 }
 
@@ -48,8 +43,16 @@ impl Document for RtfDocument {
         Some(self)
     }
 
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
-        Some(self)
+    fn footnote(&self, id: &str) -> Option<&str> {
+        self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn header_text(&self) -> Option<&str> {
+        self.header_text.as_deref()
+    }
+
+    fn footer_text(&self) -> Option<&str> {
+        self.footer_text.as_deref()
     }
 }
 
@@ -85,12 +88,18 @@ impl RtfDocument {
             ));
         }
 
-        let (chapters, toc, metadata) = parse_rtf(bytes, default_title)?;
+        let (prepared, footnotes) = preprocess_footnotes(bytes);
+        let header_text = extract_rtf_groups(bytes, b"\\header");
+        let footer_text = extract_rtf_groups(bytes, b"\\footer");
+        let (chapters, toc, metadata) = parse_rtf(&prepared, default_title)?;
 
         Ok(Self {
             metadata,
             chapters,
             toc,
+            footnotes,
+            header_text,
+            footer_text,
         })
     }
 }
@@ -471,6 +480,210 @@ fn parse_rtf(
     };
 
     Ok((chapters, toc, metadata))
+}
+
+fn preprocess_footnotes(bytes: &[u8]) -> (Vec<u8>, std::collections::HashMap<String, String>) {
+    let needle = b"\\footnote";
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut footnotes = std::collections::HashMap::new();
+    let mut last = 0;
+    let mut search = 0;
+    let mut counter = 0usize;
+
+    while let Some(relative) = find_bytes(&bytes[search..], needle) {
+        let position = search + relative;
+        let Some(group_start) = find_group_start(bytes, position) else {
+            search = position + needle.len();
+            continue;
+        };
+        let Some(group_end) = find_group_end(bytes, group_start) else {
+            break;
+        };
+        let text = rtf_group_text(&bytes[position + needle.len()..group_end]);
+        if !text.is_empty() {
+            let id = format!("rtf_fn_{counter}");
+            counter += 1;
+            output.extend_from_slice(&bytes[last..group_start]);
+            let token = crate::document::footnote_token(&id);
+            let escaped = token.replace('{', "\\{").replace('}', "\\}");
+            output.extend_from_slice(escaped.as_bytes());
+            footnotes.insert(id, text);
+            last = group_end + 1;
+        }
+        search = group_end + 1;
+    }
+
+    output.extend_from_slice(&bytes[last..]);
+    (output, footnotes)
+}
+
+fn extract_rtf_groups(bytes: &[u8], needle: &[u8]) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut search = 0;
+    while let Some(relative) = find_bytes(&bytes[search..], needle) {
+        let position = search + relative;
+        let Some(start) = find_group_start(bytes, position) else {
+            search = position + needle.len();
+            continue;
+        };
+        let Some(end) = find_group_end(bytes, start) else {
+            break;
+        };
+        let mut text_start = position + needle.len();
+        while text_start < end && bytes[text_start].is_ascii_alphabetic() {
+            text_start += 1;
+        }
+        let text = rtf_group_text(&bytes[text_start..end]);
+        if !text.is_empty() && !parts.iter().any(|part| part == &text) {
+            parts.push(text);
+        }
+        search = end + 1;
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" • "))
+    }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn is_escaped(bytes: &[u8], index: usize) -> bool {
+    let mut count = 0;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        count += 1;
+        cursor -= 1;
+    }
+    count % 2 == 1
+}
+
+fn find_group_start(bytes: &[u8], position: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut index = position;
+    while index > 0 {
+        index -= 1;
+        if is_escaped(bytes, index) {
+            continue;
+        }
+        match bytes[index] {
+            b'}' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    return Some(index);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_group_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut index = start;
+    while index < bytes.len() {
+        if !is_escaped(bytes, index) {
+            match bytes[index] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(index);
+                    }
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn rtf_group_text(bytes: &[u8]) -> String {
+    let mut output = String::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => {
+                index += 1;
+                if index >= bytes.len() {
+                    break;
+                }
+                match bytes[index] {
+                    b'\\' | b'{' | b'}' => {
+                        output.push(bytes[index] as char);
+                        index += 1;
+                    }
+                    b'\'' => {
+                        index += 1;
+                        if index + 1 < bytes.len() {
+                            let high = hex_digit(bytes[index]);
+                            let low = hex_digit(bytes[index + 1]);
+                            if let (Some(high), Some(low)) = (high, low) {
+                                output.push(((high << 4) | low) as char);
+                            }
+                            index += 2;
+                        }
+                    }
+                    b'u' => {
+                        index += 1;
+                        let start = index;
+                        if index < bytes.len() && bytes[index] == b'-' {
+                            index += 1;
+                        }
+                        while index < bytes.len() && bytes[index].is_ascii_digit() {
+                            index += 1;
+                        }
+                        if let Ok(code) = std::str::from_utf8(&bytes[start..index])
+                            .unwrap_or("")
+                            .parse::<i32>()
+                        {
+                            let code = if code < 0 { code + 65536 } else { code };
+                            if let Some(ch) = char::from_u32(code as u32) {
+                                output.push(ch);
+                            }
+                        }
+                        if index < bytes.len() && bytes[index] == b' ' {
+                            index += 1;
+                        }
+                    }
+                    byte if byte.is_ascii_alphabetic() => {
+                        let start = index;
+                        while index < bytes.len() && bytes[index].is_ascii_alphabetic() {
+                            index += 1;
+                        }
+                        let word = std::str::from_utf8(&bytes[start..index]).unwrap_or("");
+                        while index < bytes.len()
+                            && (bytes[index].is_ascii_digit() || bytes[index] == b'-')
+                        {
+                            index += 1;
+                        }
+                        if matches!(word, "par" | "line" | "tab") && !output.ends_with(' ') {
+                            output.push(' ');
+                        }
+                        if index < bytes.len() && bytes[index] == b' ' {
+                            index += 1;
+                        }
+                    }
+                    _ => {
+                        index += 1;
+                    }
+                }
+            }
+            b'{' | b'}' => index += 1,
+            byte => {
+                output.push(byte as char);
+                index += 1;
+            }
+        }
+    }
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn hex_digit(b: u8) -> Option<u8> {

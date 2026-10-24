@@ -2,27 +2,40 @@ fn main() {
     #[cfg(windows)]
     {
         let out_dir = std::env::var("OUT_DIR").unwrap();
-        let obj_path = format!("{out_dir}/resources.o");
-
-        let windres_cmd = if std::process::Command::new("windres")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            "windres".to_string()
+        let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+        let (program, object_path, args) = if target_env == "msvc" {
+            (
+                "rc.exe",
+                format!("{out_dir}/resources.res"),
+                vec![
+                    "/nologo".to_string(),
+                    "/fo".to_string(),
+                    format!("{out_dir}/resources.res"),
+                    "resources.rc".to_string(),
+                ],
+            )
         } else {
-            "C:\\Users\\Almas\\AppData\\Local\\Microsoft\\WinGet\\Packages\\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\\mingw64\\bin\\windres.exe".to_string()
+            (
+                "windres",
+                format!("{out_dir}/resources.o"),
+                vec![
+                    "resources.rc".to_string(),
+                    "-o".to_string(),
+                    format!("{out_dir}/resources.o"),
+                ],
+            )
         };
 
-        let status = std::process::Command::new(&windres_cmd)
-            .args(["resources.rc", "-o", &obj_path])
-            .status()
-            .unwrap_or_else(|e| panic!("Не удалось запустить {windres_cmd}: {e}"));
+        match std::process::Command::new(program).args(args).status() {
+            Ok(status) if status.success() => {
+                println!("cargo:rustc-link-arg={object_path}");
+            }
+            Ok(status) => panic!("Команда {program} завершилась с ошибкой: {status}"),
+            Err(error) => {
+                println!("cargo:warning=Не удалось запустить {program}: {error}");
+            }
+        }
 
-        assert!(status.success(), "Команда windres завершилась с ошибкой");
-
-        println!("cargo:rustc-link-arg={obj_path}");
         println!("cargo:rerun-if-changed=resources.rc");
         println!("cargo:rerun-if-changed=assets/app.ico");
         println!("cargo:rerun-if-changed=assets/fb2_doc.ico");

@@ -3,38 +3,48 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use super::types::{TtsCommand, TtsEngineKind, TtsStatus};
+use crate::settings::TtsSettings;
 
 pub struct TtsController {
     command_tx: Option<Sender<TtsCommand>>,
     status: Arc<Mutex<TtsStatus>>,
+    preferred: TtsSettings,
     pub show_panel: bool,
 }
 
 impl Default for TtsController {
     fn default() -> Self {
-        Self::new()
+        Self::new(TtsSettings::default())
     }
 }
 
 impl TtsController {
-    pub fn new() -> Self {
+    pub fn new(initial: TtsSettings) -> Self {
+        let mut initial = initial;
+        initial.rate = initial.rate.clamp(0.5, 3.0);
         let status = Arc::new(Mutex::new(TtsStatus {
-            rate: 1.0,
+            rate: initial.rate,
             ..Default::default()
         }));
 
         let (tx, rx) = channel::<TtsCommand>();
         let status_clone = Arc::clone(&status);
+        let worker_initial = initial.clone();
 
         thread::spawn(move || {
-            Self::worker_loop(rx, status_clone);
+            Self::worker_loop(rx, status_clone, worker_initial);
         });
 
         Self {
             command_tx: Some(tx),
             status,
+            preferred: initial,
             show_panel: false,
         }
+    }
+
+    pub fn preferences(&self) -> TtsSettings {
+        self.preferred.clone()
     }
 
     pub fn status(&self) -> TtsStatus {
@@ -103,6 +113,7 @@ impl TtsController {
     }
 
     pub fn set_rate(&mut self, rate: f32) {
+        self.preferred.rate = rate.clamp(0.5, 3.0);
         if let Ok(mut st) = self.status.lock() {
             st.rate = rate;
         }
@@ -112,6 +123,7 @@ impl TtsController {
     }
 
     pub fn set_voice(&mut self, voice_id: String) {
+        self.preferred.voice_id = Some(voice_id.clone());
         if let Ok(mut st) = self.status.lock() {
             st.selected_voice_id = Some(voice_id.clone());
         }
@@ -121,6 +133,10 @@ impl TtsController {
     }
 
     pub fn set_engine(&mut self, engine: TtsEngineKind) {
+        self.preferred.engine = match engine {
+            TtsEngineKind::System => "system".to_string(),
+            TtsEngineKind::Edge => "edge".to_string(),
+        };
         if let Ok(mut st) = self.status.lock() {
             st.engine = engine;
         }

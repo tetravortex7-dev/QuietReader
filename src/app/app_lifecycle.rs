@@ -4,14 +4,17 @@ use super::bookmarks_view::BookmarkViewState;
 use super::comic_view::ComicViewState;
 use super::dialogs::SettingsTab;
 use super::fonts::apply_font_family;
+use super::license_view::ProUpgradeState;
 use super::pdf_view::PdfViewState;
 use super::search_view::SearchState;
 use super::tabs::BookTab;
 use super::theme::ReaderTheme;
-use super::toc_view::SidebarTab;
+use super::toc_view::{SidebarTab, TocViewState};
 use super::translate::TranslateState;
 use super::tts::TtsController;
-use super::{Dialogs, DocumentLoader, QuietReaderApp};
+use super::{Dialogs, DocumentLoader, LibraryViewState, QuietReaderApp, onboarding};
+use crate::core::library::{LibraryMode, LibraryStore};
+use crate::core::license::ProFeature;
 use crate::document::DocumentViewKind;
 use crate::settings::AppSettings;
 use eframe::egui;
@@ -56,7 +59,44 @@ impl QuietReaderApp {
             updater.check_now();
         }
 
-        let ambient = AmbientController::new(settings.ambient.clone());
+        let mut ambient_settings = settings.ambient.clone();
+        if !settings.can_use(ProFeature::AmbientAudio) {
+            ambient_settings.is_playing = false;
+        }
+        let ambient = AmbientController::new(ambient_settings);
+        let tts_settings = settings.tts.clone();
+        let effective_font_family = settings.effective_font_family();
+        let library_path = LibraryStore::path_beside(&AppSettings::get_settings_path());
+        let library_existed = library_path.exists();
+        let mut library = LibraryStore::load_from_path(&library_path);
+        let mut library_dirty = false;
+        if !library.recent_imported {
+            let now = crate::core::license::unix_now();
+            for book in &settings.recent_books {
+                library.ensure_book(&book.path, &book.title, &book.author, now);
+                if let Some((chapter, _)) = settings.get_book_progress(&book.path) {
+                    library.record_progress(&book.path, &book.title, &book.author, chapter, 0, now);
+                }
+            }
+            if let Some(path) = &settings.last_opened_book {
+                library.ensure_book(path, "", "", now);
+            }
+            library.recent_imported = true;
+            if library.save_to_path(&library_path).is_err() {
+                library_dirty = true;
+            }
+        }
+        if !library_existed && onboarding::ensure_welcome_book(&library_path, &mut library) {
+            library_dirty = library.save_to_path(&library_path).is_err();
+        }
+        let show_library = library.mode != LibraryMode::ReaderOnly;
+        let last_applied_design = library.design;
+        let cover_cache_dir = library_path
+            .parent()
+            .map(|parent| parent.join("covers"))
+            .unwrap_or_else(|| std::env::temp_dir().join("QuietReader").join("covers"));
+        let mut library_view = LibraryViewState::default();
+        library_view.set_cover_cache_dir(cover_cache_dir);
 
         Self {
             tabs: Vec::new(),
@@ -80,6 +120,8 @@ impl QuietReaderApp {
             settings,
             settings_dirty: false,
             last_settings_change: Instant::now(),
+            progress_dirty: false,
+            last_progress_change: Instant::now(),
             last_saved_scroll_y: 0.0,
             show_association_dialog,
             dont_show_association_again: false,
@@ -89,19 +131,32 @@ impl QuietReaderApp {
             autoscroll: AutoscrollController::default(),
             comic_view: ComicViewState::default(),
             pdf_view: PdfViewState::default(),
+            text_images: Default::default(),
             document_loader: DocumentLoader::default(),
             search: SearchState::default(),
-            tts: TtsController::new(),
+            tts: TtsController::new(tts_settings),
             last_tts_paragraph: None,
             last_applied_theme: None,
+            last_applied_design,
+            library,
+            library_path,
+            library_dirty,
+            last_library_save: Instant::now(),
+            last_reading_activity: None,
+            reading_seconds_accumulator: 0.0,
+            library_view,
+            show_library,
             updater,
             show_opds_dialog: false,
             opds_state: crate::opds::OpdsBrowserState::new(),
             translate: TranslateState::new(),
             sidebar_tab: SidebarTab::Toc,
             bookmark_view_state: BookmarkViewState::default(),
+            toc_view: TocViewState::default(),
             return_location: None,
             ambient,
+            pro_upgrade: ProUpgradeState::default(),
+            last_applied_font_family: effective_font_family,
         }
     }
 
@@ -110,9 +165,11 @@ impl QuietReaderApp {
         initial_file: Option<PathBuf>,
         settings: AppSettings,
     ) -> Self {
-        apply_font_family(&cc.egui_ctx, &settings.font_family);
+        let effective_font_family = settings.effective_font_family();
+        apply_font_family(&cc.egui_ctx, &effective_font_family);
         let saved_tabs = settings.open_tabs.clone();
         let saved_active_idx = settings.active_tab_index;
+        let has_initial_file = initial_file.is_some();
         let mut app = Self::from_settings(settings);
         app.document_loader.update_ctx(&cc.egui_ctx);
         crate::platform::set_keep_screen_on(app.keep_screen_on);
@@ -142,6 +199,11 @@ impl QuietReaderApp {
             app.load_file(path);
         }
 
+        app.show_library = if has_initial_file {
+            false
+        } else {
+            app.library.mode != LibraryMode::ReaderOnly
+        };
         app
     }
 
@@ -150,9 +212,17 @@ impl QuietReaderApp {
         self.last_settings_change = Instant::now();
     }
 
+    pub fn mark_progress_dirty(&mut self) {
+        self.progress_dirty = true;
+        self.last_progress_change = Instant::now();
+    }
+
     pub fn flush_debounced_settings(&mut self) {
-        if self.settings_dirty && self.last_settings_change.elapsed() >= Duration::from_millis(1500)
-        {
+        let settings_ready = self.settings_dirty
+            && self.last_settings_change.elapsed() >= Duration::from_millis(1500);
+        let progress_ready =
+            self.progress_dirty && self.last_progress_change.elapsed() >= Duration::from_secs(8);
+        if settings_ready || progress_ready {
             self.flush_settings_now();
         }
     }
@@ -160,12 +230,31 @@ impl QuietReaderApp {
     pub fn flush_settings_now(&mut self) {
         self.save_active_to_tab();
         self.sync_settings_fields();
-        if let Err(e) = self.settings.save() {
+        let settings_result = self.settings.save();
+        if self.library_dirty {
+            self.save_library_now();
+        }
+        if let Err(e) = settings_result {
             let t = self.settings.ui_language.t();
             self.status_message = Some(t.save_settings_error.replace("{}", &e));
         }
         self.settings_dirty = false;
         self.last_settings_change = Instant::now();
+        self.progress_dirty = false;
+        self.last_progress_change = Instant::now();
+    }
+
+    pub fn save_library_now(&mut self) {
+        match self.library.save_to_path(&self.library_path) {
+            Ok(()) => {
+                self.library_dirty = false;
+            }
+            Err(error) => {
+                let t = self.settings.ui_language.t();
+                self.status_message = Some(t.library_save_error.replace("{error}", &error));
+            }
+        }
+        self.last_library_save = Instant::now();
     }
 
     fn sync_settings_fields(&mut self) {
@@ -249,13 +338,44 @@ impl QuietReaderApp {
         self.flush_settings_now();
         self.autoscroll.stop();
 
-        let request_id = self
-            .document_loader
-            .request_load(path.clone(), self.settings.ui_language);
+        let request_id = self.document_loader.request_load(
+            path.clone(),
+            self.settings.ui_language,
+            self.settings.text_encoding_override().map(str::to_string),
+        );
         let tab = BookTab::new_loading(path, request_id, self.settings.ui_language);
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
         self.apply_tab_state(new_idx);
+    }
+
+    pub fn reload_current_text_encoding(&mut self) {
+        let Some(path) = self.current_file_path.clone() else {
+            return;
+        };
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_lowercase())
+            .unwrap_or_default();
+        if !matches!(extension.as_str(), "txt" | "md" | "markdown" | "log") {
+            return;
+        }
+        self.save_active_to_tab();
+        let request_id = self.document_loader.request_load(
+            path,
+            self.settings.ui_language,
+            self.settings.text_encoding_override().map(str::to_string),
+        );
+        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            tab.is_loading = true;
+            tab.request_id = request_id;
+            tab.load_error = None;
+            tab.document = None;
+        }
+        self.document = None;
+        self.text_images.clear();
+        self.show_settings_dialog = false;
     }
 
     pub fn poll_document_loader(&mut self) {
@@ -275,6 +395,27 @@ impl QuietReaderApp {
                         resp.path,
                         &mut self.settings,
                     );
+                    let meta = loaded.document.metadata();
+                    let total_units = if let Some(pages) = loaded.document.page_content() {
+                        pages.page_count()
+                    } else {
+                        loaded.document.chapters().len()
+                    };
+                    let current_unit = if loaded.document.page_content().is_some() {
+                        loaded.comic_page
+                    } else {
+                        loaded.chapter
+                    };
+                    if self.library.record_progress(
+                        &loaded.file_path,
+                        &meta.title,
+                        &meta.author,
+                        current_unit,
+                        total_units,
+                        crate::core::license::unix_now(),
+                    ) {
+                        self.library_dirty = true;
+                    }
                     if let Some(tab) = self.tabs.get_mut(idx) {
                         tab.update_loaded(
                             loaded.document.clone(),
@@ -286,6 +427,8 @@ impl QuietReaderApp {
                     if self.active_tab == idx {
                         self.document = Some(loaded.document);
                         self.current_file_path = Some(loaded.file_path);
+                        self.last_reading_activity = Some(Instant::now());
+                        self.reading_seconds_accumulator = 0.0;
                         self.current_chapter = loaded.chapter;
                         self.last_rendered_chapter = loaded.chapter;
                         self.pending_scroll_y = Some(loaded.scroll_y);
@@ -294,7 +437,9 @@ impl QuietReaderApp {
                         self.comic_view.current_page = loaded.comic_page;
                         self.pdf_view.clear_cache();
                         self.pdf_view.current_page = loaded.comic_page;
+                        self.text_images.clear();
                         self.search.reset_for_document();
+                        self.toc_view.filter.clear();
                         self.status_message = Some(loaded.status_message);
                         self.mark_settings_dirty();
                     }
@@ -317,13 +462,9 @@ impl QuietReaderApp {
         if self.is_fullscreen == fullscreen {
             return;
         }
-        #[cfg(windows)]
-        {
-            let hwnd = crate::platform::get_primary_window_hwnd();
-            if crate::platform::set_window_fullscreen(hwnd, fullscreen) {
-                self.is_fullscreen = fullscreen;
-                return;
-            }
+        if crate::platform::try_set_native_fullscreen(fullscreen) {
+            self.is_fullscreen = fullscreen;
+            return;
         }
         self.is_fullscreen = fullscreen;
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));

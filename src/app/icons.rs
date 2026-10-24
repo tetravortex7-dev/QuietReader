@@ -44,6 +44,11 @@ pub enum Icon {
     Moon,
     Crop,
     Hourglass,
+    Library,
+    Cozy,
+    Studio,
+    Pro,
+    Info,
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
@@ -499,6 +504,91 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
             painter.add(egui::Shape::closed_line(upper, stroke));
             let lower = vec![p(0.50, 0.50), p(0.68, 0.80), p(0.32, 0.80)];
             painter.add(egui::Shape::closed_line(lower, stroke));
+        }
+        Icon::Library => {
+            painter.line_segment([p(0.12, 0.86), p(0.88, 0.86)], bold_stroke);
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.18, 0.38), p(0.34, 0.84)),
+                1.2,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.38, 0.22), p(0.54, 0.84)),
+                1.2,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.58, 0.32), p(0.74, 0.84)),
+                1.2,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.line_segment([p(0.62, 0.38), p(0.70, 0.38)], thin_stroke);
+            painter.line_segment([p(0.42, 0.28), p(0.50, 0.28)], thin_stroke);
+        }
+        Icon::Cozy => {
+            let cup = Rect::from_min_max(p(0.18, 0.42), p(0.64, 0.82));
+            painter.rect_stroke(cup, 3.5, stroke, StrokeKind::Inside);
+            painter.circle_stroke(p(0.70, 0.58), w * 0.12, stroke);
+            painter.line_segment([p(0.16, 0.86), p(0.72, 0.86)], thin_stroke);
+            painter.add(egui::Shape::line(
+                vec![p(0.30, 0.34), p(0.34, 0.24), p(0.30, 0.14)],
+                thin_stroke,
+            ));
+            painter.add(egui::Shape::line(
+                vec![p(0.48, 0.34), p(0.52, 0.24), p(0.48, 0.14)],
+                thin_stroke,
+            ));
+        }
+        Icon::Studio => {
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.14, 0.16), p(0.46, 0.46)),
+                1.0,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.54, 0.16), p(0.86, 0.46)),
+                1.0,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.14, 0.54), p(0.46, 0.84)),
+                1.0,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.54, 0.54), p(0.86, 0.84)),
+                1.0,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.line_segment([p(0.20, 0.30), p(0.40, 0.30)], thin_stroke);
+            painter.line_segment([p(0.60, 0.68), p(0.80, 0.68)], thin_stroke);
+        }
+        Icon::Pro => {
+            let crown = vec![
+                p(0.16, 0.72),
+                p(0.22, 0.30),
+                p(0.38, 0.48),
+                p(0.50, 0.20),
+                p(0.62, 0.48),
+                p(0.78, 0.30),
+                p(0.84, 0.72),
+            ];
+            painter.add(egui::Shape::closed_line(crown, bold_stroke));
+            painter.line_segment([p(0.16, 0.82), p(0.84, 0.82)], bold_stroke);
+            painter.circle_filled(p(0.50, 0.60), w * 0.055, color);
+        }
+        Icon::Info => {
+            let size = w.min(h);
+            painter.circle_stroke(rect.center(), size * 0.36, stroke);
+            painter.circle_filled(p(0.50, 0.33), size * 0.055, color);
+            painter.line_segment([p(0.50, 0.45), p(0.50, 0.70)], bold_stroke);
         }
     }
 }

@@ -1,5 +1,6 @@
 use super::icons::{Icon, IconButton, IconLabel, icon_button};
 use super::theme::ReaderTheme;
+use crate::core::library::{DEFAULT_READING_WPM, estimate_minutes_left_in_chapter};
 use crate::document::{Document, DocumentViewKind};
 use eframe::egui::{self, Panel, RichText};
 use std::sync::Arc;
@@ -8,6 +9,7 @@ pub struct TopBarActions {
     pub open_file: bool,
     pub open_folder: bool,
     pub toggle_recent: bool,
+    pub toggle_library: bool,
     pub toggle_opds: bool,
     pub toggle_toc: bool,
     pub toggle_bookmark: bool,
@@ -19,14 +21,17 @@ pub struct TopBarActions {
     pub toggle_reading_ruler: bool,
     pub toggle_ambient: bool,
     pub open_update: bool,
+    pub open_license: bool,
 }
 
 pub fn render_top_bar(
     ui: &mut egui::Ui,
     has_document: bool,
+    library_visible: bool,
     is_fullscreen: bool,
     show_toc: bool,
     reading_ruler: bool,
+    pro_active: bool,
     lang: crate::i18n::UiLanguage,
     update_available_version: Option<&str>,
 ) -> TopBarActions {
@@ -35,6 +40,7 @@ pub fn render_top_bar(
         open_file: false,
         open_folder: false,
         toggle_recent: false,
+        toggle_library: false,
         toggle_opds: false,
         toggle_toc: false,
         toggle_bookmark: false,
@@ -46,6 +52,7 @@ pub fn render_top_bar(
         toggle_reading_ruler: false,
         toggle_ambient: false,
         open_update: false,
+        open_license: false,
     };
 
     Panel::top("top_bar").show(ui, |ui| {
@@ -79,6 +86,13 @@ pub fn render_top_bar(
                 .clicked()
             {
                 actions.toggle_recent = true;
+            }
+            if library_visible
+                && icon_button(ui, Icon::Library, t.library_title)
+                    .on_hover_text(t.library_open_tooltip)
+                    .clicked()
+            {
+                actions.toggle_library = true;
             }
             if icon_button(ui, Icon::Globe, t.opds_catalogs)
                 .on_hover_text(t.opds_catalogs_tooltip)
@@ -134,6 +148,23 @@ pub fn render_top_bar(
                 }
             }
             ui.with_layout(secondary_layout, |ui| {
+                let license_color = if pro_active {
+                    egui::Color32::from_rgb(214, 164, 52)
+                } else {
+                    ui.visuals().text_color()
+                };
+                let license_tip = if pro_active {
+                    t.license_pro_activated
+                } else {
+                    t.license_open_tooltip
+                };
+                if ui
+                    .add(IconButton::new(Icon::Pro, t.license_open).color(license_color))
+                    .on_hover_text(license_tip)
+                    .clicked()
+                {
+                    actions.open_license = true;
+                }
                 if icon_button(ui, Icon::Settings, t.settings)
                     .on_hover_text(t.settings_tooltip)
                     .clicked()
@@ -249,17 +280,39 @@ pub fn render_bottom_bar(
                 let (cur_page, total_pages, pct) =
                     calculate_text_pages(doc.chapters(), ch_idx, cur_scroll, max_scroll);
                 let page_info = format!("{} {cur_page}/{total_pages}", t.page_prefix);
-                let cur_str = if total_chapters > 1 {
-                    let sec_str = t
-                        .section_x_of_y
-                        .replacen("{}", &(ch_idx + 1).to_string(), 1)
-                        .replacen("{}", &total_chapters.to_string(), 1);
-                    format!("{page_info}  •  {sec_str}")
-                } else {
-                    page_info
-                };
+                let mut parts = vec![page_info];
+                if total_chapters > 1 {
+                    parts.push(
+                        t.section_x_of_y
+                            .replacen("{}", &(ch_idx + 1).to_string(), 1)
+                            .replacen("{}", &total_chapters.to_string(), 1),
+                    );
+                }
+                let chapter_chars = doc
+                    .chapters()
+                    .get(ch_idx)
+                    .map(chapter_char_count)
+                    .unwrap_or(0);
+                if chapter_chars > 0 {
+                    let chapter_progress = if max_scroll > 1.0 {
+                        (cur_scroll / max_scroll).clamp(0.0, 1.0)
+                    } else if ch_idx + 1 == doc.chapters().len() {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    let minutes_left = estimate_minutes_left_in_chapter(
+                        chapter_chars,
+                        chapter_progress,
+                        DEFAULT_READING_WPM,
+                    );
+                    parts.push(
+                        t.chapter_time_left
+                            .replace("{minutes}", &minutes_left.to_string()),
+                    );
+                }
                 (
-                    cur_str,
+                    parts.join("  |  "),
                     crate::i18n::format::format_percent(pct, lang),
                     (pct / 100.0).clamp(0.0, 1.0),
                 )
@@ -318,7 +371,7 @@ pub fn render_bottom_bar(
 
             if !cur_str.is_empty() {
                 ui.with_layout(secondary_layout, |ui| {
-                    ui.label(RichText::new(format!("{cur_str}  •  {pct_str}")).strong());
+                    ui.label(RichText::new(format!("{cur_str}  |  {pct_str}")).strong());
                 });
             }
         });
@@ -367,11 +420,7 @@ pub fn calculate_text_pages(
     let mut total_chars = 0usize;
     let mut chars_read = 0usize;
     for (i, ch) in chapters.iter().enumerate() {
-        let ch_len = ch.title.chars().count()
-            + ch.paragraphs
-                .iter()
-                .map(|p| p.chars().count())
-                .sum::<usize>();
+        let ch_len = chapter_char_count(ch);
         if i < ch_idx {
             chars_read += ch_len;
         } else if i == ch_idx {
@@ -391,4 +440,13 @@ pub fn calculate_text_pages(
         0.0
     };
     (cur_page, total_pages, pct)
+}
+
+fn chapter_char_count(chapter: &crate::document::BookChapter) -> usize {
+    chapter.title.chars().count()
+        + chapter
+            .paragraphs
+            .iter()
+            .map(|paragraph| paragraph.chars().count())
+            .sum::<usize>()
 }

@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::document::{
-    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind, HasToc,
+    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind,
     PageContent, PageInfo, PageTextSpan, TocItem,
 };
 
@@ -340,12 +340,6 @@ fn convert_djvu_bookmarks(
         .collect()
 }
 
-impl HasToc for DjvuDocument {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
-    }
-}
-
 impl Document for DjvuDocument {
     fn metadata(&self) -> &BookMetadata {
         &self.metadata
@@ -372,10 +366,6 @@ impl Document for DjvuDocument {
     }
 
     fn page_content(&self) -> Option<&dyn PageContent> {
-        Some(self)
-    }
-
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
         Some(self)
     }
 }

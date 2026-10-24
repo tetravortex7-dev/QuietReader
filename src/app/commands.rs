@@ -72,14 +72,30 @@ impl QuietReaderApp {
                 self.show_settings_dialog = !self.show_settings_dialog;
             }
             Command::ToggleReadingRuler => {
-                self.settings.reading_ruler = !self.settings.reading_ruler;
-                self.mark_settings_dirty();
+                if self
+                    .settings
+                    .can_use(crate::core::license::ProFeature::FocusTools)
+                {
+                    self.settings.reading_ruler = !self.settings.reading_ruler;
+                    self.mark_settings_dirty();
+                } else {
+                    self.pro_upgrade
+                        .request(crate::core::license::ProFeature::FocusTools);
+                }
             }
             Command::ToggleBookmark => {
                 self.toggle_quick_bookmark();
             }
             Command::ToggleAmbient => {
-                self.ambient.toggle_panel();
+                if self
+                    .settings
+                    .can_use(crate::core::license::ProFeature::AmbientAudio)
+                {
+                    self.ambient.toggle_panel();
+                } else {
+                    self.pro_upgrade
+                        .request(crate::core::license::ProFeature::AmbientAudio);
+                }
             }
             Command::ExitFullscreen => {
                 if self.search.is_open {
@@ -111,6 +127,7 @@ impl QuietReaderApp {
                 match view_kind {
                     DocumentViewKind::Pdf => {
                         let total_pages = self.pdf_view.page_count(&self.document);
+                        let auto_crop = self.settings.effective_pdf_auto_crop();
                         match nav_cmd {
                             Command::LineDown => {
                                 if self.settings.pdf.layout == "Continuous" {
@@ -119,8 +136,10 @@ impl QuietReaderApp {
                                     self.pending_scroll_y =
                                         Some((cur + 60.0).clamp(0.0, self.max_scroll_y));
                                 } else {
-                                    let max_pan_y =
-                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    let max_pan_y = self
+                                        .pdf_view
+                                        .max_pan(&self.settings.pdf, total_pages, auto_crop)
+                                        .y;
                                     if max_pan_y > 1.0
                                         && self.pdf_view.pan_offset.y > -max_pan_y + 1.0
                                     {
@@ -130,7 +149,7 @@ impl QuietReaderApp {
                                         self.pdf_view.next_page(total_pages, &self.settings.pdf);
                                         let next_max_y = self
                                             .pdf_view
-                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .max_pan(&self.settings.pdf, total_pages, auto_crop)
                                             .y;
                                         self.pdf_view.pan_offset.y = next_max_y;
                                     }
@@ -144,8 +163,10 @@ impl QuietReaderApp {
                                     self.pending_scroll_y =
                                         Some((cur - 60.0).clamp(0.0, self.max_scroll_y));
                                 } else {
-                                    let max_pan_y =
-                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    let max_pan_y = self
+                                        .pdf_view
+                                        .max_pan(&self.settings.pdf, total_pages, auto_crop)
+                                        .y;
                                     if max_pan_y > 1.0
                                         && self.pdf_view.pan_offset.y < max_pan_y - 1.0
                                     {
@@ -155,7 +176,7 @@ impl QuietReaderApp {
                                         self.pdf_view.prev_page(&self.settings.pdf);
                                         let prev_max_y = self
                                             .pdf_view
-                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .max_pan(&self.settings.pdf, total_pages, auto_crop)
                                             .y;
                                         self.pdf_view.pan_offset.y = -prev_max_y;
                                     }
@@ -171,8 +192,10 @@ impl QuietReaderApp {
                                             .clamp(0.0, self.max_scroll_y),
                                     );
                                 } else {
-                                    let max_pan_y =
-                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    let max_pan_y = self
+                                        .pdf_view
+                                        .max_pan(&self.settings.pdf, total_pages, auto_crop)
+                                        .y;
                                     if *nav_cmd == Command::PageDown
                                         && max_pan_y > 1.0
                                         && self.pdf_view.pan_offset.y > -max_pan_y + 1.0
@@ -184,7 +207,7 @@ impl QuietReaderApp {
                                         self.pdf_view.next_page(total_pages, &self.settings.pdf);
                                         let next_max_y = self
                                             .pdf_view
-                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .max_pan(&self.settings.pdf, total_pages, auto_crop)
                                             .y;
                                         self.pdf_view.pan_offset.y = next_max_y;
                                     }
@@ -200,8 +223,10 @@ impl QuietReaderApp {
                                             .clamp(0.0, self.max_scroll_y),
                                     );
                                 } else {
-                                    let max_pan_y =
-                                        self.pdf_view.max_pan(&self.settings.pdf, total_pages).y;
+                                    let max_pan_y = self
+                                        .pdf_view
+                                        .max_pan(&self.settings.pdf, total_pages, auto_crop)
+                                        .y;
                                     if *nav_cmd == Command::PageUp
                                         && max_pan_y > 1.0
                                         && self.pdf_view.pan_offset.y < max_pan_y - 1.0
@@ -213,7 +238,7 @@ impl QuietReaderApp {
                                         self.pdf_view.prev_page(&self.settings.pdf);
                                         let prev_max_y = self
                                             .pdf_view
-                                            .max_pan(&self.settings.pdf, total_pages)
+                                            .max_pan(&self.settings.pdf, total_pages, auto_crop)
                                             .y;
                                         self.pdf_view.pan_offset.y = -prev_max_y;
                                     }
@@ -227,7 +252,8 @@ impl QuietReaderApp {
                         if ReaderCore::apply_paged_command(
                             nav_cmd,
                             &self.document,
-                            &self.settings.comic,
+                            self.settings.comic.reading_mode == "Webtoon",
+                            self.settings.comic.page_layout == "Double",
                             &mut self.comic_view.current_page,
                             self.current_scroll_y,
                             self.max_scroll_y,

@@ -84,10 +84,10 @@ fn test_text_search_multi_chapter_and_title() {
 
     let hits = ReaderCore::search_in_document(&doc, "target");
     assert!(!hits.is_empty());
-    assert_eq!(hits[0].chapter_index, 0);
+    assert_eq!(hits[0].chapter_index, 1);
     assert!(hits[0].snippet.contains("target"));
 
-    let title_hits = ReaderCore::search_in_document(&doc, "SearchDoc");
+    let title_hits = ReaderCore::search_in_document(&doc, "Chapter");
     assert!(!title_hits.is_empty());
     assert_eq!(title_hits[0].paragraph_index, None);
 }

@@ -11,6 +11,20 @@ pub const GITHUB_API_LATEST_RELEASE: &str =
     "https://api.github.com/repos/tetravortex7-dev/QuietReader/releases/latest";
 pub const RAW_CARGO_TOML_URL: &str =
     "https://raw.githubusercontent.com/tetravortex7-dev/QuietReader/master/Cargo.toml";
+const MAX_RELEASE_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_CARGO_TOML_BYTES: u64 = 256 * 1024;
+
+fn read_limited_utf8(reader: &mut dyn Read, limit: u64, label: &str) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    let read = reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read {label}: {e}"))?;
+    if read as u64 > limit {
+        return Err(format!("{label} exceeds the {limit} byte limit"));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8 in {label}: {e}"))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -97,13 +111,11 @@ pub fn check_for_updates_sync() -> Result<UpdateInfo, String> {
 
     if let Ok(mut resp) = release_res {
         if resp.status().is_success() {
-            let mut text = String::new();
-            if resp
-                .body_mut()
-                .as_reader()
-                .read_to_string(&mut text)
-                .is_ok()
-            {
+            if let Ok(text) = read_limited_utf8(
+                &mut resp.body_mut().as_reader(),
+                MAX_RELEASE_RESPONSE_BYTES,
+                "GitHub release response",
+            ) {
                 if let Ok(gh) = serde_json::from_str::<GitHubReleaseResponse>(&text) {
                     if let Some(tag) = gh.tag_name {
                         let is_newer = is_newer_version(CURRENT_VERSION, &tag);
@@ -145,11 +157,11 @@ pub fn check_for_updates_sync() -> Result<UpdateInfo, String> {
     match cargo_res {
         Ok(mut resp) => {
             if resp.status().is_success() {
-                let mut text = String::new();
-                resp.body_mut()
-                    .as_reader()
-                    .read_to_string(&mut text)
-                    .map_err(|e| format!("Failed to read Cargo.toml: {e}"))?;
+                let text = read_limited_utf8(
+                    &mut resp.body_mut().as_reader(),
+                    MAX_CARGO_TOML_BYTES,
+                    "Cargo.toml",
+                )?;
                 if let Some(ver) = extract_version_from_cargo_toml(&text) {
                     let is_newer = is_newer_version(CURRENT_VERSION, &ver);
                     Ok(UpdateInfo {

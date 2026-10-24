@@ -1,10 +1,10 @@
-use crate::document::{
-    BookChapter, BookMetadata, Document, DocumentError, HasToc, TextContent, TocItem,
-};
+use crate::document::{BookChapter, BookMetadata, Document, DocumentError, TextContent, TocItem};
 use mobi::Mobi;
+use std::collections::HashMap;
 use std::path::Path;
 
 pub mod decode;
+mod links;
 use decode::*;
 
 const MAX_MOBI_FILE_SIZE: u64 = 150 * 1024 * 1024;
@@ -14,6 +14,8 @@ pub struct MobiDocument {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+    images: HashMap<String, Vec<u8>>,
+    footnotes: HashMap<String, String>,
     format_name: &'static str,
 }
 
@@ -107,7 +109,7 @@ impl MobiDocument {
 
         let metadata = BookMetadata { title, author };
 
-        let (chapters, toc) = parse_mobi_html(&content, &metadata.title);
+        let (chapters, toc, footnotes) = parse_mobi_html_with_notes(&content, &metadata.title);
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
                 "Не удалось извлечь главы из книги".to_string(),
@@ -118,6 +120,8 @@ impl MobiDocument {
             metadata,
             chapters,
             toc,
+            images: collect_mobi_images(&m),
+            footnotes,
             format_name,
         })
     }
@@ -186,7 +190,7 @@ impl MobiDocument {
 
         let metadata = BookMetadata { title, author };
 
-        let (chapters, toc) = parse_mobi_html(&content, &metadata.title);
+        let (chapters, toc, footnotes) = parse_mobi_html_with_notes(&content, &metadata.title);
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
                 "Не удалось извлечь главы из книги".to_string(),
@@ -197,6 +201,8 @@ impl MobiDocument {
             metadata,
             chapters,
             toc,
+            images: collect_mobi_images(&m),
+            footnotes,
             format_name,
         })
     }
@@ -371,6 +377,15 @@ pub fn is_likely_chapter_heading(text: &str) -> bool {
     keywords.iter().any(|&k| lower.starts_with(k))
 }
 
+pub fn parse_mobi_html_with_notes(
+    raw_html: &str,
+    default_title: &str,
+) -> (Vec<BookChapter>, Vec<TocItem>, HashMap<String, String>) {
+    let (html, notes) = links::preprocess_links(raw_html);
+    let (chapters, toc) = parse_mobi_html(&html, default_title);
+    (chapters, toc, notes)
+}
+
 pub fn parse_mobi_html(raw_html: &str, default_title: &str) -> (Vec<BookChapter>, Vec<TocItem>) {
     let mut raw_sections = split_by_pagebreaks(raw_html);
     if raw_sections.len() <= 1 {
@@ -533,15 +548,30 @@ pub fn parse_mobi_html(raw_html: &str, default_title: &str) -> (Vec<BookChapter>
     (chapters, toc)
 }
 
+fn collect_mobi_images(m: &Mobi) -> HashMap<String, Vec<u8>> {
+    let mut images = HashMap::new();
+    let mut total = 0usize;
+    for (index, record) in m.image_records().iter().enumerate() {
+        if image::guess_format(record.content).is_err()
+            || record.content.len() > crate::document::MAX_SINGLE_ENTRY_BYTES as usize
+        {
+            continue;
+        }
+        let Some(new_total) = total.checked_add(record.content.len()) else {
+            break;
+        };
+        if new_total > crate::document::MAX_TOTAL_UNPACK_BYTES as usize {
+            break;
+        }
+        total = new_total;
+        images.insert(format!("mobi_rec_{}", index + 1), record.content.to_vec());
+    }
+    images
+}
+
 impl TextContent for MobiDocument {
     fn chapters(&self) -> &[BookChapter] {
         &self.chapters
-    }
-}
-
-impl HasToc for MobiDocument {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
     }
 }
 
@@ -560,6 +590,14 @@ impl Document for MobiDocument {
 
     fn format_name(&self) -> &'static str {
         self.format_name
+    }
+
+    fn image_bytes(&self, id: &str) -> Option<Vec<u8>> {
+        self.images.get(id).cloned()
+    }
+
+    fn footnote(&self, id: &str) -> Option<&str> {
+        self.footnotes.get(id).map(String::as_str)
     }
 }
 

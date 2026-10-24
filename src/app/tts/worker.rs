@@ -8,9 +8,14 @@ use tts::Tts;
 use super::controller::TtsController;
 use super::types::{TtsCommand, TtsEngineKind, TtsStatus, TtsVoiceInfo};
 use super::voices::default_edge_voices;
+use crate::settings::TtsSettings;
 
 impl TtsController {
-    pub(super) fn worker_loop(rx: Receiver<TtsCommand>, status: Arc<Mutex<TtsStatus>>) {
+    pub(super) fn worker_loop(
+        rx: Receiver<TtsCommand>,
+        status: Arc<Mutex<TtsStatus>>,
+        initial: TtsSettings,
+    ) {
         let mut sys_tts = Tts::default().ok();
         let audio_device: Option<rodio::MixerDeviceSink> =
             rodio::DeviceSinkBuilder::open_default_sink().ok();
@@ -31,17 +36,26 @@ impl TtsController {
             .collect();
 
         let edge_voices = default_edge_voices();
+        let initial_voice = initial.voice_id.clone();
+        let initial_rate = initial.rate.clamp(0.5, 3.0);
 
-        let mut current_sys_voice_id = if let Some(ru_voice) = system_voices
-            .iter()
-            .find(|v| v.language.to_ascii_lowercase().starts_with("ru"))
-        {
-            Some(ru_voice.id.clone())
-        } else {
-            system_voices.first().map(|v| v.id.clone())
-        };
+        let mut current_sys_voice_id = initial_voice
+            .as_ref()
+            .filter(|id| system_voices.iter().any(|voice| &voice.id == *id))
+            .cloned()
+            .or_else(|| {
+                system_voices
+                    .iter()
+                    .find(|v| v.language.to_ascii_lowercase().starts_with("ru"))
+                    .map(|v| v.id.clone())
+            })
+            .or_else(|| system_voices.first().map(|v| v.id.clone()));
 
-        let mut current_edge_voice_id = Some("ru-RU-SvetlanaNeural".to_string());
+        let mut current_edge_voice_id = initial_voice
+            .as_ref()
+            .filter(|id| edge_voices.iter().any(|voice| &voice.id == *id))
+            .cloned()
+            .or_else(|| Some("ru-RU-SvetlanaNeural".to_string()));
 
         if let (Some(tts), Some(id)) = (sys_tts.as_mut(), &current_sys_voice_id) {
             if let Ok(all_voices) = tts.voices() {
@@ -51,7 +65,10 @@ impl TtsController {
             }
         }
 
-        let mut current_engine = if sys_tts.is_some() {
+        let requested_edge = initial.engine.eq_ignore_ascii_case("edge");
+        let mut current_engine = if requested_edge && audio_device.is_some() {
+            TtsEngineKind::Edge
+        } else if sys_tts.is_some() {
             TtsEngineKind::System
         } else {
             TtsEngineKind::Edge
@@ -61,7 +78,7 @@ impl TtsController {
             if let Ok(mut st) = status.lock() {
                 st.is_available = sys_tts.is_some() || audio_device.is_some();
                 st.engine = current_engine;
-                st.rate = 1.0;
+                st.rate = initial_rate;
                 st.voices = if current_engine == TtsEngineKind::Edge {
                     edge_voices.clone()
                 } else {
@@ -116,7 +133,7 @@ impl TtsController {
         let mut current_para = 0;
         let mut is_playing = false;
         let mut is_paused = false;
-        let mut rate = 1.0f32;
+        let mut rate = initial_rate;
         let mut utterance_started_at: Option<Instant> = None;
         let mut edge_client: Option<msedge_tts::tts::client::MSEdgeTTSClient<std::net::TcpStream>> =
             None;

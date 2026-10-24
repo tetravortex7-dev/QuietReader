@@ -7,19 +7,42 @@ fn test_secret_fields_are_not_serialized() {
     let mut settings = AppSettings::default();
     settings.translation.deepl_api_key = "deepl-secret-value".to_string();
     settings.opds_catalogs[0].password = Some("opds-secret-value".to_string());
+    settings.license_key = "license-secret-value".to_string();
 
     let json = serde_json::to_string(&settings).unwrap();
 
     assert!(!json.contains("deepl-secret-value"));
     assert!(!json.contains("opds-secret-value"));
+    assert!(!json.contains("license-secret-value"));
     assert!(!json.contains("deepl_api_key"));
     assert!(!json.contains("\"password\""));
+    assert!(!json.contains("license_key"));
+}
+
+#[test]
+fn test_keyring_failure_does_not_overwrite_settings() {
+    let dir = unique_test_dir("settings_keyring_failure");
+    let path = dir.join("settings.json");
+    let mut settings = AppSettings::default();
+    settings.save_to_path(&path).expect("initial save");
+    let original = std::fs::read_to_string(&path).expect("read original");
+
+    settings.reading_ruler = !settings.reading_ruler;
+    let result = settings.save_with_secret_result(&path, Err("keyring unavailable".to_string()));
+
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read preserved"),
+        original
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn test_legacy_secret_extraction() {
     let content = r#"{
         "translation": { "deepl_api_key": "deepl-legacy" },
+        "license_key": "license-legacy",
         "opds_catalogs": [
             { "id": "catalog-one", "password": "opds-legacy" },
             { "id": "catalog-two", "password": "" }
@@ -29,6 +52,7 @@ fn test_legacy_secret_extraction() {
     let entries = AppSettings::extract_legacy_secret_entries(content);
 
     assert!(entries.contains(&("deepl_api_key".to_string(), "deepl-legacy".to_string())));
+    assert!(entries.contains(&("license_key".to_string(), "license-legacy".to_string())));
     assert!(entries.contains(&(
         "opds_password:catalog-one".to_string(),
         "opds-legacy".to_string()
@@ -56,12 +80,13 @@ fn test_secret_fields_are_sanitized() {
 
 #[test]
 fn test_corrupted_json_secret_redaction() {
-    let content = r#"{"translation":{"deepl_api_key":"deepl-broken"},"opds_catalogs":[{"id":"c","password":"opds-broken"}"#;
+    let content = r#"{"translation":{"deepl_api_key":"deepl-broken"},"license_key":"license-broken","opds_catalogs":[{"id":"c","password":"opds-broken"}"#;
 
     let sanitized = AppSettings::sanitize_secret_fields(content).unwrap();
 
     assert!(!sanitized.contains("deepl-broken"));
     assert!(!sanitized.contains("opds-broken"));
+    assert!(!sanitized.contains("license-broken"));
 }
 
 #[test]

@@ -4,6 +4,25 @@ use crate::opds::*;
 use crate::test::util::unique_test_dir;
 
 #[test]
+fn test_fetch_without_worker_reports_error_instead_of_panicking() {
+    let client = OpdsClient::new_without_worker_for_test();
+    let id = client.fetch_feed("https://example.com/opds", None);
+    let events = client.poll_events();
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        OpdsEvent::FeedLoaded {
+            request_id,
+            result: Err(OpdsError::Network(message)),
+            ..
+        } => {
+            assert_eq!(*request_id, id);
+            assert!(message.contains("unavailable"));
+        }
+        _ => panic!("expected a feed error event"),
+    }
+}
+
+#[test]
 fn test_resolve_relative_url() {
     assert_eq!(
         resolve_relative_url("https://example.com/opds/catalog.atom", "/search?q=1"),

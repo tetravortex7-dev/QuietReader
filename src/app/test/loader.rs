@@ -7,8 +7,8 @@ fn test_async_loader_cancellation_and_generation_switch() {
     let path_a = PathBuf::from("nonexistent_book_a.epub");
     let path_b = PathBuf::from("nonexistent_book_b.pdf");
 
-    let req_a = loader.request_load(path_a.clone(), crate::i18n::UiLanguage::Ru);
-    let req_b = loader.request_load(path_b.clone(), crate::i18n::UiLanguage::Ru);
+    let req_a = loader.request_load(path_a.clone(), crate::i18n::UiLanguage::Ru, None);
+    let req_b = loader.request_load(path_b.clone(), crate::i18n::UiLanguage::Ru, None);
 
     assert!(req_a > 0);
     assert!(req_b > req_a);
@@ -47,7 +47,7 @@ fn test_document_loader_async_request_and_response() {
 
     let mut loader = DocumentLoader::default();
     let test_path = PathBuf::from("nonexistent_test_document_12345.epub");
-    let req_id = loader.request_load(test_path.clone(), crate::i18n::UiLanguage::Ru);
+    let req_id = loader.request_load(test_path.clone(), crate::i18n::UiLanguage::Ru, None);
     assert!(req_id > 0);
 
     let start = Instant::now();

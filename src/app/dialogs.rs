@@ -12,6 +12,7 @@ pub enum SettingsTab {
     ComicsAndManga,
     Hotkeys,
     System,
+    About,
 }
 
 pub struct Dialogs;
@@ -44,6 +45,13 @@ impl Dialogs {
         let t = lang.t();
         rfd::FileDialog::new()
             .set_title(t.choose_manga_folder_title)
+            .pick_folder()
+    }
+
+    pub fn pick_library_folder(lang: crate::i18n::UiLanguage) -> Option<PathBuf> {
+        let t = lang.t();
+        rfd::FileDialog::new()
+            .set_title(t.library_choose_folder_title)
             .pick_folder()
     }
 
@@ -272,7 +280,7 @@ impl Dialogs {
                                             .replacen("{}", "", 1);
                                         ui.label(
                                             RichText::new(format!(
-                                                "{} • {}",
+                                                "{} | {}",
                                                 sec_info
                                                     .trim_end_matches(" / ")
                                                     .trim_end_matches(" of "),

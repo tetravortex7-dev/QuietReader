@@ -130,7 +130,7 @@ fn parse_outline_item(
     })
 }
 
-fn resolve_destination(
+pub(crate) fn resolve_destination(
     item_dict: &Dict<'_>,
     page_id_to_index: &HashMap<ObjectIdentifier, usize>,
     named_dests: &HashMap<String, usize>,

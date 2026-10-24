@@ -507,3 +507,122 @@ fn test_fb2_zip_opens_through_registry() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_welcome_guide_fb2_is_readable() {
+    let xml = include_str!("../../../../assets/welcome_guide.fb2");
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).expect("welcome guide should parse");
+
+    assert_eq!(doc.metadata().title, "Добро пожаловать в QuietReader");
+    assert_eq!(doc.metadata().author, "QuietReader Team");
+    assert!(doc.chapters().len() >= 3);
+
+    let text = doc
+        .chapters()
+        .iter()
+        .flat_map(|chapter| chapter.paragraphs.iter())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("линейку фокуса"));
+    assert!(text.contains("Ctrl+D"));
+    assert!(text.contains("{{note:note-tts}}"));
+    assert!(
+        doc.footnote("note-tts")
+            .is_some_and(|note| note.contains("Это пример сноски"))
+    );
+}
+
+#[test]
+fn test_fb2_footnotes_from_notes_body_and_note_links() {
+    let xml = r##"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description><title-info><book-title>Footnotes</book-title></title-info></description>
+  <body>
+    <section id="chapter">
+      <title><p>Глава</p></title>
+      <p>Текст<a l:href="#note1" type="note">1</a> продолжение.</p>
+    </section>
+  </body>
+  <body name="notes">
+    <section id="note1"><p>Текст сноски.</p></section>
+  </body>
+</FictionBook>"##;
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+    assert_eq!(doc.chapters().len(), 1);
+    assert!(doc.chapters()[0].paragraphs[0].contains("{{note:note1}}"));
+    assert_eq!(doc.footnote("note1"), Some("Текст сноски."));
+    assert_eq!(doc.footnote("missing"), None);
+}
+
+#[test]
+fn test_fb2_table_rows_become_paragraphs() {
+    let xml = r#"<FictionBook><body><section>
+        <p>Before table.</p>
+        <table>
+            <tr><td>Cell A</td><td>Cell B</td></tr>
+            <tr><td>Cell C</td><td>Cell D</td></tr>
+        </table>
+        <p>After table.</p>
+    </section></body></FictionBook>"#;
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+    let paragraphs = &doc.chapters()[0].paragraphs;
+    assert!(
+        paragraphs
+            .iter()
+            .any(|paragraph| paragraph == "Cell A | Cell B")
+    );
+    assert!(
+        paragraphs
+            .iter()
+            .any(|paragraph| paragraph == "Cell C | Cell D")
+    );
+    assert!(
+        paragraphs
+            .iter()
+            .any(|paragraph| paragraph == "Before table.")
+    );
+    assert!(
+        paragraphs
+            .iter()
+            .any(|paragraph| paragraph == "After table.")
+    );
+}
+
+#[test]
+fn test_fb2_inline_image_from_binary() {
+    use base64::Engine;
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(5, 7, image::Rgba([1, 2, 3, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    let xml = format!(
+        r##"<FictionBook>
+  <body><section><p>Before image.</p><image l:href="#pic"/><p>After image.</p></section></body>
+  <binary id="pic" content-type="image/png">{encoded}</binary>
+</FictionBook>"##
+    );
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+    let token = doc.chapters()[0]
+        .paragraphs
+        .iter()
+        .find_map(|paragraph| crate::document::image_token_id(paragraph))
+        .expect("image token");
+    assert_eq!(doc.image_bytes(token).as_deref(), Some(png.as_slice()));
+}
+
+#[test]
+fn test_fb2_footnotes_from_comments_body_strip_formatting() {
+    let xml = r##"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook>
+  <description><title-info><book-title>Comments</book-title></title-info></description>
+  <body><section id="chapter"><p>Текст<a l:href="#comment1" type="note">*</a>.</p></section></body>
+  <body name="comments">
+    <section id="comment1"><p><strong>Жирный</strong> комментарий</p></section>
+  </body>
+</FictionBook>"##;
+    let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+    assert_eq!(doc.footnote("comment1"), Some("Жирный комментарий"));
+    assert_eq!(doc.chapters().len(), 1);
+}

@@ -19,6 +19,33 @@ fn test_rtf_document_parsing() {
 }
 
 #[test]
+fn test_rtf_footnote_is_extracted() {
+    use crate::document::Document;
+
+    let rtf_data = b"{\\rtf1\\ansi Text with note{\\footnote Footnote text.} and more.\\par}";
+    let doc = crate::document::RtfDocument::from_bytes(rtf_data, "Notes").unwrap();
+    let paragraphs = &doc.chapters()[0].paragraphs;
+    assert!(paragraphs.iter().any(|p| p.contains("{{note:rtf_fn_0}}")));
+    assert_eq!(doc.footnote("rtf_fn_0"), Some("Footnote text."));
+}
+
+#[test]
+fn test_rtf_header_and_footer_text() {
+    use crate::document::Document;
+
+    let rtf_data = b"{\\rtf1{\\header Header text\\par}{\\footer Footer text\\par}Body text\\par}";
+    let doc = crate::document::RtfDocument::from_bytes(rtf_data, "Story").unwrap();
+    assert_eq!(doc.header_text(), Some("Header text"));
+    assert_eq!(doc.footer_text(), Some("Footer text"));
+    assert!(
+        doc.chapters()[0]
+            .paragraphs
+            .iter()
+            .any(|p| p.contains("Body text"))
+    );
+}
+
+#[test]
 fn test_rtf_corrupted_resilience() {
     let broken1 = b"{\\rtf1\\ansi broken without closing";
     let doc1 = crate::document::RtfDocument::from_bytes(broken1, "Broken");

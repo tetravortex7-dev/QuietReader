@@ -207,6 +207,14 @@ fn test_ipc_private_file_limits() {
 }
 
 #[test]
+fn test_sync_fullscreen_state_reads_platform_state() {
+    let expected = crate::platform::is_window_fullscreen();
+    let mut state = !expected;
+    crate::platform::sync_fullscreen_state(&mut state);
+    assert_eq!(state, expected);
+}
+
+#[test]
 fn test_create_private_dir() {
     let dir = unique_test_dir("private_dir");
     let nested = dir.join("a").join("b");

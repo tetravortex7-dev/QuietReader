@@ -1,3 +1,8 @@
+mod bookmarks_export;
+mod library;
+mod license;
+mod search;
+
 #[test]
 fn test_reader_core_bookmarks_and_search() {
     use crate::core::{Bookmark, ReaderCore};
@@ -47,4 +52,24 @@ fn test_reader_core_bookmarks_and_search() {
 
     let cancelled = std::sync::atomic::AtomicBool::new(true);
     assert!(ReaderCore::search_in_document_with_cancel(&doc, "needle", &cancelled).is_empty());
+}
+
+#[test]
+fn test_paragraph_anchor_roundtrip() {
+    use crate::core::ReaderCore;
+    use crate::document::TxtDocument;
+
+    let text = (0..10)
+        .map(|index| {
+            format!(
+                "Paragraph {index} contains enough words to occupy several lines in the reader column"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let doc = TxtDocument::from_text(&text, "AnchorDoc");
+    let scroll = ReaderCore::paragraph_anchor_scroll_y(&doc, 0, 5, 19.0, 1.45, 760.0);
+    let visible =
+        ReaderCore::estimate_visible_paragraph_with_layout(&doc, 0, scroll, 19.0, 1.45, 760.0);
+    assert_eq!(visible, 5);
 }

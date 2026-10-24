@@ -91,6 +91,58 @@ fn test_mobi_format_name_by_extension() {
 }
 
 #[test]
+fn test_mobi_filepos_footnote_is_extracted() {
+    let template =
+        r#"<html><body><p>Text<a filepos="0000000000">[1]</a>.</p><p>Note text.</p></body></html>"#;
+    let position = template.find("Note text.").unwrap();
+    let html = template.replace("0000000000", &format!("{position:010}"));
+    let (prepared, notes) = super::links::preprocess_links(&html);
+    let id = format!("mobi_pos_{position}");
+    assert_eq!(notes.get(&id).map(String::as_str), Some("Note text."));
+    assert!(prepared.contains(&crate::document::footnote_token(&id)));
+}
+
+#[test]
+fn test_mobi_hash_footnote_is_extracted() {
+    let html =
+        r##"<html><body><p>Text<a href="#n1">[2]</a>.</p><p id="n1">Note two.</p></body></html>"##;
+    let (prepared, notes) = super::links::preprocess_links(html);
+    assert_eq!(
+        notes.get("mobi_hash_n1").map(String::as_str),
+        Some("Note two.")
+    );
+    assert!(prepared.contains("{{note:mobi_hash_n1}}"));
+}
+
+#[test]
+fn test_mobi_image_recindex_token() {
+    let html = r#"<html><body><p>Before</p><img recindex="00002"/><p>After</p></body></html>"#;
+    let (_, paragraphs) = crate::document::epub::html::extract_html_lenient(html);
+    assert!(
+        paragraphs
+            .iter()
+            .any(|paragraph| paragraph.contains("{{image:mobi_rec_2}}"))
+    );
+}
+
+#[test]
+fn test_11_mobi_images_if_present() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("11.mobi");
+    if !path.exists() {
+        return;
+    }
+    let doc = MobiDocument::from_file(&path).unwrap();
+    let token = Document::chapters(&doc)
+        .iter()
+        .flat_map(|chapter| chapter.paragraphs.iter())
+        .find_map(|paragraph| crate::document::image_token_id(paragraph));
+    if let Some(token) = token {
+        let bytes = Document::image_bytes(&doc, token).expect("image bytes");
+        assert!(image::guess_format(&bytes).is_ok());
+    }
+}
+
+#[test]
 fn test_ms_mobi_clean_toc_and_chapters() {
     let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ms.mobi");
     if !std::path::Path::new(fixture).exists() {
@@ -120,4 +172,18 @@ fn test_ms_mobi_clean_toc_and_chapters() {
         assert!(!item.title.contains("</em>"));
     }
     assert_eq!(doc.format_name(), "MOBI");
+}
+
+#[test]
+fn test_11_mobi_if_present_decodes_cyrillic() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("11.mobi");
+    if !path.exists() {
+        return;
+    }
+    let doc = MobiDocument::from_file(&path).unwrap();
+    let text = &Document::chapters(&doc)[0].paragraphs[0];
+    assert!(text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)));
+    assert!(!text.contains('\u{FFFD}'));
+    assert!(!text.contains("\u{0420}\u{045F}"));
+    assert!(!text.contains("\u{0421}\u{0402}"));
 }

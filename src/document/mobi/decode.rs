@@ -363,9 +363,115 @@ pub fn is_cp1252_mojibake(text: &str) -> bool {
         prev_mojibake = is_moj;
     }
 
+    let has_lead = text
+        .chars()
+        .filter(|c| matches!(c, 'Ã' | 'Â' | 'Ð' | 'Ñ' | 'Î' | 'Ï' | 'ð'))
+        .count()
+        >= 2;
     total_alpha > 0
+        && has_lead
         && consecutive_pairs >= 3
         && (mojibake_chars * 10 >= total_alpha * 4 || consecutive_pairs >= 8)
+        && {
+            let cyrillic = text
+                .chars()
+                .filter(|c| ('\u{0400}'..='\u{04FF}').contains(c))
+                .count();
+            cyrillic < 3 || cyrillic * 10 < total_alpha
+        }
+}
+
+fn is_cp1251_mojibake_tail(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0402}'..='\u{040F}'
+            | '\u{0452}'..='\u{045F}'
+            | '\u{0490}'..='\u{0491}'
+            | 'µ'
+            | '¶'
+            | '·'
+            | '‚'
+            | '„'
+            | '…'
+            | '†'
+            | '‡'
+            | '€'
+            | '‰'
+            | '‹'
+            | '›'
+            | '™'
+            | '‘'
+            | '’'
+            | '“'
+            | '”'
+            | '•'
+            | '–'
+            | '—'
+    )
+}
+
+pub fn cp1251_mojibake_score(text: &str) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let mut score = 0usize;
+    for window in chars.windows(2) {
+        if matches!(window[0], 'Р' | 'С' | 'р' | 'с') && is_cp1251_mojibake_tail(window[1]) {
+            score += 1;
+        }
+    }
+    score
+}
+
+pub fn is_cp1251_mojibake(text: &str) -> bool {
+    cp1251_mojibake_score(text) >= 3
+}
+
+pub fn repair_cp1251_mojibake(text: &str) -> Option<String> {
+    if !is_cp1251_mojibake(text) {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut token = String::new();
+    let mut changed = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !token.is_empty() {
+                if let Some(repaired) = repair_cp1251_mojibake_token(&token) {
+                    out.push_str(&repaired);
+                    changed = true;
+                } else {
+                    out.push_str(&token);
+                }
+                token.clear();
+            }
+            out.push(ch);
+        } else {
+            token.push(ch);
+        }
+    }
+    if !token.is_empty() {
+        if let Some(repaired) = repair_cp1251_mojibake_token(&token) {
+            out.push_str(&repaired);
+            changed = true;
+        } else {
+            out.push_str(&token);
+        }
+    }
+    if changed { Some(out) } else { None }
+}
+
+fn repair_cp1251_mojibake_token(token: &str) -> Option<String> {
+    if cp1251_mojibake_score(token) == 0 {
+        return None;
+    }
+    let (bytes, _, had_errors) = encoding_rs::WINDOWS_1251.encode(token);
+    if had_errors {
+        return None;
+    }
+    let repaired = std::str::from_utf8(bytes.as_ref()).ok()?;
+    if repaired.is_empty() {
+        return None;
+    }
+    Some(repaired.to_string())
 }
 
 pub fn repair_cp1252_mojibake(text: &str) -> String {
@@ -422,6 +528,11 @@ pub fn decode_mobi_content(bytes: &[u8], header_codepage: u32) -> String {
     let enc = resolve_mobi_encoding(clean_bytes, header_codepage);
     let (cow, _, _) = enc.decode(clean_bytes);
     let text = cow.into_owned();
+    if is_cp1251_mojibake(&text)
+        && let Some(repaired) = repair_cp1251_mojibake(&text)
+    {
+        return repaired;
+    }
     if is_cp1252_mojibake(&text) {
         repair_cp1252_mojibake(&text)
     } else {
@@ -457,7 +568,9 @@ pub fn decode_metadata_string(
     let clean = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     if let Ok(s) = std::str::from_utf8(clean) {
         let trimmed = s.trim();
-        let res = if is_cp1252_mojibake(trimmed) {
+        let res = if is_cp1251_mojibake(trimmed) {
+            repair_cp1251_mojibake(trimmed).unwrap_or_else(|| trimmed.to_string())
+        } else if is_cp1252_mojibake(trimmed) {
             repair_cp1252_mojibake(trimmed)
         } else {
             trimmed.to_string()
@@ -476,7 +589,9 @@ pub fn decode_metadata_string(
 
     let (cow, _, _) = enc.decode(clean);
     let decoded = cow.trim().to_string();
-    let res = if is_cp1252_mojibake(&decoded) {
+    let res = if is_cp1251_mojibake(&decoded) {
+        repair_cp1251_mojibake(&decoded).unwrap_or_else(|| decoded.clone())
+    } else if is_cp1252_mojibake(&decoded) {
         repair_cp1252_mojibake(&decoded)
     } else {
         decoded

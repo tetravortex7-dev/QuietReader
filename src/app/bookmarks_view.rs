@@ -1,5 +1,6 @@
 use super::icons::{Icon, IconButton, paint_icon};
-use super::theme::ReaderTheme;
+use super::theme::{ReaderTheme, bookmark_color};
+use crate::core::bookmarks_export::bookmarks_to_markdown;
 use crate::core::{Bookmark, BookmarkColor, BookmarkKind};
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, Vec2};
@@ -95,7 +96,7 @@ impl BookmarksView {
             for &color in &BookmarkColor::ALL {
                 let is_sel = state.selected_color == Some(color);
                 let (rect, resp) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::click());
-                let col = color.to_color32();
+                let col = bookmark_color(color);
                 if ui.is_rect_visible(rect) {
                     let center = rect.center();
                     ui.painter().circle_filled(center, 7.0, col);
@@ -179,7 +180,7 @@ impl BookmarksView {
                     let b = &mut settings.bookmarks[idx];
                     let bm_id = b.id.clone();
                     let is_quote = b.kind == BookmarkKind::Quote;
-                    let marker_color = b.color.to_color32();
+                    let marker_color = bookmark_color(b.color);
 
                     egui::Frame::default()
                         .corner_radius(5.0)
@@ -203,7 +204,7 @@ impl BookmarksView {
                                 } else if let Some(p) = b.page_number {
                                     format!("{}, {} {}", b.label, t.page_prefix, p + 1)
                                 } else {
-                                    format!("{} • {:.0}%", b.label, b.progress_percent)
+                                    format!("{} | {:.0}%", b.label, b.progress_percent)
                                 };
 
                                 let header_resp = ui.link(RichText::new(header_label).strong());
@@ -302,7 +303,7 @@ impl BookmarksView {
                                         Vec2::splat(14.0),
                                         egui::Sense::click(),
                                     );
-                                    let col = c.to_color32();
+                                    let col = bookmark_color(c);
                                     if ui.is_rect_visible(c_rect) {
                                         let center = c_rect.center();
                                         ui.painter().circle_filled(center, 4.5, col);
@@ -387,7 +388,7 @@ impl BookmarksView {
                     .filter(|b| b.book_path == file_path)
                     .cloned()
                     .collect();
-                let conspectus = generate_markdown_conspectus(book_title, book_author, &cur_bms, t);
+                let conspectus = bookmarks_to_markdown(book_title, book_author, &cur_bms);
                 ui.ctx().copy_text(conspectus);
                 *status_message = Some(t.bookmarks_copied.to_string());
             }
@@ -401,7 +402,7 @@ impl BookmarksView {
                     .filter(|b| b.book_path == file_path)
                     .cloned()
                     .collect();
-                let conspectus = generate_markdown_conspectus(book_title, book_author, &cur_bms, t);
+                let conspectus = bookmarks_to_markdown(book_title, book_author, &cur_bms);
 
                 let safe_name = if book_title.is_empty() {
                     "book_notes.md".to_string()
@@ -431,61 +432,4 @@ impl BookmarksView {
             }
         });
     }
-}
-
-pub fn generate_markdown_conspectus(
-    book_title: &str,
-    book_author: &str,
-    bookmarks: &[Bookmark],
-    t: &crate::i18n::Translations,
-) -> String {
-    let mut sorted = bookmarks.to_vec();
-    sorted.sort_by(|a, b| {
-        a.chapter
-            .cmp(&b.chapter)
-            .then(
-                a.scroll_y
-                    .partial_cmp(&b.scroll_y)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
-            .then(a.timestamp.cmp(&b.timestamp))
-    });
-
-    let mut md = String::new();
-    let title = if book_title.is_empty() {
-        "QuietReader Notes"
-    } else {
-        book_title
-    };
-    md.push_str(&format!("# {}\n\n", title));
-    if !book_author.is_empty() {
-        md.push_str(&format!("**Author**: {}\n\n", book_author));
-    }
-    md.push_str("---\n\n");
-
-    let mut current_ch = None;
-    for b in &sorted {
-        let ch_id = (b.chapter, b.label.as_str());
-        if current_ch != Some(ch_id) {
-            current_ch = Some(ch_id);
-            md.push_str(&format!("## {}\n\n", b.label));
-        }
-
-        if b.kind == BookmarkKind::Quote {
-            for line in b.text.lines() {
-                md.push_str(&format!("> {}\n", line));
-            }
-            md.push('\n');
-        } else {
-            md.push_str(&format!("*{}*: {}\n\n", t.bookmark_kind_bookmark, b.text));
-        }
-
-        if !b.note.is_empty() {
-            md.push_str(&format!("**{}**: {}\n\n", t.add_note, b.note));
-        }
-
-        md.push_str("---\n\n");
-    }
-
-    md
 }

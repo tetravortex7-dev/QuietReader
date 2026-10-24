@@ -1,11 +1,13 @@
+pub mod links;
 pub mod outline;
 pub mod text;
 
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::document::{
-    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind, HasToc,
+    BookChapter, BookMetadata, DecodedImage, Document, DocumentError, DocumentViewKind,
     PageContent, PageInfo, PageTextSpan, TocItem,
 };
 
@@ -16,6 +18,7 @@ pub struct PdfDocument {
     page_count: usize,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+    links: std::collections::HashMap<usize, Vec<crate::document::PageLink>>,
 }
 
 impl PdfDocument {
@@ -41,14 +44,23 @@ impl PdfDocument {
             ));
         }
 
-        let map = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
-            DocumentError::Io(format!(
-                "Не удалось отобразить PDF файл {} в память: {e}",
-                path_ref.display()
-            ))
-        })?;
+        let mut bytes = Vec::new();
+        let read = file
+            .take(MAX_PDF_SIZE.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|e| {
+                DocumentError::Io(format!(
+                    "Не удалось прочитать PDF файл {}: {e}",
+                    path_ref.display()
+                ))
+            })?;
+        if read as u64 > MAX_PDF_SIZE {
+            return Err(DocumentError::LimitExceeded(
+                "Размер PDF файла превышает максимально допустимый лимит 300 МБ".to_string(),
+            ));
+        }
 
-        let data = hayro::hayro_syntax::PdfData::from(std::sync::Arc::new(map));
+        let data = hayro::hayro_syntax::PdfData::from(bytes);
         Self::from_pdf_data(data, path_ref)
     }
 
@@ -108,6 +120,7 @@ impl PdfDocument {
             .unwrap_or_else(|| "Неизвестный автор".to_string());
 
         let toc = outline::extract_pdf_toc(&pdf, page_count);
+        let links = links::extract_pdf_links(&pdf, page_count);
 
         let mut chapters = Vec::with_capacity(toc.len());
         for (i, item) in toc.iter().enumerate() {
@@ -129,13 +142,8 @@ impl PdfDocument {
             page_count,
             chapters,
             toc,
+            links,
         })
-    }
-}
-
-impl HasToc for PdfDocument {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
     }
 }
 
@@ -165,10 +173,6 @@ impl Document for PdfDocument {
     }
 
     fn page_content(&self) -> Option<&dyn PageContent> {
-        Some(self)
-    }
-
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
         Some(self)
     }
 }
@@ -291,6 +295,10 @@ impl PageContent for PdfDocument {
         let page = pages.get(index)?;
 
         text::extract_page_text(page)
+    }
+
+    fn page_links(&self, index: usize) -> &[crate::document::PageLink] {
+        self.links.get(&index).map(Vec::as_slice).unwrap_or(&[])
     }
 
     fn extract_page_text_spans(&self, index: usize) -> Option<Vec<PageTextSpan>> {

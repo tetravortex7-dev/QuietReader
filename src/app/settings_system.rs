@@ -1,5 +1,7 @@
 use super::icons::{Icon, IconButton, IconLabel};
+use super::license_view::{ProUpgradeState, render_license_section};
 use super::theme::ReaderTheme;
+use crate::core::license::ProFeature;
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText};
 
@@ -8,8 +10,10 @@ pub fn render_system_tab(
     settings: &mut AppSettings,
     on_register_association: &mut bool,
     on_save_settings: &mut bool,
+    on_reload_text_encoding: &mut bool,
     theme: &ReaderTheme,
     updater: &crate::updater::UpdateChecker,
+    pro: &mut ProUpgradeState,
 ) {
     let t = settings.ui_language.t();
     let text_color = theme.text_color();
@@ -22,6 +26,53 @@ pub fn render_system_tab(
             .color(text_color),
     );
     ui.add_space(6.0);
+
+    render_license_section(ui, settings, theme, pro, on_save_settings);
+    ui.add_space(8.0);
+
+    egui::Frame::new()
+        .fill(theme.bg_color())
+        .stroke(card_stroke)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(t.text_encoding_label)
+                    .strong()
+                    .color(text_color),
+            );
+            ui.add_space(4.0);
+            let encodings = [
+                ("auto", t.text_encoding_auto),
+                ("utf-8", "UTF-8"),
+                ("windows-1251", "Windows-1251"),
+                ("windows-1252", "Windows-1252"),
+                ("koi8-r", "KOI8-R"),
+                ("ibm866", "CP866"),
+                ("utf-16le", "UTF-16LE"),
+                ("utf-16be", "UTF-16BE"),
+            ];
+            let selected = encodings
+                .iter()
+                .find(|(value, _)| *value == settings.text_encoding)
+                .map(|(_, label)| (*label).to_string())
+                .unwrap_or_else(|| t.text_encoding_auto.to_string());
+            egui::ComboBox::from_id_salt("text_encoding")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for (value, label) in encodings {
+                        if ui
+                            .selectable_label(settings.text_encoding == value, label)
+                            .clicked()
+                        {
+                            settings.text_encoding = value.to_string();
+                            *on_save_settings = true;
+                            *on_reload_text_encoding = true;
+                        }
+                    }
+                });
+        });
+    ui.add_space(8.0);
 
     egui::Frame::new()
         .fill(theme.bg_color())
@@ -196,6 +247,7 @@ pub fn render_system_tab(
         ui.add_space(8.0);
     }
 
+    let translation_allowed = settings.can_use(ProFeature::Translation);
     egui::Frame::new()
         .fill(theme.bg_color())
         .stroke(card_stroke)
@@ -214,12 +266,21 @@ pub fn render_system_tab(
                 let is_deepl =
                     settings.translation.provider == crate::settings::TranslationProvider::DeepL;
                 if ui.selectable_label(is_google, "Google Translate").clicked() && !is_google {
-                    settings.translation.provider = crate::settings::TranslationProvider::Google;
-                    *on_save_settings = true;
+                    if translation_allowed {
+                        settings.translation.provider =
+                            crate::settings::TranslationProvider::Google;
+                        *on_save_settings = true;
+                    } else {
+                        pro.request(ProFeature::Translation);
+                    }
                 }
                 if ui.selectable_label(is_deepl, "DeepL (API)").clicked() && !is_deepl {
-                    settings.translation.provider = crate::settings::TranslationProvider::DeepL;
-                    *on_save_settings = true;
+                    if translation_allowed {
+                        settings.translation.provider = crate::settings::TranslationProvider::DeepL;
+                        *on_save_settings = true;
+                    } else {
+                        pro.request(ProFeature::Translation);
+                    }
                 }
             });
             ui.add_space(6.0);

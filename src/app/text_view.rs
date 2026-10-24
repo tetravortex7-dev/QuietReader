@@ -1,9 +1,14 @@
 use super::icons::{Icon, IconButton, IconLabel};
-use super::theme::ReaderTheme;
+use super::theme::{ReaderTheme, bookmark_highlight_color};
 use crate::document::Document;
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, StrokeKind, Vec2};
+use std::collections::HashSet;
 use std::path::PathBuf;
+
+mod footnotes;
+
+use footnotes::{ParagraphStyle, collect_numbers, show_hover_card};
 
 pub struct TextView;
 
@@ -22,6 +27,7 @@ impl TextView {
         font_size: f32,
         theme: &ReaderTheme,
         settings: &mut AppSettings,
+        text_images: &mut super::text_images::TextImageState,
         on_open_file: &mut bool,
         on_open_folder: &mut bool,
         on_load_recent: &mut Option<PathBuf>,
@@ -34,9 +40,25 @@ impl TextView {
     ) {
         let t = settings.ui_language.t();
         let is_rtl = settings.ui_language.is_rtl();
+        let pinned_id = egui::Id::unique((
+            "quietreader_footnote_pinned",
+            current_file_path,
+            *current_chapter,
+        ));
+        let mut pinned_note = ui.ctx().data(|data| data.get_temp::<String>(pinned_id));
+        let note_return_id = egui::Id::unique(("quietreader_note_return", current_file_path));
+        let note_jump_id = egui::Id::unique(("quietreader_note_jump", current_file_path));
+        let mut note_return: Option<(usize, f32)> =
+            ui.ctx().data(|data| data.get_temp(note_return_id));
+        let mut note_jump: Option<(usize, usize)> =
+            ui.ctx().data(|data| data.get_temp(note_jump_id));
         if let Some(doc) = document {
+            text_images.ensure_document(doc);
+            text_images.poll(ui.ctx());
             let total_chapters = doc.chapters().len();
             let chapter = doc.chapters().get(*current_chapter);
+            let line_height_scale = settings.effective_line_height_scale();
+            let column_width = settings.effective_max_column_width();
 
             let chapter_quotes: Vec<(&str, Color32)> = settings
                 .bookmarks
@@ -49,10 +71,30 @@ impl TextView {
                         && b.chapter == *current_chapter
                         && !b.text.trim().is_empty()
                 })
-                .map(|b| (b.text.as_str(), b.color.to_highlight_color(theme.is_dark())))
+                .map(|b| {
+                    (
+                        b.text.as_str(),
+                        bookmark_highlight_color(b.color, theme.is_dark()),
+                    )
+                })
                 .collect();
 
             let allow_select = !ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+
+            if note_return.is_some() {
+                ui.horizontal(|ui| {
+                    if ui.button(t.back_to_text).clicked() {
+                        if let Some((return_chapter, return_scroll)) = note_return.take() {
+                            *current_chapter = return_chapter;
+                            *last_rendered_chapter = return_chapter;
+                            *pending_scroll_y = Some(return_scroll);
+                            *current_scroll_y = return_scroll;
+                        }
+                        note_jump = None;
+                        pinned_note = None;
+                    }
+                });
+            }
 
             let mut scroll_area = ScrollArea::vertical()
                 .id_salt(("text_scroll", current_file_path, *current_chapter))
@@ -63,7 +105,7 @@ impl TextView {
 
             let scroll_output = scroll_area.show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.set_max_width(760.0);
+                    ui.set_max_width(column_width);
 
                     if let Some(ch) = chapter {
                         ui.add_space(20.0);
@@ -200,18 +242,87 @@ impl TextView {
                             ui.add_space(24.0);
                         }
 
+                        if *current_chapter == 0
+                            && let Some(header) = doc.header_text()
+                        {
+                            ui.label(
+                                RichText::new(header)
+                                    .size(font_size * 0.78)
+                                    .italics()
+                                    .color(theme.text_color().gamma_multiply(0.6)),
+                            );
+                            ui.add_space(10.0);
+                        }
+
                         let clip_rect = ui.clip_rect();
                         let margin = 400.0;
                         let view_top = clip_rect.min.y - margin;
                         let view_bot = clip_rect.max.y + margin;
 
-                        let line_height = font_size * 1.45;
+                        let line_height = font_size * line_height_scale;
                         let para_spacing = font_size * 0.4;
-                        let chars_per_line = (760.0 / (font_size * 0.52)).max(10.0);
+                        let chars_per_line = (column_width / (font_size * 0.52)).max(10.0);
+                        let footnote_numbers = collect_numbers(ch);
+                        let mut available_notes: HashSet<String> = HashSet::new();
+                        for (id, _, _) in std::iter::once(ch.title.as_str())
+                            .chain(ch.paragraphs.iter().map(String::as_str))
+                            .flat_map(crate::document::footnote_tokens)
+                        {
+                            if doc.footnote(id).is_some() || doc.note_location(id).is_some() {
+                                available_notes.insert(id.to_string());
+                            }
+                        }
 
                         for (p_idx, paragraph) in ch.paragraphs.iter().enumerate() {
                             if paragraph.is_empty() {
                                 ui.add_space(font_size * 0.7);
+                                continue;
+                            }
+
+                            if let Some(image_id) = crate::document::image_token_id(paragraph) {
+                                let max_width = ui.available_width().min(column_width).max(1.0);
+                                let cached_size = text_images.image_size(image_id);
+                                let est_height = cached_size
+                                    .map(|size| {
+                                        if size.x > 0.0 {
+                                            let scale = (max_width / size.x)
+                                                .min(560.0 / size.y.max(1.0))
+                                                .min(1.0);
+                                            size.y * scale + para_spacing
+                                        } else {
+                                            font_size * 18.0
+                                        }
+                                    })
+                                    .unwrap_or(font_size * 18.0);
+                                let top_y = ui.cursor().min.y;
+                                let bot_y = top_y + est_height;
+                                if bot_y < view_top || top_y > view_bot {
+                                    ui.add_space(est_height);
+                                } else if let Some(texture) =
+                                    text_images.texture(ui.ctx(), doc, image_id)
+                                {
+                                    let size = texture.size_vec2();
+                                    let scale = (max_width / size.x.max(1.0))
+                                        .min(560.0 / size.y.max(1.0))
+                                        .min(1.0);
+                                    ui.add(
+                                        egui::Image::from_texture(&texture)
+                                            .fit_to_exact_size(size * scale),
+                                    );
+                                    ui.add_space(para_spacing);
+                                } else {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        Vec2::new(max_width, font_size * 18.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        rect,
+                                        6.0,
+                                        Stroke::new(1.0, theme.text_color().gamma_multiply(0.25)),
+                                        StrokeKind::Inside,
+                                    );
+                                    ui.add_space(para_spacing);
+                                }
                                 continue;
                             }
 
@@ -222,27 +333,73 @@ impl TextView {
 
                             let top_y = ui.cursor().min.y;
                             let bot_y = top_y + est_height;
+                            let is_note_target =
+                                note_jump.is_some_and(|(chapter_index, paragraph_index)| {
+                                    chapter_index == *current_chapter && paragraph_index == p_idx
+                                });
 
-                            if bot_y < view_top || top_y > view_bot {
+                            if (bot_y < view_top || top_y > view_bot) && !is_note_target {
                                 ui.add_space(est_height);
                             } else {
                                 let is_active_para = active_para == Some(p_idx);
                                 let is_tts_speaking = tts_highlight == Some(p_idx);
-                                let layout_job = create_paragraph_layout_job(
+                                let mut markers = Vec::new();
+                                let mut layout_job = create_paragraph_layout_job(
                                     paragraph,
-                                    font_size,
-                                    theme.text_color(),
-                                    query_str,
-                                    is_active_para,
-                                    is_rtl,
-                                    settings.bionic_reading,
-                                    &chapter_quotes,
+                                    &ParagraphStyle {
+                                        font_size,
+                                        text_color: theme.text_color(),
+                                        accent_color: theme.accent_color(),
+                                        line_height,
+                                        query: query_str,
+                                        is_active_hit: is_active_para,
+                                        is_rtl,
+                                        bionic_reading: settings.effective_bionic_reading(),
+                                        quotes: &chapter_quotes,
+                                        footnote_numbers: &footnote_numbers,
+                                        note_available: &available_notes,
+                                    },
+                                    &mut markers,
                                 );
+                                let footnote_galley = if markers.is_empty() {
+                                    None
+                                } else {
+                                    layout_job.wrap.max_width = ui.available_width();
+                                    Some(ui.painter().layout_job(layout_job.clone()))
+                                };
                                 let resp = selectable_label_preserving_on_secondary(
                                     ui,
                                     layout_job,
                                     allow_select,
                                 );
+                                if is_note_target {
+                                    ui.scroll_to_rect(resp.rect, Some(egui::Align::Center));
+                                    if resp.rect.intersects(ui.clip_rect()) {
+                                        note_jump = None;
+                                    }
+                                }
+                                if let Some(galley) = footnote_galley
+                                    && let Some(note_id) = show_hover_card(
+                                        ui,
+                                        doc.as_ref(),
+                                        &resp,
+                                        &galley,
+                                        &markers,
+                                        theme,
+                                        t,
+                                        font_size,
+                                        &mut pinned_note,
+                                    )
+                                    && let Some(location) = doc.note_location(&note_id)
+                                {
+                                    note_return = Some((*current_chapter, *current_scroll_y));
+                                    note_jump =
+                                        Some((location.chapter_index, location.paragraph_index));
+                                    *current_chapter = location.chapter_index;
+                                    *last_rendered_chapter = location.chapter_index;
+                                    *current_scroll_y = 0.0;
+                                    pinned_note = None;
+                                }
                                 if is_tts_speaking {
                                     ui.painter().rect(
                                         resp.rect.expand2(Vec2::new(8.0, 3.0)),
@@ -351,6 +508,18 @@ impl TextView {
                             }
                         }
 
+                        if *current_chapter + 1 >= total_chapters
+                            && let Some(footer) = doc.footer_text()
+                        {
+                            ui.add_space(10.0);
+                            ui.label(
+                                RichText::new(footer)
+                                    .size(font_size * 0.78)
+                                    .italics()
+                                    .color(theme.text_color().gamma_multiply(0.6)),
+                            );
+                        }
+
                         ui.add_space(40.0);
 
                         let (first_layout, second_layout) = if is_rtl {
@@ -412,7 +581,7 @@ impl TextView {
             *max_scroll_y =
                 (scroll_output.content_size.y - scroll_output.inner_rect.height()).max(0.0);
 
-            if settings.reading_ruler {
+            if settings.effective_reading_ruler() {
                 crate::app::bionic::render_reading_ruler(
                     ui,
                     scroll_output.inner_rect,
@@ -432,6 +601,8 @@ impl TextView {
                     *current_scroll_y,
                 );
             }
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(pinned_id, pinned_note));
         } else {
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
@@ -524,6 +695,19 @@ impl TextView {
                 }
             });
         }
+
+        ui.ctx().data_mut(|data| {
+            if let Some(value) = note_return {
+                data.insert_temp(note_return_id, value);
+            } else {
+                data.remove_temp::<(usize, f32)>(note_return_id);
+            }
+            if let Some(value) = note_jump {
+                data.insert_temp(note_jump_id, value);
+            } else {
+                data.remove_temp::<(usize, usize)>(note_jump_id);
+            }
+        });
     }
 }
 
@@ -540,14 +724,14 @@ fn append_with_highlight(
         return;
     }
 
-    let lower_text = text.to_lowercase();
+    let lower_text = crate::core::normalize_search_text(text);
     let mut intervals: Vec<(usize, usize, Color32)> = Vec::new();
     for (quote_text, marker_color) in quotes {
         let q_clean = quote_text.trim();
         if q_clean.is_empty() {
             continue;
         }
-        let lower_q = q_clean.to_lowercase();
+        let lower_q = crate::core::normalize_search_text(q_clean);
         let mut search_from = 0;
         while let Some(found_idx) = lower_text[search_from..].find(&lower_q) {
             let abs_start = search_from + found_idx;
@@ -602,13 +786,13 @@ fn append_with_query_highlight(
     query: &str,
     is_active_hit: bool,
 ) {
-    let q = query.trim().to_lowercase();
+    let q = crate::core::normalize_search_text(query.trim());
     if q.is_empty() {
         job.append(text, 0.0, base_format.clone());
         return;
     }
 
-    let lower_text = text.to_lowercase();
+    let lower_text = crate::core::normalize_search_text(text);
     let mut last_idx = 0;
 
     let highlight_format = if is_active_hit {
@@ -655,22 +839,17 @@ fn append_with_query_highlight(
 
 fn create_paragraph_layout_job(
     paragraph: &str,
-    font_size: f32,
-    text_color: Color32,
-    query: &str,
-    is_active_hit: bool,
-    is_rtl: bool,
-    bionic_reading: bool,
-    quotes: &[(&str, Color32)],
+    style: &ParagraphStyle<'_>,
+    markers: &mut Vec<footnotes::FootnoteMarker>,
 ) -> egui::text::LayoutJob {
     let spans = crate::document::parse_formatted_spans(paragraph);
     let mut job = egui::text::LayoutJob::default();
-    if is_rtl {
+    if style.is_rtl {
         job.halign = egui::Align::RIGHT;
     }
     for (idx, span) in spans.iter().enumerate() {
         let text = if idx == 0 {
-            if is_rtl {
+            if style.is_rtl {
                 format!("{}    ", span.text)
             } else {
                 format!("    {}", span.text)
@@ -681,79 +860,46 @@ fn create_paragraph_layout_job(
         if text.is_empty() {
             continue;
         }
-
-        if bionic_reading && !span.bold {
-            let chunks = crate::app::bionic::split_bionic_spans(&text);
-            for (chunk, is_bold) in chunks {
-                let family = match (is_bold, span.italic) {
-                    (true, true) => {
-                        egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
-                    }
-                    (true, false) => {
-                        egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into())
-                    }
-                    (false, true) => {
-                        egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into())
-                    }
-                    (false, false) => egui::FontFamily::Proportional,
-                };
-                let format = egui::TextFormat {
-                    font_id: egui::FontId::new(font_size, family),
-                    color: text_color,
-                    italics: span.italic,
-                    ..Default::default()
-                };
-                append_with_highlight(&mut job, chunk, &format, query, is_active_hit, quotes);
+        let family = match (span.bold, span.italic) {
+            (true, true) => {
+                egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
             }
-        } else {
-            let family = match (span.bold, span.italic) {
-                (true, true) => {
-                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD_ITALIC.into())
-                }
-                (true, false) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into()),
-                (false, true) => {
-                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into())
-                }
-                (false, false) => egui::FontFamily::Proportional,
-            };
-            let format = egui::TextFormat {
-                font_id: egui::FontId::new(font_size, family),
-                color: text_color,
-                italics: span.italic,
-                ..Default::default()
-            };
-            append_with_highlight(&mut job, &text, &format, query, is_active_hit, quotes);
-        }
+            (true, false) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into()),
+            (false, true) => egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_ITALIC.into()),
+            (false, false) => egui::FontFamily::Proportional,
+        };
+        let format = egui::TextFormat {
+            font_id: egui::FontId::new(style.font_size, family),
+            color: style.text_color,
+            italics: span.italic,
+            line_height: Some(style.line_height),
+            ..Default::default()
+        };
+        footnotes::append_text_with_footnotes(
+            &mut job,
+            &text,
+            &format,
+            style,
+            span.bold,
+            span.italic,
+            markers,
+        );
     }
     if job.sections.is_empty() {
-        let text = if is_rtl {
+        let text = if style.is_rtl {
             format!("{paragraph}    ")
         } else {
             format!("    {paragraph}")
         };
-        if bionic_reading {
-            let chunks = crate::app::bionic::split_bionic_spans(&text);
-            for (chunk, is_bold) in chunks {
-                let family = if is_bold {
-                    egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into())
-                } else {
-                    egui::FontFamily::Proportional
-                };
-                let format = egui::TextFormat {
-                    font_id: egui::FontId::new(font_size, family),
-                    color: text_color,
-                    ..Default::default()
-                };
-                append_with_highlight(&mut job, chunk, &format, query, is_active_hit, quotes);
-            }
-        } else {
-            let format = egui::TextFormat {
-                font_id: egui::FontId::proportional(font_size),
-                color: text_color,
-                ..Default::default()
-            };
-            append_with_highlight(&mut job, &text, &format, query, is_active_hit, quotes);
-        }
+        let format = egui::TextFormat {
+            font_id: egui::FontId::proportional(style.font_size),
+            color: style.text_color,
+            line_height: Some(style.line_height),
+            ..Default::default()
+        };
+        footnotes::append_text_with_footnotes(
+            &mut job, &text, &format, style, false, false, markers,
+        );
     }
     job
 }
@@ -762,19 +908,27 @@ pub fn create_sample_preview_job(
     sample_text: &str,
     font_size: f32,
     text_color: Color32,
+    line_height_scale: f32,
     bionic_reading: bool,
     is_rtl: bool,
 ) -> egui::text::LayoutJob {
-    create_paragraph_layout_job(
-        sample_text,
+    let footnote_numbers = std::collections::HashMap::new();
+    let note_available = HashSet::new();
+    let style = ParagraphStyle {
         font_size,
         text_color,
-        "",
-        false,
+        accent_color: text_color,
+        line_height: font_size * line_height_scale,
+        query: "",
+        is_active_hit: false,
         is_rtl,
         bionic_reading,
-        &[],
-    )
+        quotes: &[],
+        footnote_numbers: &footnote_numbers,
+        note_available: &note_available,
+    };
+    let mut markers = Vec::new();
+    create_paragraph_layout_job(sample_text, &style, &mut markers)
 }
 
 fn selectable_label_preserving_on_secondary(

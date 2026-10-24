@@ -1,6 +1,6 @@
 1. Project Goal
 
-QuietReader is a modular, cross-platform ebook reader for Windows, Linux, and macOS. Architecture must support multiple document formats, decoupled UI, maintainability, and clean extensibility without unnecessary refactoring. All development must strictly follow the rules in this document.
+QuietReader is a modular ebook reader for Windows, with Android planned next and Linux and macOS planned last. Architecture must support multiple document formats, decoupled UI, maintainability, and clean extensibility without unnecessary refactoring. All development must strictly follow the rules in this document.
 
 2. Core Principles
 
@@ -57,9 +57,10 @@ Strict separation between four layers:
 
 5. Cross-Platform Requirements
 
-- Windows, Linux, and macOS are equal first-class targets.
+- Platform phases are fixed: Windows is the current and only release target; Android is the next target; Linux and macOS are planned last.
+- Do not report missing Linux, macOS, or Android builds as a current defect, and do not add platform work outside the active phase without an explicit request.
 - Zero platform-specific assumptions or hardcoded paths in shared code.
-- Audit dependencies for maintenance, licensing, binary size, and cross-platform compatibility.
+- Audit dependencies for maintenance, binary size, and compatibility with the active platform phase.
 - Isolate and document necessary OS-specific exceptions.
 
 6. Reliability and Data Safety
@@ -74,7 +75,7 @@ Strict separation between four layers:
 
 - Before changes: Inspect codebase, reuse existing abstractions, make minimal surgical changes. Avoid unrelated refactoring or weakened boundaries.
 - After changes: Run formatting, compilation, and tests. Add/update tests for fixes and features. Document new features in `README.md`.
-- Reporting: State exact changes and completed checks. Explicitly mention unverified platforms, missing checks, and unresolved issues.
+- Reporting: State exact changes and completed checks for the active platform phase. Mention missing checks and unresolved issues that affect Windows or the current task; do not list inactive platforms as defects.
 - Broader architectural changes require explicit justification and controlled scope.
 
 8. Architecture Decision Rule

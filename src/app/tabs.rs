@@ -1,10 +1,10 @@
 use super::icons::{Icon, IconButton, IconLabel};
 use super::theme::ReaderTheme;
-use crate::core::ReaderCore;
 use crate::document::{Document, DocumentViewKind};
 use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct BookTab {
@@ -350,14 +350,47 @@ impl super::QuietReaderApp {
             tab.max_scroll_y = self.max_scroll_y;
             tab.comic_page = cur_page;
         }
-        ReaderCore::record_progress(
-            &mut self.settings,
-            &self.document,
-            &self.current_file_path,
-            self.current_chapter,
-            cur_page,
-            self.current_scroll_y,
-        );
+        if let (Some(doc), Some(path)) = (&self.document, &self.current_file_path) {
+            let meta = doc.metadata();
+            let saved_chapter = if doc.page_content().is_some() {
+                cur_page
+            } else {
+                self.current_chapter
+            };
+            let paragraph = doc.text_content().map(|_| {
+                crate::core::ReaderCore::estimate_visible_paragraph_with_layout(
+                    doc.as_ref(),
+                    self.current_chapter,
+                    self.current_scroll_y,
+                    self.font_size,
+                    self.settings.effective_line_height_scale(),
+                    self.settings.effective_max_column_width(),
+                )
+            });
+            self.settings.record_book_progress_anchored(
+                path,
+                &meta.title,
+                &meta.author,
+                saved_chapter,
+                self.current_scroll_y,
+                paragraph,
+            );
+            let total_units = if let Some(pages) = doc.page_content() {
+                pages.page_count()
+            } else {
+                doc.chapters().len()
+            };
+            if self.library.record_progress(
+                path,
+                &meta.title,
+                &meta.author,
+                saved_chapter,
+                total_units,
+                crate::core::license::unix_now(),
+            ) {
+                self.library_dirty = true;
+            }
+        }
     }
 
     pub fn activate_tab(&mut self, idx: usize) {
@@ -371,9 +404,18 @@ impl super::QuietReaderApp {
 
     pub(crate) fn apply_tab_state(&mut self, idx: usize) {
         if let Some(tab) = self.tabs.get(idx).cloned() {
+            self.show_library = false;
             self.active_tab = idx;
             self.document = tab.document;
             self.current_file_path = Some(tab.file_path.clone());
+            self.last_reading_activity = Some(Instant::now());
+            self.reading_seconds_accumulator = 0.0;
+            if self
+                .library
+                .touch(&tab.file_path, crate::core::license::unix_now())
+            {
+                self.library_dirty = true;
+            }
             self.current_chapter = tab.current_chapter;
             self.last_rendered_chapter = tab.current_chapter;
             self.pending_scroll_y = Some(tab.current_scroll_y);
@@ -383,8 +425,10 @@ impl super::QuietReaderApp {
             self.comic_view.clear_cache();
             self.comic_view.current_page = tab.comic_page;
             self.pdf_view.clear_cache();
+            self.text_images.clear();
             self.pdf_view.current_page = tab.comic_page;
             self.search.reset_for_document();
+            self.toc_view.filter.clear();
             self.tts.stop();
             self.last_tts_paragraph = None;
             self.settings.last_opened_book = Some(tab.file_path);
@@ -420,6 +464,7 @@ impl super::QuietReaderApp {
 
         if self.tabs.is_empty() {
             self.active_tab = 0;
+            self.show_library = true;
             self.document = None;
             self.current_file_path = None;
             self.current_chapter = 0;
@@ -429,6 +474,7 @@ impl super::QuietReaderApp {
             self.max_scroll_y = 0.0;
             self.comic_view.clear_cache();
             self.pdf_view.clear_cache();
+            self.text_images.clear();
             self.autoscroll.stop();
             self.status_message = Some(
                 self.settings

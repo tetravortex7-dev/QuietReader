@@ -1,6 +1,5 @@
 use crate::document::{
-    BookChapter, BookMetadata, Document, DocumentViewKind, HasToc, PageContent, TextContent,
-    TocItem,
+    BookChapter, BookMetadata, Document, DocumentViewKind, PageContent, TextContent, TocItem,
 };
 use crate::i18n::UiLanguage;
 use std::sync::Arc;
@@ -82,8 +81,24 @@ impl Document for LocalizedDocument {
         self.inner.text_content()
     }
 
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
-        self.inner.toc_capability()
+    fn footnote(&self, id: &str) -> Option<&str> {
+        self.inner.footnote(id)
+    }
+
+    fn note_location(&self, id: &str) -> Option<crate::document::NoteLocation> {
+        self.inner.note_location(id)
+    }
+
+    fn image_bytes(&self, id: &str) -> Option<Vec<u8>> {
+        self.inner.image_bytes(id)
+    }
+
+    fn header_text(&self) -> Option<&str> {
+        self.inner.header_text()
+    }
+
+    fn footer_text(&self) -> Option<&str> {
+        self.inner.footer_text()
     }
 }
 
@@ -119,6 +134,7 @@ fn localize_text(value: &str, lang: UiLanguage) -> String {
         "Документ PDF" => return t.extra.default_pdf_document.to_string(),
         "Документ DjVu" => return t.extra.default_djvu_document.to_string(),
         "Документ MOBI" => return t.extra.default_mobi_document.to_string(),
+        "Документ RTF" => return t.extra.default_rtf_document.to_string(),
         "Текстовый документ" => return t.extra.default_text_document.to_string(),
         "Документ не содержит текста." => {
             return t.extra.default_no_text.to_string();
@@ -153,20 +169,14 @@ fn localize_text(value: &str, lang: UiLanguage) -> String {
         );
     }
 
-    if let Some(rest) = text.strip_prefix("Глава ")
-        && let Some((chapter, part)) = rest.split_once(" (часть ")
+    if let Some((title, part)) = text.rsplit_once(" (часть ")
         && let Some(part) = part.strip_suffix(')')
-        && let (Ok(chapter), Ok(part)) = (
-            chapter.trim().parse::<usize>(),
-            part.trim().parse::<usize>(),
-        )
+        && let Ok(part) = part.trim().parse::<usize>()
     {
+        let localized_title = localize_text(title, lang);
         return crate::i18n::fill(
-            t.extra.default_chapter_part,
-            &[
-                ("{chapter}", &chapter.to_string()),
-                ("{part}", &part.to_string()),
-            ],
+            t.extra.default_chapter_part_suffix,
+            &[("{title}", &localized_title), ("{part}", &part.to_string())],
         );
     }
 

@@ -1,8 +1,15 @@
+pub mod bookmarks_export;
+pub mod library;
+pub mod license;
+
 use crate::document::Document;
-use crate::settings::{AppSettings, ComicSettings};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+pub fn normalize_search_text(text: &str) -> String {
+    text.to_lowercase().replace('ё', "е")
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -52,33 +59,6 @@ impl BookmarkColor {
         BookmarkColor::Blue,
         BookmarkColor::Red,
     ];
-
-    pub fn to_color32(self) -> eframe::egui::Color32 {
-        match self {
-            Self::Yellow => eframe::egui::Color32::from_rgb(235, 195, 60),
-            Self::Green => eframe::egui::Color32::from_rgb(72, 187, 120),
-            Self::Blue => eframe::egui::Color32::from_rgb(66, 153, 225),
-            Self::Red => eframe::egui::Color32::from_rgb(245, 101, 101),
-        }
-    }
-
-    pub fn to_highlight_color(self, is_dark: bool) -> eframe::egui::Color32 {
-        if is_dark {
-            match self {
-                Self::Yellow => eframe::egui::Color32::from_rgba_unmultiplied(235, 195, 60, 60),
-                Self::Green => eframe::egui::Color32::from_rgba_unmultiplied(72, 187, 120, 60),
-                Self::Blue => eframe::egui::Color32::from_rgba_unmultiplied(66, 153, 225, 60),
-                Self::Red => eframe::egui::Color32::from_rgba_unmultiplied(245, 101, 101, 60),
-            }
-        } else {
-            match self {
-                Self::Yellow => eframe::egui::Color32::from_rgba_unmultiplied(255, 235, 120, 95),
-                Self::Green => eframe::egui::Color32::from_rgba_unmultiplied(190, 245, 200, 95),
-                Self::Blue => eframe::egui::Color32::from_rgba_unmultiplied(190, 225, 255, 95),
-                Self::Red => eframe::egui::Color32::from_rgba_unmultiplied(255, 205, 205, 95),
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -198,7 +178,7 @@ impl ReaderCore {
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Vec<SearchHit> {
         use std::sync::atomic::Ordering;
-        let q = query.trim().to_lowercase();
+        let q = normalize_search_text(query.trim());
         if q.is_empty() {
             return Vec::new();
         }
@@ -208,7 +188,7 @@ impl ReaderCore {
                 return Vec::new();
             }
             let clean_title = crate::document::strip_formatting_tags(&chapter.title);
-            let lower_title = clean_title.to_lowercase();
+            let lower_title = normalize_search_text(&clean_title);
             if lower_title.contains(&q) {
                 hits.push(SearchHit {
                     chapter_index: ch_idx,
@@ -226,7 +206,7 @@ impl ReaderCore {
                     return Vec::new();
                 }
                 let clean = crate::document::strip_formatting_tags(para);
-                let lower_para = clean.to_lowercase();
+                let lower_para = normalize_search_text(&clean);
                 let mut search_from = 0;
                 while let Some(found_idx) = lower_para[search_from..].find(&q) {
                     let abs_pos = search_from + found_idx;
@@ -259,7 +239,7 @@ impl ReaderCore {
         let Some(pages) = doc.page_content() else {
             return Vec::new();
         };
-        let q = query.trim().to_lowercase();
+        let q = normalize_search_text(query.trim());
         if q.is_empty() {
             return Vec::new();
         }
@@ -271,7 +251,7 @@ impl ReaderCore {
             let Some(text) = pages.extract_page_text(page_idx) else {
                 continue;
             };
-            let lower_text = text.to_lowercase();
+            let lower_text = normalize_search_text(&text);
             let mut search_from = 0;
             while let Some(found_idx) = lower_text[search_from..].find(&q) {
                 let abs_pos = search_from + found_idx;
@@ -303,32 +283,27 @@ impl ReaderCore {
         let Some(p_idx) = paragraph_idx else {
             return 0.0;
         };
-        let Some(chapter) = doc.chapters().get(chapter_idx) else {
-            return 0.0;
-        };
-        let line_height = font_size * 1.45;
-        let para_spacing = font_size * 0.4;
-        let chars_per_line = (760.0 / (font_size * 0.52)).max(10.0);
-
-        let clean_title = crate::document::strip_formatting_tags(&chapter.title);
-        let mut y = if clean_title.is_empty() {
-            20.0
-        } else {
-            20.0 + font_size * 1.35 + 24.0
-        };
-
-        for para in chapter.paragraphs.iter().take(p_idx) {
-            if para.is_empty() {
-                y += font_size * 0.7;
-            } else {
-                let clean = crate::document::strip_formatting_tags(para);
-                let char_count = clean.chars().count();
-                let num_lines = (char_count as f32 / chars_per_line).ceil().max(1.0);
-                y += num_lines * line_height + para_spacing;
-            }
-        }
-
+        let y = Self::paragraph_start_y(doc, chapter_idx, p_idx, font_size, 1.45, 760.0);
         (y - 60.0).max(0.0)
+    }
+
+    pub fn paragraph_anchor_scroll_y(
+        doc: &dyn Document,
+        chapter_idx: usize,
+        paragraph_idx: usize,
+        font_size: f32,
+        line_height_scale: f32,
+        column_width: f32,
+    ) -> f32 {
+        let y = Self::paragraph_start_y(
+            doc,
+            chapter_idx,
+            paragraph_idx,
+            font_size,
+            line_height_scale,
+            column_width,
+        );
+        (y - font_size * 0.5).max(0.0)
     }
 
     pub fn estimate_visible_paragraph(
@@ -337,12 +312,30 @@ impl ReaderCore {
         scroll_y: f32,
         font_size: f32,
     ) -> usize {
+        Self::estimate_visible_paragraph_with_layout(
+            doc,
+            chapter_idx,
+            scroll_y,
+            font_size,
+            1.45,
+            760.0,
+        )
+    }
+
+    pub fn estimate_visible_paragraph_with_layout(
+        doc: &dyn Document,
+        chapter_idx: usize,
+        scroll_y: f32,
+        font_size: f32,
+        line_height_scale: f32,
+        column_width: f32,
+    ) -> usize {
         let Some(chapter) = doc.chapters().get(chapter_idx) else {
             return 0;
         };
-        let line_height = font_size * 1.45;
+        let line_height = font_size * line_height_scale;
         let para_spacing = font_size * 0.4;
-        let chars_per_line = (760.0 / (font_size * 0.52)).max(10.0);
+        let chars_per_line = (column_width / (font_size * 0.52)).max(10.0);
 
         let clean_title = crate::document::strip_formatting_tags(&chapter.title);
         let mut y = if clean_title.is_empty() {
@@ -371,6 +364,41 @@ impl ReaderCore {
         }
 
         last_non_empty
+    }
+
+    fn paragraph_start_y(
+        doc: &dyn Document,
+        chapter_idx: usize,
+        paragraph_idx: usize,
+        font_size: f32,
+        line_height_scale: f32,
+        column_width: f32,
+    ) -> f32 {
+        let Some(chapter) = doc.chapters().get(chapter_idx) else {
+            return 0.0;
+        };
+        let line_height = font_size * line_height_scale;
+        let para_spacing = font_size * 0.4;
+        let chars_per_line = (column_width / (font_size * 0.52)).max(10.0);
+
+        let clean_title = crate::document::strip_formatting_tags(&chapter.title);
+        let mut y = if clean_title.is_empty() {
+            20.0
+        } else {
+            20.0 + font_size * 1.35 + 24.0
+        };
+
+        for para in chapter.paragraphs.iter().take(paragraph_idx) {
+            if para.is_empty() {
+                y += font_size * 0.7;
+            } else {
+                let clean = crate::document::strip_formatting_tags(para);
+                let char_count = clean.chars().count();
+                let num_lines = (char_count as f32 / chars_per_line).ceil().max(1.0);
+                y += num_lines * line_height + para_spacing;
+            }
+        }
+        y
     }
 
     pub fn detect_document_language(doc: &dyn Document) -> &'static str {
@@ -672,7 +700,8 @@ impl ReaderCore {
     pub fn apply_paged_command(
         cmd: &Command,
         doc: &Option<Arc<dyn Document>>,
-        comic_settings: &ComicSettings,
+        is_webtoon: bool,
+        is_double: bool,
         current_page: &mut usize,
         current_scroll_y: f32,
         max_scroll_y: f32,
@@ -688,7 +717,6 @@ impl ReaderCore {
             return false;
         }
 
-        let is_webtoon = comic_settings.reading_mode == "Webtoon";
         let page_step = (viewport_height * 0.85).max(200.0);
         let line_step = 60.0;
 
@@ -721,7 +749,6 @@ impl ReaderCore {
                 _ => false,
             }
         } else {
-            let is_double = comic_settings.page_layout == "Double";
             let step = if is_double { 2 } else { 1 };
             match cmd {
                 Command::NextPage | Command::PageDown => {
@@ -746,31 +773,6 @@ impl ReaderCore {
                 }
                 _ => false,
             }
-        }
-    }
-
-    pub fn record_progress(
-        settings: &mut AppSettings,
-        document: &Option<Arc<dyn Document>>,
-        current_file_path: &Option<PathBuf>,
-        current_chapter: usize,
-        current_page: usize,
-        current_scroll_y: f32,
-    ) {
-        if let (Some(doc), Some(path)) = (document, current_file_path) {
-            let meta = doc.metadata();
-            let saved_ch = if doc.page_content().is_some() {
-                current_page
-            } else {
-                current_chapter
-            };
-            settings.record_book_progress(
-                path,
-                &meta.title,
-                &meta.author,
-                saved_ch,
-                current_scroll_y,
-            );
         }
     }
 }

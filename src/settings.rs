@@ -1,191 +1,18 @@
-use crate::opds::{OpdsCatalog, default_opds_catalogs};
+pub use crate::settings_config::{
+    AmbientSettings, AutoScrollSettings, BookProgress, ComicSettings, OpdsCatalog, PdfSettings,
+    RecentBook, TranslationProvider, TranslationSettings, TtsSettings, WindowState,
+    default_opds_catalogs,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const DEEPL_SECRET_KEY: &str = "deepl_api_key";
+pub const OPEN_DYSLEXIC_FONT: &str = "OpenDyslexic";
 
 static LAST_SAVE_ERROR: Mutex<Option<String>> = Mutex::new(None);
-static LAST_SECRET_ERROR: Mutex<Option<String>> = Mutex::new(None);
-static LAST_SECRET_SNAPSHOT: Mutex<Option<SecretSnapshot>> = Mutex::new(None);
 
-#[derive(Clone, PartialEq, Eq, Default)]
-struct SecretSnapshot {
-    deepl_api_key: Option<String>,
-    opds_passwords: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
-pub struct BookProgress {
-    pub chapter: usize,
-    pub scroll_y: f32,
-    pub timestamp: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
-pub struct RecentBook {
-    pub path: PathBuf,
-    pub title: String,
-    pub author: String,
-    pub chapter: usize,
-    pub scroll_y: f32,
-    pub timestamp: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct WindowState {
-    pub x: Option<f32>,
-    pub y: Option<f32>,
-    pub width: f32,
-    pub height: f32,
-    pub maximized: bool,
-}
-
-impl Default for WindowState {
-    fn default() -> Self {
-        Self {
-            x: None,
-            y: None,
-            width: 1050.0,
-            height: 750.0,
-            maximized: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct AutoScrollSettings {
-    pub pause_mode: bool,
-    pub continuous_speed: f32,
-    pub step_distance: f32,
-    pub step_duration: f32,
-    pub pause_duration: f32,
-}
-
-impl Default for AutoScrollSettings {
-    fn default() -> Self {
-        Self {
-            pause_mode: true,
-            continuous_speed: 40.0,
-            step_distance: 90.0,
-            step_duration: 0.8,
-            pause_duration: 3.5,
-        }
-    }
-}
-
-fn default_comic_zoom() -> f32 {
-    100.0
-}
-
-fn default_crop_tolerance() -> u8 {
-    24
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct ComicSettings {
-    pub reading_mode: String,
-    pub page_layout: String,
-    pub fit_mode: String,
-    pub zoom_percent: f32,
-    #[serde(default)]
-    pub smart_dark: bool,
-    #[serde(default)]
-    pub auto_crop: bool,
-    #[serde(default = "default_crop_tolerance")]
-    pub auto_crop_tolerance: u8,
-}
-
-impl Default for ComicSettings {
-    fn default() -> Self {
-        Self {
-            reading_mode: "Auto".to_string(),
-            page_layout: "Single".to_string(),
-            fit_mode: "FitWindow".to_string(),
-            zoom_percent: 100.0,
-            smart_dark: false,
-            auto_crop: false,
-            auto_crop_tolerance: default_crop_tolerance(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct PdfSettings {
-    pub layout: String,
-    pub fit_mode: String,
-    pub zoom_percent: f32,
-    pub rotation: i32,
-    #[serde(default)]
-    pub smart_dark: bool,
-    #[serde(default)]
-    pub auto_crop: bool,
-    #[serde(default = "default_crop_tolerance")]
-    pub auto_crop_tolerance: u8,
-}
-
-impl Default for PdfSettings {
-    fn default() -> Self {
-        Self {
-            layout: "Single".to_string(),
-            fit_mode: "FitWindow".to_string(),
-            zoom_percent: 100.0,
-            rotation: 0,
-            smart_dark: false,
-            auto_crop: false,
-            auto_crop_tolerance: default_crop_tolerance(),
-        }
-    }
-}
-
-pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum TranslationProvider {
-    #[default]
-    Google,
-    DeepL,
-}
-
-impl TranslationProvider {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Google => "Google Translate",
-            Self::DeepL => "DeepL",
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
-pub struct TranslationSettings {
-    pub provider: TranslationProvider,
-    #[serde(skip)]
-    pub deepl_api_key: String,
-}
-
-impl std::fmt::Debug for TranslationSettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TranslationSettings")
-            .field("provider", &self.provider)
-            .field(
-                "deepl_api_key",
-                &if self.deepl_api_key.is_empty() {
-                    ""
-                } else {
-                    "<redacted>"
-                },
-            )
-            .finish()
-    }
-}
+pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
 fn default_schema_version() -> u32 {
     0
@@ -215,7 +42,19 @@ fn default_reading_ruler_opacity() -> f32 {
     0.45
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+fn default_text_encoding() -> String {
+    "auto".to_string()
+}
+
+fn default_line_height_scale() -> f32 {
+    1.45
+}
+
+fn default_max_column_width() -> f32 {
+    760.0
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppSettings {
     #[serde(default = "default_schema_version")]
@@ -226,8 +65,14 @@ pub struct AppSettings {
     pub last_opened_book: Option<PathBuf>,
     pub open_tabs: Vec<PathBuf>,
     pub active_tab_index: usize,
+    #[serde(default = "default_text_encoding")]
+    pub text_encoding: String,
     pub font_size: f32,
     pub font_family: String,
+    #[serde(default = "default_line_height_scale")]
+    pub line_height_scale: f32,
+    #[serde(default = "default_max_column_width")]
+    pub max_column_width: f32,
     pub theme: String,
     pub keep_screen_on: bool,
     pub show_toc: bool,
@@ -256,7 +101,30 @@ pub struct AppSettings {
     #[serde(default)]
     pub bookmarks: Vec<crate::core::Bookmark>,
     #[serde(default)]
-    pub ambient: crate::app::ambient::AmbientSettings,
+    pub ambient: AmbientSettings,
+    #[serde(default)]
+    pub tts: TtsSettings,
+    #[serde(default)]
+    pub trial_started_at_unix: Option<u64>,
+    #[serde(skip)]
+    pub license_key: String,
+}
+
+impl std::fmt::Debug for AppSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut value = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "license_key".to_string(),
+                serde_json::Value::String(if self.license_key.is_empty() {
+                    String::new()
+                } else {
+                    "<redacted>".to_string()
+                }),
+            );
+        }
+        f.debug_struct("AppSettings").field("data", &value).finish()
+    }
 }
 
 impl Default for AppSettings {
@@ -269,8 +137,11 @@ impl Default for AppSettings {
             last_opened_book: None,
             open_tabs: Vec::new(),
             active_tab_index: 0,
+            text_encoding: default_text_encoding(),
             font_size: 19.0,
             font_family: default_font_family(),
+            line_height_scale: default_line_height_scale(),
+            max_column_width: default_max_column_width(),
             theme: "Sepia".to_string(),
             keep_screen_on: true,
             show_toc: true,
@@ -288,7 +159,10 @@ impl Default for AppSettings {
             opds_catalogs: default_opds_catalogs(),
             translation: TranslationSettings::default(),
             bookmarks: Vec::new(),
-            ambient: crate::app::ambient::AmbientSettings::default(),
+            ambient: AmbientSettings::default(),
+            tts: TtsSettings::default(),
+            trial_started_at_unix: None,
+            license_key: String::new(),
         }
     }
 }
@@ -306,25 +180,6 @@ impl AppSettings {
 
     pub fn clear_save_error() {
         if let Ok(mut guard) = LAST_SAVE_ERROR.lock() {
-            *guard = None;
-        }
-    }
-
-    pub fn last_secret_error() -> Option<String> {
-        LAST_SECRET_ERROR
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-    }
-
-    fn set_secret_error(error: String) {
-        if let Ok(mut guard) = LAST_SECRET_ERROR.lock() {
-            *guard = Some(error);
-        }
-    }
-
-    fn clear_secret_error() {
-        if let Ok(mut guard) = LAST_SECRET_ERROR.lock() {
             *guard = None;
         }
     }
@@ -367,25 +222,11 @@ impl AppSettings {
         Self::clear_secret_error();
         let path = Self::get_settings_path();
         let bak_path = Self::make_backup_path(&path);
-        let legacy = Self::read_legacy_secret_entries(&path)
-            .or_else(|| Self::read_legacy_secret_entries(&bak_path))
+        let legacy = secrets::read_legacy_secret_entries(&path)
+            .or_else(|| secrets::read_legacy_secret_entries(&bak_path))
             .unwrap_or_default();
         let mut settings = Self::load_from_path(&path);
-        settings.apply_secrets(&legacy);
-        if legacy.is_empty() {
-            if let Ok(mut guard) = LAST_SECRET_SNAPSHOT.lock() {
-                *guard = Some(settings.secret_snapshot());
-            }
-        } else {
-            match settings.store_secrets() {
-                Ok(()) => {
-                    Self::clear_secret_error();
-                    let _ = settings.save_to_path(&path);
-                }
-                Err(error) => Self::set_secret_error(error),
-            }
-        }
-        Self::sanitize_auxiliary_files(&path);
+        secrets::initialize(&mut settings, &path, legacy);
         settings
     }
 
@@ -400,322 +241,14 @@ impl AppSettings {
         bak_path
     }
 
-    fn opds_secret_key(catalog_id: &str) -> String {
-        format!("opds_password:{catalog_id}")
-    }
-
-    fn extract_legacy_secret_entries(content: &str) -> Vec<(String, String)> {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-            return Vec::new();
-        };
-        let mut entries = Vec::new();
-        if let Some(key) = value
-            .get("translation")
-            .and_then(|translation| translation.get("deepl_api_key"))
-            .and_then(|key| key.as_str())
-            && !key.is_empty()
-        {
-            entries.push((DEEPL_SECRET_KEY.to_string(), key.to_string()));
-        }
-        if let Some(catalogs) = value
-            .get("opds_catalogs")
-            .and_then(|catalogs| catalogs.as_array())
-        {
-            for catalog in catalogs {
-                let Some(id) = catalog.get("id").and_then(|id| id.as_str()) else {
-                    continue;
-                };
-                let Some(password) = catalog
-                    .get("password")
-                    .and_then(|password| password.as_str())
-                else {
-                    continue;
-                };
-                if !id.is_empty() && !password.is_empty() {
-                    entries.push((Self::opds_secret_key(id), password.to_string()));
-                }
-            }
-        }
-        entries
-    }
-
-    fn sanitize_secret_fields(content: &str) -> Option<String> {
-        let mut value = match serde_json::from_str::<serde_json::Value>(content) {
-            Ok(value) => value,
-            Err(_) => return Self::redact_secret_text(content),
-        };
-        let mut changed = false;
-        if let Some(translation) = value
-            .get_mut("translation")
-            .and_then(|translation| translation.as_object_mut())
-            && translation.remove("deepl_api_key").is_some()
-        {
-            changed = true;
-        }
-        if let Some(catalogs) = value
-            .get_mut("opds_catalogs")
-            .and_then(|catalogs| catalogs.as_array_mut())
-        {
-            for catalog in catalogs {
-                if let Some(object) = catalog.as_object_mut()
-                    && object.remove("password").is_some()
-                {
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            return None;
-        }
-        serde_json::to_string_pretty(&value).ok()
-    }
-
-    fn redact_secret_text(content: &str) -> Option<String> {
-        let mut result = String::with_capacity(content.len());
-        let mut cursor = 0;
-        let mut changed = false;
-
-        while let Some(relative) = content[cursor..].find("\"deepl_api_key\"") {
-            let key_start = cursor + relative;
-            let key_end = key_start + "\"deepl_api_key\"".len();
-            let Some((value_start, value_end)) = Self::json_string_value_bounds(content, key_end)
-            else {
-                cursor = key_end;
-                continue;
-            };
-            result.push_str(&content[cursor..value_start + 1]);
-            result.push('"');
-            cursor = value_end;
-            changed = true;
-        }
-        result.push_str(&content[cursor..]);
-
-        let mut second = String::with_capacity(result.len());
-        let mut cursor = 0;
-        while let Some(relative) = result[cursor..].find("\"password\"") {
-            let key_start = cursor + relative;
-            let key_end = key_start + "\"password\"".len();
-            let Some((value_start, value_end)) = Self::json_string_value_bounds(&result, key_end)
-            else {
-                cursor = key_end;
-                continue;
-            };
-            second.push_str(&result[cursor..value_start + 1]);
-            second.push('"');
-            cursor = value_end;
-            changed = true;
-        }
-        second.push_str(&result[cursor..]);
-
-        if changed { Some(second) } else { None }
-    }
-
-    fn json_string_value_bounds(content: &str, key_end: usize) -> Option<(usize, usize)> {
-        let bytes = content.as_bytes();
-        let mut index = key_end;
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if bytes.get(index) != Some(&b':') {
-            return None;
-        }
-        index += 1;
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if bytes.get(index) != Some(&b'"') {
-            return None;
-        }
-        let value_start = index;
-        index += 1;
-        let mut escaped = false;
-        while index < bytes.len() {
-            match bytes[index] {
-                b'\\' if !escaped => escaped = true,
-                b'"' if !escaped => return Some((value_start, index + 1)),
-                _ => escaped = false,
-            }
-            index += 1;
-        }
-        None
-    }
-
-    fn write_settings_file(path: &Path, content: &str) -> std::io::Result<()> {
-        std::fs::write(path, content)?;
-        crate::platform::permissions::restrict_file(path);
-        Ok(())
-    }
-
-    fn write_secret_safe_copy(source: &Path, destination: &Path) -> std::io::Result<()> {
-        let content = std::fs::read_to_string(source)?;
-        if let Some(sanitized) = Self::sanitize_secret_fields(&content) {
-            Self::write_settings_file(destination, &sanitized)
-        } else {
-            std::fs::copy(source, destination)?;
-            crate::platform::permissions::restrict_file(destination);
-            Ok(())
-        }
-    }
-
-    fn sanitize_existing_file(path: &Path) {
-        let Ok(content) = std::fs::read_to_string(path) else {
-            return;
-        };
-        let Some(sanitized) = Self::sanitize_secret_fields(&content) else {
-            return;
-        };
-        let tmp_path = path.with_extension(format!("sanitize.{}", std::process::id()));
-        if Self::write_settings_file(&tmp_path, &sanitized).is_ok() {
-            let _ = std::fs::rename(&tmp_path, path);
-        } else {
-            let _ = std::fs::remove_file(&tmp_path);
-        }
-        crate::platform::permissions::restrict_file(path);
-    }
-
-    fn sanitize_auxiliary_files(path: &Path) {
-        Self::sanitize_existing_file(&Self::make_backup_path(path));
-        Self::sanitize_existing_file(&path.with_extension("corrupted"));
-    }
-
-    fn read_legacy_secret_entries(path: &Path) -> Option<Vec<(String, String)>> {
-        let content = std::fs::read_to_string(path).ok()?;
-        let entries = Self::extract_legacy_secret_entries(&content);
-        if entries.is_empty() {
-            None
-        } else {
-            Some(entries)
-        }
-    }
-
-    fn secret_snapshot(&self) -> SecretSnapshot {
-        SecretSnapshot {
-            deepl_api_key: if self.translation.deepl_api_key.is_empty() {
-                None
-            } else {
-                Some(self.translation.deepl_api_key.clone())
-            },
-            opds_passwords: self
-                .opds_catalogs
-                .iter()
-                .filter_map(|catalog| {
-                    catalog
-                        .password
-                        .as_ref()
-                        .filter(|password| !password.is_empty())
-                        .map(|password| (catalog.id.clone(), password.clone()))
-                })
-                .collect(),
-        }
-    }
-
-    fn store_secrets(&self) -> Result<(), String> {
-        let snapshot = self.secret_snapshot();
-        let previous = LAST_SECRET_SNAPSHOT
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone());
-        if previous.as_ref() == Some(&snapshot) {
-            return Ok(());
-        }
-        let previous = previous.unwrap_or_default();
-
-        if snapshot.deepl_api_key != previous.deepl_api_key {
-            match snapshot.deepl_api_key.as_deref() {
-                Some(value) => crate::platform::secrets::store(DEEPL_SECRET_KEY, value)?,
-                None => crate::platform::secrets::delete(DEEPL_SECRET_KEY)?,
-            }
-        }
-
-        for (catalog_id, password) in &snapshot.opds_passwords {
-            if previous.opds_passwords.get(catalog_id) != Some(password) {
-                crate::platform::secrets::store(&Self::opds_secret_key(catalog_id), password)?;
-            }
-        }
-
-        for catalog_id in previous.opds_passwords.keys() {
-            if !snapshot.opds_passwords.contains_key(catalog_id) {
-                crate::platform::secrets::delete(&Self::opds_secret_key(catalog_id))?;
-            }
-        }
-
-        if let Ok(mut guard) = LAST_SECRET_SNAPSHOT.lock() {
-            *guard = Some(snapshot);
-        }
-        Ok(())
-    }
-
-    fn apply_secrets(&mut self, legacy: &[(String, String)]) {
-        let mut first_error = None;
-        let legacy_deepl = legacy
-            .iter()
-            .find(|(key, _)| key == DEEPL_SECRET_KEY)
-            .map(|(_, value)| value.clone());
-        match crate::platform::secrets::load(DEEPL_SECRET_KEY) {
-            Ok(Some(value)) => self.translation.deepl_api_key = value,
-            Ok(None) => {
-                if let Some(value) = legacy_deepl {
-                    self.translation.deepl_api_key = value;
-                }
-            }
-            Err(error) => {
-                first_error = Some(error);
-                if let Some(value) = legacy_deepl {
-                    self.translation.deepl_api_key = value;
-                }
-            }
-        }
-
-        for catalog in &mut self.opds_catalogs {
-            let key = Self::opds_secret_key(&catalog.id);
-            let legacy_password = legacy
-                .iter()
-                .find(|(entry_key, _)| entry_key == &key)
-                .map(|(_, value)| value.clone());
-            match crate::platform::secrets::load(&key) {
-                Ok(Some(value)) => catalog.password = Some(value),
-                Ok(None) => {
-                    if let Some(value) = legacy_password {
-                        catalog.password = Some(value);
-                    }
-                }
-                Err(error) => {
-                    first_error = Some(error);
-                    if let Some(value) = legacy_password {
-                        catalog.password = Some(value);
-                    }
-                }
-            }
-        }
-
-        if let Some(error) = first_error {
-            Self::set_secret_error(error);
-        }
-    }
-
     pub fn migrate_from_file(&mut self, path: &Path) {
         if self.schema_version < CURRENT_SETTINGS_SCHEMA_VERSION {
             let bak_path = Self::make_backup_path(path);
             if path.exists() {
-                let _ = Self::write_secret_safe_copy(path, &bak_path);
+                let _ = secrets::write_secret_safe_copy(path, &bak_path);
             }
 
-            for book in &self.recent_books {
-                self.reading_progress
-                    .entry(book.path.clone())
-                    .or_insert(BookProgress {
-                        chapter: book.chapter,
-                        scroll_y: book.scroll_y,
-                        timestamp: book.timestamp,
-                    });
-            }
-
-            if self.font_family.trim().is_empty() {
-                self.font_family = default_font_family();
-            }
-            self.font_size = self.font_size.clamp(10.0, 48.0);
-            self.schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
-
+            self.apply_migrations();
             let _ = self.save_to_path(path);
         } else {
             let mut need_save = false;
@@ -726,6 +259,7 @@ impl AppSettings {
                         .or_insert(BookProgress {
                             chapter: book.chapter,
                             scroll_y: book.scroll_y,
+                            paragraph: None,
                             timestamp: book.timestamp,
                         });
                 }
@@ -735,6 +269,26 @@ impl AppSettings {
                 let _ = self.save_to_path(path);
             }
         }
+    }
+
+    fn apply_migrations(&mut self) {
+        for book in &self.recent_books {
+            self.reading_progress
+                .entry(book.path.clone())
+                .or_insert(BookProgress {
+                    chapter: book.chapter,
+                    scroll_y: book.scroll_y,
+                    paragraph: None,
+                    timestamp: book.timestamp,
+                });
+        }
+        if self.font_family.trim().is_empty() {
+            self.font_family = default_font_family();
+        }
+        self.font_size = self.font_size.clamp(10.0, 48.0);
+        self.line_height_scale = self.line_height_scale.clamp(1.1, 2.0);
+        self.max_column_width = self.max_column_width.clamp(520.0, 1200.0);
+        self.schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
     }
 
     pub fn load_from_path(path: &Path) -> Self {
@@ -750,15 +304,15 @@ impl AppSettings {
                     }
                     Err(_) => {
                         if !bak_path.exists() {
-                            let _ = Self::write_secret_safe_copy(path, &bak_path);
+                            let _ = secrets::write_secret_safe_copy(path, &bak_path);
                         }
                         let corrupted_path = path.with_extension("corrupted");
-                        let _ = Self::write_secret_safe_copy(path, &corrupted_path);
+                        let _ = secrets::write_secret_safe_copy(path, &corrupted_path);
                     }
                 }
             } else {
                 let corrupted_path = path.with_extension("corrupted");
-                let _ = Self::write_secret_safe_copy(path, &corrupted_path);
+                let _ = secrets::write_secret_safe_copy(path, &corrupted_path);
             }
         }
 
@@ -766,7 +320,7 @@ impl AppSettings {
             && let Ok(bak_content) = std::fs::read_to_string(&bak_path)
             && let Ok(mut bak_settings) = serde_json::from_str::<AppSettings>(&bak_content)
         {
-            bak_settings.migrate_from_file(path);
+            bak_settings.apply_migrations();
             let _ = bak_settings.save_to_path(path);
             return bak_settings;
         }
@@ -777,13 +331,7 @@ impl AppSettings {
     pub fn save(&self) -> Result<(), String> {
         let path = Self::get_settings_path();
         let secret_result = self.store_secrets();
-        let save_result = self.save_to_path(&path);
-        Self::sanitize_auxiliary_files(&path);
-        match secret_result {
-            Ok(()) => Self::clear_secret_error(),
-            Err(error) => Self::set_secret_error(error),
-        }
-        save_result
+        self.save_with_secret_result(&path, secret_result)
     }
 
     pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
@@ -843,11 +391,80 @@ impl AppSettings {
         }
 
         crate::platform::permissions::restrict_file(path);
-        Self::sanitize_auxiliary_files(path);
+        secrets::sanitize_auxiliary_files(path);
         if let Ok(mut lock) = LAST_SAVE_ERROR.lock() {
             *lock = None;
         }
         Ok(())
+    }
+
+    pub fn license_status_at(&self, now_unix: u64) -> crate::core::license::LicenseStatus {
+        crate::core::license::LicenseStatus::from_stored(
+            Some(&self.license_key),
+            self.trial_started_at_unix,
+            now_unix,
+        )
+    }
+
+    pub fn license_status(&self) -> crate::core::license::LicenseStatus {
+        self.license_status_at(crate::core::license::unix_now())
+    }
+
+    pub fn can_use(&self, feature: crate::core::license::ProFeature) -> bool {
+        self.license_status().can_use(feature)
+    }
+
+    pub fn start_trial(&mut self, now_unix: u64) -> Result<(), crate::core::license::TrialError> {
+        if self.license_status_at(now_unix).is_pro_active() {
+            return Err(crate::core::license::TrialError::AlreadyStarted);
+        }
+        crate::core::license::start_trial(&mut self.trial_started_at_unix, now_unix)
+    }
+
+    pub fn activate_license(
+        &mut self,
+        key: &str,
+    ) -> Result<crate::core::license::LicenseClaims, crate::core::license::LicenseError> {
+        let claims = crate::core::license::verify_license_key(key)?;
+        self.license_key = key.trim().to_string();
+        Ok(claims)
+    }
+
+    pub fn effective_bionic_reading(&self) -> bool {
+        self.bionic_reading && self.can_use(crate::core::license::ProFeature::FocusTools)
+    }
+
+    pub fn effective_reading_ruler(&self) -> bool {
+        self.reading_ruler && self.can_use(crate::core::license::ProFeature::FocusTools)
+    }
+
+    pub fn effective_pdf_auto_crop(&self) -> bool {
+        self.pdf.auto_crop && self.can_use(crate::core::license::ProFeature::SmartScanProcessing)
+    }
+
+    pub fn effective_font_family(&self) -> String {
+        if self.font_family == OPEN_DYSLEXIC_FONT
+            && !self.can_use(crate::core::license::ProFeature::FocusTools)
+        {
+            return default_font_family();
+        }
+        self.font_family.clone()
+    }
+
+    pub fn effective_line_height_scale(&self) -> f32 {
+        self.line_height_scale.clamp(1.1, 2.0)
+    }
+
+    pub fn effective_max_column_width(&self) -> f32 {
+        self.max_column_width.clamp(520.0, 1200.0)
+    }
+
+    pub fn text_encoding_override(&self) -> Option<&str> {
+        if self.text_encoding == "auto" || self.text_encoding.trim().is_empty() {
+            None
+        } else {
+            Some(self.text_encoding.as_str())
+        }
     }
 
     pub fn record_book_progress(
@@ -858,16 +475,34 @@ impl AppSettings {
         chapter: usize,
         scroll_y: f32,
     ) {
+        self.record_book_progress_anchored(path, title, author, chapter, scroll_y, None);
+    }
+
+    pub fn record_book_progress_anchored(
+        &mut self,
+        path: &Path,
+        title: &str,
+        author: &str,
+        chapter: usize,
+        scroll_y: f32,
+        paragraph: Option<usize>,
+    ) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
+        let existing_paragraph = self
+            .reading_progress
+            .get(path)
+            .filter(|progress| progress.chapter == chapter)
+            .and_then(|progress| progress.paragraph);
         self.reading_progress.insert(
             path.to_path_buf(),
             BookProgress {
                 chapter,
                 scroll_y,
+                paragraph: paragraph.or(existing_paragraph),
                 timestamp: now,
             },
         );
@@ -926,6 +561,17 @@ impl AppSettings {
             .map(|b| (b.chapter, b.scroll_y))
     }
 
+    pub fn get_book_paragraph(&self, path: &Path) -> Option<usize> {
+        if let Some(progress) = self.reading_progress.get(path) {
+            return progress.paragraph;
+        }
+        let path_str = path.to_string_lossy();
+        self.reading_progress
+            .iter()
+            .find(|(candidate, _)| candidate.to_string_lossy().eq_ignore_ascii_case(&path_str))
+            .and_then(|(_, progress)| progress.paragraph)
+    }
+
     pub fn update_window_state(
         &mut self,
         x: Option<f32>,
@@ -952,6 +598,8 @@ impl AppSettings {
         self.window.maximized = maximized;
     }
 }
+
+mod secrets;
 
 #[cfg(all(test, feature = "enable_tests"))]
 mod test;

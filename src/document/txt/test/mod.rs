@@ -33,6 +33,27 @@ fn test_txt_md_log_format_via_registry() {
 }
 
 #[test]
+fn test_txt_forced_encoding_override() {
+    use crate::document::Document;
+    let text = "Привет, мир! Это принудительная кодировка.";
+    let (bytes, _, _) = encoding_rs::WINDOWS_1251.encode(text);
+    let doc = document::TxtDocument::from_bytes_with_encoding(
+        &bytes,
+        "Encoded",
+        "txt",
+        Some("windows-1251"),
+    )
+    .unwrap();
+    assert_eq!(doc.chapters()[0].paragraphs[0], text);
+
+    let utf16: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let utf16_doc =
+        document::TxtDocument::from_bytes_with_encoding(&utf16, "Encoded", "txt", Some("utf-16le"))
+            .unwrap();
+    assert_eq!(utf16_doc.chapters()[0].paragraphs[0], text);
+}
+
+#[test]
 fn test_txt_single_byte_encoding_detection() {
     use crate::document::Document;
 
@@ -62,6 +83,43 @@ fn test_txt_single_byte_encoding_detection() {
             .expect("Должен декодировать однобайтовую кодировку");
         assert_eq!(doc.chapters()[0].paragraphs[0], text);
     }
+}
+
+#[test]
+fn test_txt_chapter_templates_split_sections() {
+    use crate::document::Document;
+    let text = "Пролог\n\nТекст пролога.\n\nГлава 1. Начало\n\nПервый абзац.\n\nГлава 2. Конец\n\nВторой абзац.";
+    let doc = document::TxtDocument::from_bytes(text.as_bytes(), "Book", "txt").unwrap();
+    assert_eq!(doc.chapters().len(), 3);
+    assert_eq!(doc.toc()[0].title, "Пролог");
+    assert_eq!(doc.toc()[1].title, "Глава 1. Начало");
+    assert_eq!(doc.toc()[2].title, "Глава 2. Конец");
+    assert!(doc.has_custom_toc());
+}
+
+#[test]
+fn test_log_section_headings_split_sections() {
+    use crate::document::Document;
+    let text = "=== Start ===\nline one\n=== End ===\nline two";
+    let doc = document::TxtDocument::from_bytes(text.as_bytes(), "Log", "log").unwrap();
+    assert_eq!(doc.chapters().len(), 2);
+    assert_eq!(doc.toc()[0].title, "Start");
+    assert_eq!(doc.toc()[1].title, "End");
+}
+
+#[test]
+fn test_markdown_inline_formatting_and_lists() {
+    use crate::document::Document;
+    let text = "# Title\n\n**bold** and *italic* and [link](https://example.com)\n\n- one\n- two\n\n> quote";
+    let doc = document::TxtDocument::from_bytes(text.as_bytes(), "Md", "md").unwrap();
+    let paragraphs = &doc.chapters()[0].paragraphs;
+    assert!(paragraphs.iter().any(|p| p.contains("<b>bold</b>")));
+    assert!(paragraphs.iter().any(|p| p.contains("<i>italic</i>")));
+    assert!(paragraphs.iter().any(|p| p.contains("link")));
+    assert!(!paragraphs.iter().any(|p| p.contains("https://")));
+    assert!(paragraphs.iter().any(|p| p == "• one"));
+    assert!(paragraphs.iter().any(|p| p == "• two"));
+    assert!(paragraphs.iter().any(|p| p == "<i>quote</i>"));
 }
 
 #[test]

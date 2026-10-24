@@ -1,6 +1,7 @@
 use super::icons::{Icon, IconButton};
 use super::pdf_view::{PdfViewState, truncate_str};
 use super::theme::ReaderTheme;
+use crate::core::license::ProFeature;
 use crate::settings::PdfSettings;
 use eframe::egui::{self, RichText, Vec2};
 use std::time::Instant;
@@ -15,8 +16,12 @@ impl PdfViewState {
         status_message: &mut Option<String>,
         format_label: &str,
         lang: crate::i18n::UiLanguage,
+        smart_scan_allowed: bool,
+        on_pro_required: &mut Option<ProFeature>,
     ) {
         let t = lang.t();
+        let effective_smart_dark = settings.smart_dark && smart_scan_allowed;
+        let effective_auto_crop = settings.auto_crop && smart_scan_allowed;
         let copied_text =
             |preview: &str| crate::i18n::fill(t.extra.pdf_copied_prefix, &[("{preview}", preview)]);
         ui.horizontal(|ui| {
@@ -136,11 +141,15 @@ impl PdfViewState {
                     crate::app::icons::Icon::Moon,
                     t.smart_dark_mode,
                 )
-                .selected(settings.smart_dark),
+                .selected(effective_smart_dark),
             );
             if dark_resp.on_hover_text(t.smart_dark_mode_tooltip).clicked() {
-                settings.smart_dark = !settings.smart_dark;
-                self.clear_cache();
+                if smart_scan_allowed {
+                    settings.smart_dark = !settings.smart_dark;
+                    self.clear_cache();
+                } else {
+                    *on_pro_required = Some(ProFeature::SmartScanProcessing);
+                }
             }
 
             let crop_resp = ui
@@ -149,21 +158,27 @@ impl PdfViewState {
                         crate::app::icons::Icon::Crop,
                         t.auto_crop_margins,
                     )
-                    .selected(settings.auto_crop),
+                    .selected(effective_auto_crop),
                 )
                 .on_hover_text(t.auto_crop_margins_tooltip);
             if crop_resp.clicked() {
-                settings.auto_crop = !settings.auto_crop;
-                self.pan_offset = Vec2::ZERO;
-            }
-            crop_resp.context_menu(|ui| {
-                ui.label(RichText::new(t.crop_sensitivity).strong());
-                let slider = egui::Slider::new(&mut settings.auto_crop_tolerance, 5..=80)
-                    .text(t.crop_tolerance);
-                if ui.add(slider).changed() {
-                    self.clear_cache();
+                if smart_scan_allowed {
+                    settings.auto_crop = !settings.auto_crop;
+                    self.pan_offset = Vec2::ZERO;
+                } else {
+                    *on_pro_required = Some(ProFeature::SmartScanProcessing);
                 }
-            });
+            }
+            if effective_auto_crop {
+                crop_resp.context_menu(|ui| {
+                    ui.label(RichText::new(t.crop_sensitivity).strong());
+                    let slider = egui::Slider::new(&mut settings.auto_crop_tolerance, 5..=80)
+                        .text(t.crop_tolerance);
+                    if ui.add(slider).changed() {
+                        self.clear_cache();
+                    }
+                });
+            }
 
             ui.separator();
 

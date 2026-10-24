@@ -1,9 +1,11 @@
 use crate::app::icons::{Icon, IconButton, IconLabel, paint_icon};
+use crate::app::opds_covers::OpdsCoverCache;
 use crate::app::theme::ReaderTheme;
+use crate::core::license::ProFeature;
 use crate::i18n::{format_opds_auth_error, format_opds_error};
 use crate::opds::{
     DownloadItem, DownloadStatus, OpdsAcquisitionLink, OpdsAuth, OpdsAuthError, OpdsBreadcrumb,
-    OpdsCatalog, OpdsClient, OpdsCoverManager, OpdsEntry, OpdsEvent, OpdsFeed,
+    OpdsCatalog, OpdsClient, OpdsEntry, OpdsEvent, OpdsFeed,
 };
 use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, Rect, RichText, ScrollArea, Stroke, StrokeKind, Vec2};
@@ -12,7 +14,7 @@ use std::path::PathBuf;
 
 pub struct OpdsBrowserState {
     pub client: OpdsClient,
-    pub cover_manager: OpdsCoverManager,
+    pub cover_manager: OpdsCoverCache,
     pub active_catalog_id: Option<String>,
     pub current_url: Option<String>,
     pub breadcrumbs: Vec<OpdsBreadcrumb>,
@@ -43,7 +45,7 @@ impl OpdsBrowserState {
     pub fn new() -> Self {
         Self {
             client: OpdsClient::new(),
-            cover_manager: OpdsCoverManager::new(),
+            cover_manager: OpdsCoverCache::new(),
             active_catalog_id: None,
             current_url: None,
             breadcrumbs: Vec::new(),
@@ -201,12 +203,32 @@ impl OpdsBrowserState {
         settings: &mut AppSettings,
         theme: &ReaderTheme,
         on_open_file: &mut Option<PathBuf>,
+        on_pro_required: &mut Option<ProFeature>,
     ) {
         if !*show_window {
             return;
         }
 
         self.cover_manager.poll(ctx);
+
+        if !settings.can_use(ProFeature::OpdsPro)
+            && let Some(active_id) = self.active_catalog_id.clone()
+            && let Some(catalog) = settings
+                .opds_catalogs
+                .iter()
+                .find(|catalog| catalog.id == active_id)
+            && !catalog.is_default
+        {
+            self.active_catalog_id = None;
+            self.current_url = None;
+            self.current_feed = None;
+            self.breadcrumbs.clear();
+            self.history.clear();
+            self.is_loading = false;
+            self.error_message = None;
+            self.search_query.clear();
+            self.show_add_catalog = false;
+        }
 
         if let Some(opened) = self.new_download_to_open.take() {
             *on_open_file = Some(opened);
@@ -245,7 +267,7 @@ impl OpdsBrowserState {
                     ui.available_size(),
                     egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                        self.render_catalogs_sidebar(ui, settings, theme);
+                        self.render_catalogs_sidebar(ui, settings, theme, on_pro_required);
                         ui.separator();
                         self.render_feed_content(ctx, ui, settings, theme);
                     },

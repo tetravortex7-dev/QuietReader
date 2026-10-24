@@ -1,5 +1,6 @@
 use crate::app::icons::{Icon, IconButton, IconLabel};
 use crate::app::theme::ReaderTheme;
+use crate::core::license::ProFeature;
 use crate::i18n::UiLanguage;
 use crate::settings::{AppSettings, TranslationProvider};
 use eframe::egui::{self, Align2, Color32, Frame, RichText, ScrollArea, Stroke, Vec2};
@@ -55,13 +56,32 @@ fn format_translation_error(err: &TranslationError, lang: crate::i18n::UiLanguag
     }
 }
 
+const MAX_PROVIDER_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
+
+pub(crate) fn read_provider_body(
+    reader: &mut dyn Read,
+    limit: u64,
+) -> Result<String, TranslationError> {
+    let mut bytes = Vec::new();
+    let read = reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| TranslationError::Provider(e.to_string()))?;
+    if read as u64 > limit {
+        return Err(TranslationError::Provider(
+            "Translation response exceeds the size limit".to_string(),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|e| TranslationError::Provider(e.to_string()))
+}
+
 fn fetch_google_translation(
     text: &str,
     target_lang: &str,
 ) -> Result<(String, String), TranslationError> {
     let tl = map_lang_code(target_lang);
-    let url = format!(
-        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}",
+    let payload = format!(
+        "client=gtx&sl=auto&tl={}&dt=t&q={}",
         url_encode(tl),
         url_encode(text)
     );
@@ -72,16 +92,16 @@ fn fetch_google_translation(
         .new_agent();
 
     let mut resp = agent
-        .get(&url)
+        .post("https://translate.googleapis.com/translate_a/single")
+        .header("Content-Type", "application/x-www-form-urlencoded")
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        .call()
+        .send(payload.as_bytes())
         .map_err(|e| TranslationError::Provider(e.to_string()))?;
 
-    let mut body = String::new();
-    resp.body_mut()
-        .as_reader()
-        .read_to_string(&mut body)
-        .map_err(|e| TranslationError::Provider(e.to_string()))?;
+    let body = read_provider_body(
+        &mut resp.body_mut().as_reader(),
+        MAX_PROVIDER_RESPONSE_BYTES,
+    )?;
 
     let val: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| TranslationError::Provider(e.to_string()))?;
@@ -174,8 +194,11 @@ fn fetch_deepl_translation(
     } else if resp.status().as_u16() == 429 {
         return Err(TranslationError::TooManyRequests);
     } else if !resp.status().is_success() {
-        let mut err_body = String::new();
-        let _ = resp.body_mut().as_reader().read_to_string(&mut err_body);
+        let err_body = read_provider_body(
+            &mut resp.body_mut().as_reader(),
+            MAX_PROVIDER_RESPONSE_BYTES,
+        )
+        .unwrap_or_default();
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&err_body) {
             if let Some(msg) = val.get("message").and_then(|m| m.as_str()) {
                 return Err(TranslationError::Provider(format!("DeepL: {msg}")));
@@ -187,11 +210,10 @@ fn fetch_deepl_translation(
         )));
     }
 
-    let mut body = String::new();
-    resp.body_mut()
-        .as_reader()
-        .read_to_string(&mut body)
-        .map_err(|e| TranslationError::Provider(e.to_string()))?;
+    let body = read_provider_body(
+        &mut resp.body_mut().as_reader(),
+        MAX_PROVIDER_RESPONSE_BYTES,
+    )?;
 
     let val: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| TranslationError::Provider(e.to_string()))?;
@@ -386,6 +408,8 @@ impl TranslateView {
         settings: &mut AppSettings,
         on_speak_text: &mut Option<String>,
         on_save_settings: &mut bool,
+        translation_allowed: bool,
+        on_pro_required: &mut Option<ProFeature>,
     ) {
         state.poll();
 
@@ -445,8 +469,12 @@ impl TranslateView {
                                     .clicked()
                                     && !is_sel
                                 {
-                                    state.target_lang = code.to_string();
-                                    state.retranslate(&settings.translation.deepl_api_key);
+                                    if translation_allowed {
+                                        state.target_lang = code.to_string();
+                                        state.retranslate(&settings.translation.deepl_api_key);
+                                    } else {
+                                        *on_pro_required = Some(ProFeature::Translation);
+                                    }
                                 }
                             }
                         });
@@ -483,22 +511,30 @@ impl TranslateView {
                             .clicked()
                             && !is_deepl
                         {
-                            settings.translation.provider = TranslationProvider::DeepL;
-                            *on_save_settings = true;
-                            state.provider = TranslationProvider::DeepL;
-                            if settings.translation.deepl_api_key.trim().is_empty() {
-                                state.editing_api_key = true;
-                                state.temp_api_key = String::new();
+                            if translation_allowed {
+                                settings.translation.provider = TranslationProvider::DeepL;
+                                *on_save_settings = true;
+                                state.provider = TranslationProvider::DeepL;
+                                if settings.translation.deepl_api_key.trim().is_empty() {
+                                    state.editing_api_key = true;
+                                    state.temp_api_key = String::new();
+                                } else {
+                                    state.retranslate(&settings.translation.deepl_api_key);
+                                }
                             } else {
-                                state.retranslate(&settings.translation.deepl_api_key);
+                                *on_pro_required = Some(ProFeature::Translation);
                             }
                         }
 
                         if ui.selectable_label(is_google, "Google").clicked() && !is_google {
-                            settings.translation.provider = TranslationProvider::Google;
-                            *on_save_settings = true;
-                            state.provider = TranslationProvider::Google;
-                            state.retranslate("");
+                            if translation_allowed {
+                                settings.translation.provider = TranslationProvider::Google;
+                                *on_save_settings = true;
+                                state.provider = TranslationProvider::Google;
+                                state.retranslate("");
+                            } else {
+                                *on_pro_required = Some(ProFeature::Translation);
+                            }
                         }
                     });
                 });
@@ -531,7 +567,11 @@ impl TranslateView {
                                         state.temp_api_key.trim().to_string();
                                     *on_save_settings = true;
                                     state.editing_api_key = false;
-                                    state.retranslate(&settings.translation.deepl_api_key);
+                                    if translation_allowed {
+                                        state.retranslate(&settings.translation.deepl_api_key);
+                                    } else {
+                                        *on_pro_required = Some(ProFeature::Translation);
+                                    }
                                 }
                             });
                         });
@@ -642,7 +682,11 @@ impl TranslateView {
                 }
 
                 if retry {
-                    state.retranslate(&settings.translation.deepl_api_key);
+                    if translation_allowed {
+                        state.retranslate(&settings.translation.deepl_api_key);
+                    } else {
+                        *on_pro_required = Some(ProFeature::Translation);
+                    }
                 }
 
                 ui.add_space(10.0);

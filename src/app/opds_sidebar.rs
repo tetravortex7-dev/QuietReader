@@ -1,6 +1,7 @@
 use super::icons::{Icon, IconButton, paint_icon};
 use super::opds_view::OpdsBrowserState;
 use super::theme::ReaderTheme;
+use crate::core::license::ProFeature;
 use crate::i18n::format_opds_auth_error;
 use crate::opds::{OpdsCatalog, validate_catalog_url};
 use crate::settings::AppSettings;
@@ -12,6 +13,7 @@ impl OpdsBrowserState {
         ui: &mut egui::Ui,
         settings: &mut AppSettings,
         theme: &ReaderTheme,
+        on_pro_required: &mut Option<ProFeature>,
     ) {
         let t = settings.ui_language.t();
         let text_color = theme.text_color();
@@ -124,7 +126,11 @@ impl OpdsBrowserState {
                         let interact =
                             ui.interact(resp.response.rect, resp.response.id, egui::Sense::click());
                         if interact.clicked() {
-                            catalog_to_open = Some(cat.clone());
+                            if cat.is_default || settings.can_use(ProFeature::OpdsPro) {
+                                catalog_to_open = Some(cat.clone());
+                            } else {
+                                *on_pro_required = Some(ProFeature::OpdsPro);
+                            }
                         }
 
                         ui.add_space(4.0);
@@ -156,8 +162,12 @@ impl OpdsBrowserState {
                     )
                     .clicked()
                 {
-                    self.show_add_catalog = true;
-                    self.add_error = None;
+                    if settings.can_use(ProFeature::OpdsPro) {
+                        self.show_add_catalog = true;
+                        self.add_error = None;
+                    } else {
+                        *on_pro_required = Some(ProFeature::OpdsPro);
+                    }
                 }
             } else {
                 ui.label(RichText::new(t.opds_add_catalog).strong().color(text_color));
@@ -180,7 +190,14 @@ impl OpdsBrowserState {
                         .desired_width(f32::INFINITY),
                 );
                 ui.add_space(2.0);
-                ui.checkbox(&mut self.new_has_auth, t.opds_auth_required);
+                let auth_response = ui.checkbox(&mut self.new_has_auth, t.opds_auth_required);
+                if auth_response.changed()
+                    && self.new_has_auth
+                    && !settings.can_use(ProFeature::OpdsPro)
+                {
+                    self.new_has_auth = false;
+                    *on_pro_required = Some(ProFeature::OpdsPro);
+                }
                 if self.new_has_auth {
                     ui.add_space(2.0);
                     ui.label(RichText::new(t.opds_username).size(11.0).color(sec_text));
@@ -207,54 +224,62 @@ impl OpdsBrowserState {
                         .add(IconButton::new(Icon::Check, t.opds_save_btn))
                         .clicked()
                     {
-                        let raw_name = self.new_name.trim();
-                        let url = self.new_url.trim();
-                        let uses_auth = self.new_has_auth && !self.new_user.trim().is_empty();
-                        if url.is_empty() {
-                            self.add_error = Some(t.opds_url_required.to_string());
-                        } else if let Err(err) = validate_catalog_url(url, uses_auth) {
-                            self.add_error =
-                                Some(format_opds_auth_error(err, settings.ui_language));
+                        if !settings.can_use(ProFeature::OpdsPro) {
+                            *on_pro_required = Some(ProFeature::OpdsPro);
                         } else {
-                            let name = if raw_name.is_empty() {
-                                url.trim_start_matches("http://")
-                                    .trim_start_matches("https://")
-                                    .split('/')
-                                    .next()
-                                    .unwrap_or("OPDS Catalog")
+                            let raw_name = self.new_name.trim();
+                            let url = self.new_url.trim();
+                            let uses_auth = self.new_has_auth && !self.new_user.trim().is_empty();
+                            if url.is_empty() {
+                                self.add_error = Some(t.opds_url_required.to_string());
+                            } else if let Err(err) = validate_catalog_url(url, uses_auth) {
+                                self.add_error =
+                                    Some(format_opds_auth_error(err, settings.ui_language));
                             } else {
-                                raw_name
-                            };
-                            let new_cat = OpdsCatalog {
-                                id: format!(
-                                    "custom_{}",
-                                    std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .map(|d| d.as_millis())
-                                        .unwrap_or(0)
-                                ),
-                                name: name.to_string(),
-                                url: url.to_string(),
-                                username: if self.new_has_auth && !self.new_user.trim().is_empty() {
-                                    Some(self.new_user.trim().to_string())
+                                let name = if raw_name.is_empty() {
+                                    url.trim_start_matches("http://")
+                                        .trim_start_matches("https://")
+                                        .split('/')
+                                        .next()
+                                        .unwrap_or("OPDS Catalog")
                                 } else {
-                                    None
-                                },
-                                password: if self.new_has_auth && !self.new_pass.trim().is_empty() {
-                                    Some(self.new_pass.trim().to_string())
-                                } else {
-                                    None
-                                },
-                                is_default: false,
-                            };
-                            settings.opds_catalogs.push(new_cat.clone());
-                            self.show_add_catalog = false;
-                            self.new_name.clear();
-                            self.new_url.clear();
-                            self.new_user.clear();
-                            self.new_pass.clear();
-                            self.add_error = None;
-                            self.open_catalog(&new_cat, settings);
+                                    raw_name
+                                };
+                                let new_cat = OpdsCatalog {
+                                    id: format!(
+                                        "custom_{}",
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_millis())
+                                            .unwrap_or(0)
+                                    ),
+                                    name: name.to_string(),
+                                    url: url.to_string(),
+                                    username: if self.new_has_auth
+                                        && !self.new_user.trim().is_empty()
+                                    {
+                                        Some(self.new_user.trim().to_string())
+                                    } else {
+                                        None
+                                    },
+                                    password: if self.new_has_auth
+                                        && !self.new_pass.trim().is_empty()
+                                    {
+                                        Some(self.new_pass.trim().to_string())
+                                    } else {
+                                        None
+                                    },
+                                    is_default: false,
+                                };
+                                settings.opds_catalogs.push(new_cat.clone());
+                                self.show_add_catalog = false;
+                                self.new_name.clear();
+                                self.new_url.clear();
+                                self.new_user.clear();
+                                self.new_pass.clear();
+                                self.add_error = None;
+                                self.open_catalog(&new_cat, settings);
+                            }
                         }
                     }
                     if ui

@@ -1,5 +1,4 @@
 use super::auth::OpdsAuth;
-use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -11,11 +10,18 @@ const MAX_COVER_DIMENSION: u32 = 2048;
 const MAX_COVER_ALLOC: u64 = 32 * 1024 * 1024;
 const MAX_CONCURRENT_COVER_FETCHES: usize = 4;
 
+#[derive(Clone, Debug)]
+pub struct CoverImage {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
 pub struct OpdsCoverManager {
-    cache: HashMap<String, Option<TextureHandle>>,
+    cache: HashMap<String, Option<CoverImage>>,
     in_flight: HashSet<String>,
-    tx_image: Sender<(String, Option<ColorImage>)>,
-    rx_image: Receiver<(String, Option<ColorImage>)>,
+    tx_image: Sender<(String, Option<CoverImage>)>,
+    rx_image: Receiver<(String, Option<CoverImage>)>,
 }
 
 impl Default for OpdsCoverManager {
@@ -35,37 +41,20 @@ impl OpdsCoverManager {
         }
     }
 
-    pub fn poll(&mut self, ctx: &egui::Context) {
+    pub fn poll(&mut self) -> bool {
         let mut got_new = false;
         while let Ok((url, opt_img)) = self.rx_image.try_recv() {
             self.in_flight.remove(&url);
-            match opt_img {
-                Some(img) => {
-                    let handle = ctx.load_texture(
-                        format!("opds_cover_{}", url.chars().take(60).collect::<String>()),
-                        img,
-                        TextureOptions::LINEAR,
-                    );
-                    self.cache.insert(url, Some(handle));
-                    got_new = true;
-                }
-                None => {
-                    self.cache.insert(url, None);
-                }
+            if opt_img.is_some() {
+                got_new = true;
             }
+            self.cache.insert(url, opt_img);
         }
-        if got_new {
-            ctx.request_repaint();
-        }
+        got_new
     }
 
-    pub fn get_texture(
-        &mut self,
-        ctx: &egui::Context,
-        url: &str,
-        auth: Option<OpdsAuth>,
-    ) -> Option<TextureHandle> {
-        self.poll(ctx);
+    pub fn get_cover(&mut self, url: &str, auth: Option<OpdsAuth>) -> Option<CoverImage> {
+        self.poll();
         if let Some(cached) = self.cache.get(url) {
             return cached.clone();
         }
@@ -129,10 +118,11 @@ impl OpdsCoverManager {
                         let dynamic_img = reader.decode().ok()?;
                         let rgba = dynamic_img.to_rgba8();
                         let (w, h) = rgba.dimensions();
-                        Some(ColorImage::from_rgba_unmultiplied(
-                            [w as usize, h as usize],
-                            rgba.as_raw(),
-                        ))
+                        Some(CoverImage {
+                            width: w as usize,
+                            height: h as usize,
+                            rgba: rgba.into_raw(),
+                        })
                     });
 
                     let _ = tx.send((cover_url, res));

@@ -13,6 +13,11 @@ pub enum SidebarTab {
     Bookmarks,
 }
 
+#[derive(Default)]
+pub struct TocViewState {
+    pub filter: String,
+}
+
 pub struct TocView;
 
 impl TocView {
@@ -32,6 +37,7 @@ impl TocView {
         status_message: &mut Option<String>,
         return_location: &mut Option<(usize, f32, Option<usize>)>,
         bookmark_state: &mut BookmarkViewState,
+        toc_state: &mut TocViewState,
         on_add_bookmark: &mut bool,
     ) {
         if !*show_toc {
@@ -98,6 +104,25 @@ impl TocView {
                 });
                 ui.add_space(4.0);
 
+                if *sidebar_tab == SidebarTab::Toc {
+                    ui.horizontal(|ui| {
+                        let width = (ui.available_width() - 24.0).max(60.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut toc_state.filter)
+                                .hint_text(t.toc_search_placeholder)
+                                .desired_width(width),
+                        );
+                        if !toc_state.filter.is_empty() {
+                            let clear_btn =
+                                IconButton::new(Icon::Cross, "").min_size(Vec2::splat(18.0));
+                            if ui.add(clear_btn).clicked() {
+                                toc_state.filter.clear();
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+
                 if *sidebar_tab == SidebarTab::Bookmarks {
                     let meta = doc.metadata();
                     BookmarksView::render(
@@ -121,13 +146,18 @@ impl TocView {
                     return;
                 }
 
+                let filter_query = crate::core::normalize_search_text(toc_state.filter.trim());
+                let has_filter = !filter_query.is_empty();
+                let toc = doc.toc();
+                let has_matching_toc =
+                    !has_filter || toc.iter().any(|item| toc_matches(item, &filter_query));
+
                 ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
                         if let Some(page_content) = doc.page_content() {
                             let page_count = page_content.page_count();
-                            let toc = doc.toc();
 
                             let has_custom_toc = doc.has_custom_toc();
 
@@ -139,6 +169,7 @@ impl TocView {
                                         *current_page,
                                         current_page,
                                         theme.accent_color(),
+                                        &filter_query,
                                     );
                                 }
                                 ui.add_space(8.0);
@@ -228,11 +259,17 @@ impl TocView {
                                 render_pages_virtual(ui);
                             }
                         } else {
-                            let toc = doc.toc();
                             if toc.is_empty() {
                                 ui.add_space(8.0);
                                 ui.label(
                                     RichText::new(t.toc_no_chapters)
+                                        .italics()
+                                        .color(Color32::from_gray(140)),
+                                );
+                            } else if !has_matching_toc {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new(t.search_nothing_found)
                                         .italics()
                                         .color(Color32::from_gray(140)),
                                 );
@@ -244,6 +281,7 @@ impl TocView {
                                         *current_chapter,
                                         current_chapter,
                                         theme.accent_color(),
+                                        &filter_query,
                                     );
                                 }
                             }
@@ -263,8 +301,25 @@ pub fn render_toc_item(
     current_chapter: usize,
     selected_chapter: &mut usize,
     accent_color: Color32,
+    filter: &str,
 ) {
-    render_toc_item_bounded(ui, item, current_chapter, selected_chapter, accent_color, 0);
+    render_toc_item_bounded(
+        ui,
+        item,
+        current_chapter,
+        selected_chapter,
+        accent_color,
+        0,
+        filter,
+    );
+}
+
+pub(crate) fn toc_matches(item: &TocItem, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let title = crate::core::normalize_search_text(item.title.trim());
+    title.contains(filter) || item.children.iter().any(|child| toc_matches(child, filter))
 }
 
 fn render_toc_item_bounded(
@@ -274,8 +329,9 @@ fn render_toc_item_bounded(
     selected_chapter: &mut usize,
     accent_color: Color32,
     depth: usize,
+    filter: &str,
 ) {
-    if depth >= 32 {
+    if depth >= 32 || !toc_matches(item, filter) {
         return;
     }
     let is_selected = current_chapter == item.chapter_index;
@@ -284,6 +340,8 @@ fn render_toc_item_bounded(
     } else {
         item.title.as_str()
     };
+    let parent_matches =
+        filter.is_empty() || crate::core::normalize_search_text(item.title.trim()).contains(filter);
 
     if item.children.is_empty() {
         let mut rich = RichText::new(title);
@@ -312,6 +370,7 @@ fn render_toc_item_bounded(
             })
             .body(|ui| {
                 ui.indent(header_id.with("indent"), |ui| {
+                    let child_filter = if parent_matches { "" } else { filter };
                     for child in &item.children {
                         render_toc_item_bounded(
                             ui,
@@ -320,6 +379,7 @@ fn render_toc_item_bounded(
                             selected_chapter,
                             accent_color,
                             depth + 1,
+                            child_filter,
                         );
                     }
                 });

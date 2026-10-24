@@ -43,6 +43,40 @@ fn test_decode_mobi_content_cyrillic_cp1251() {
 }
 
 #[test]
+fn test_cp1251_mojibake_is_detected_and_repaired() {
+    let original = "Привет, мир!";
+    let (utf8_bytes, _, _) = encoding_rs::UTF_8.encode(original);
+    let (mojibake, _, _) = encoding_rs::WINDOWS_1251.decode(&utf8_bytes);
+    assert!(is_cp1251_mojibake(&mojibake));
+    assert_eq!(repair_cp1251_mojibake(&mojibake).as_deref(), Some(original));
+    assert!(!is_cp1251_mojibake(original));
+    assert!(repair_cp1251_mojibake(original).is_none());
+}
+
+#[test]
+fn test_decode_mobi_content_repairs_cp1251_mojibake() {
+    let original = "Съешь ещё этих мягких французских булок.";
+    let (utf8_bytes, _, _) = encoding_rs::UTF_8.encode(original);
+    let (mojibake, _, _) = encoding_rs::WINDOWS_1251.decode(&utf8_bytes);
+    let repaired = decode_mobi_content(mojibake.as_bytes(), 65001);
+    assert_eq!(repaired, original);
+}
+
+#[test]
+fn test_decode_mobi_content_keeps_valid_utf8_cyrillic() {
+    let original = "<html><body><p>Бедные люди — роман… «цитата» № 1</p></body></html>";
+    let decoded = decode_mobi_content(original.as_bytes(), 65001);
+    assert_eq!(decoded, original);
+}
+
+#[test]
+fn test_decode_mobi_content_keeps_valid_utf8_english() {
+    let original = "<html><body><p>Hello — world… \"quote\" 'apostrophe' — end.</p></body></html>";
+    let decoded = decode_mobi_content(original.as_bytes(), 65001);
+    assert_eq!(decoded, original);
+}
+
+#[test]
 fn test_decode_metadata_string() {
     let title_ru = "Война и мир";
     let (title_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(title_ru);

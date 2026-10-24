@@ -91,7 +91,7 @@ impl DocumentFormat for ComicFormat {
         "Comic / Manga"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["cbz", "cbr", "cb7"]
+        &["cbz", "cbr", "cb7", "rar", "7z"]
     }
     fn probe(&self, path: &Path) -> bool {
         if path.is_dir() {
@@ -369,6 +369,38 @@ fn extension_lower(path: &Path) -> String {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default()
+}
+
+pub fn is_supported_document_path(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return false;
+    }
+    let ext = extension_lower(path);
+    if ext.is_empty() {
+        return false;
+    }
+    FORMAT_REGISTRY
+        .iter()
+        .any(|format| format.extensions().contains(&ext.as_str()))
+}
+
+pub fn open_with_registry_and_encoding(
+    path: &Path,
+    encoding: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
+    if encoding.is_some()
+        && matches!(
+            extension_lower(path).as_str(),
+            "txt" | "md" | "markdown" | "log"
+        )
+    {
+        let doc = TxtDocument::from_file_with_encoding(path, encoding)?;
+        return Ok(Box::new(doc));
+    }
+    open_with_registry(path)
 }
 
 pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentError> {

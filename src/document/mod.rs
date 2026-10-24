@@ -1,4 +1,5 @@
 pub mod comic;
+pub mod cover;
 pub mod djvu;
 pub mod doc;
 pub mod docx;
@@ -59,6 +60,18 @@ pub struct DecodedImage {
     pub rgba: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PageLink {
+    pub bbox: [f32; 4],
+    pub target_page: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoteLocation {
+    pub chapter_index: usize,
+    pub paragraph_index: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct PageInfo {
     pub archive_path: String,
@@ -88,6 +101,9 @@ pub trait PageContent: Send + Sync {
     fn extract_page_text_spans(&self, _index: usize) -> Option<Vec<PageTextSpan>> {
         None
     }
+    fn page_links(&self, _index: usize) -> &[PageLink] {
+        &[]
+    }
     fn is_manga(&self) -> bool {
         false
     }
@@ -105,12 +121,15 @@ pub trait TextContent: Send + Sync {
 }
 
 #[allow(dead_code)]
-pub trait HasToc: Send + Sync {
-    fn toc(&self) -> &[TocItem];
-}
-
 pub fn open_document<P: AsRef<Path>>(path: P) -> Result<Box<dyn Document>, DocumentError> {
     registry::open_with_registry(path.as_ref())
+}
+
+pub fn open_document_with_encoding<P: AsRef<Path>>(
+    path: P,
+    encoding: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
+    registry::open_with_registry_and_encoding(path.as_ref(), encoding)
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +149,62 @@ impl BookChapter {
     pub fn is_empty(&self) -> bool {
         self.title.trim().is_empty() && self.paragraphs.iter().all(|p| p.trim().is_empty())
     }
+}
+
+pub const FOOTNOTE_TOKEN_PREFIX: &str = "{{note:";
+pub const FOOTNOTE_TOKEN_SUFFIX: &str = "}}";
+pub const IMAGE_TOKEN_PREFIX: &str = "{{image:";
+pub const IMAGE_TOKEN_SUFFIX: &str = "}}";
+
+pub fn footnote_token(id: &str) -> String {
+    format!("{FOOTNOTE_TOKEN_PREFIX}{id}{FOOTNOTE_TOKEN_SUFFIX}")
+}
+
+pub fn footnote_tokens(text: &str) -> Vec<(&str, usize, usize)> {
+    let mut tokens = Vec::new();
+    let mut search_from = 0;
+    while let Some(relative_start) = text[search_from..].find(FOOTNOTE_TOKEN_PREFIX) {
+        let start = search_from + relative_start;
+        let id_start = start + FOOTNOTE_TOKEN_PREFIX.len();
+        let Some(relative_end) = text[id_start..].find(FOOTNOTE_TOKEN_SUFFIX) else {
+            break;
+        };
+        let id_end = id_start + relative_end;
+        let end = id_end + FOOTNOTE_TOKEN_SUFFIX.len();
+        tokens.push((&text[id_start..id_end], start, end));
+        search_from = end;
+    }
+    tokens
+}
+
+pub fn image_token(id: &str) -> String {
+    format!("{IMAGE_TOKEN_PREFIX}{id}{IMAGE_TOKEN_SUFFIX}")
+}
+
+pub fn image_token_id(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    let id = trimmed
+        .strip_prefix(IMAGE_TOKEN_PREFIX)?
+        .strip_suffix(IMAGE_TOKEN_SUFFIX)?
+        .trim();
+    if id.is_empty() { None } else { Some(id) }
+}
+
+pub fn image_tokens(text: &str) -> Vec<(&str, usize, usize)> {
+    let mut tokens = Vec::new();
+    let mut search_from = 0;
+    while let Some(relative_start) = text[search_from..].find(IMAGE_TOKEN_PREFIX) {
+        let start = search_from + relative_start;
+        let id_start = start + IMAGE_TOKEN_PREFIX.len();
+        let Some(relative_end) = text[id_start..].find(IMAGE_TOKEN_SUFFIX) else {
+            break;
+        };
+        let id_end = id_start + relative_end;
+        let end = id_end + IMAGE_TOKEN_SUFFIX.len();
+        tokens.push((&text[id_start..id_end], start, end));
+        search_from = end;
+    }
+    tokens
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +227,13 @@ pub fn strip_formatting_tags(s: &str) -> String {
     let mut i = 0;
     let b = s.as_bytes();
     while i < b.len() {
+        if b[i] == b'{'
+            && (s[i..].starts_with(FOOTNOTE_TOKEN_PREFIX) || s[i..].starts_with(IMAGE_TOKEN_PREFIX))
+            && let Some(end) = s[i..].find("}}")
+        {
+            i += end + 2;
+            continue;
+        }
         if b[i] == b'<' {
             if s[i..].starts_with("<b>") || s[i..].starts_with("<i>") {
                 i += 3;
@@ -161,7 +243,9 @@ pub fn strip_formatting_tags(s: &str) -> String {
                 continue;
             }
         }
-        let ch = s[i..].chars().next().unwrap();
+        let Some(ch) = s[i..].chars().next() else {
+            break;
+        };
         out.push(ch);
         i += ch.len_utf8();
     }
@@ -260,8 +344,19 @@ pub trait Document: Send + Sync {
     fn text_content(&self) -> Option<&dyn TextContent> {
         None
     }
-    #[allow(dead_code)]
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
+    fn footnote(&self, _id: &str) -> Option<&str> {
+        None
+    }
+    fn note_location(&self, _id: &str) -> Option<NoteLocation> {
+        None
+    }
+    fn image_bytes(&self, _id: &str) -> Option<Vec<u8>> {
+        None
+    }
+    fn header_text(&self) -> Option<&str> {
+        None
+    }
+    fn footer_text(&self) -> Option<&str> {
         None
     }
 }

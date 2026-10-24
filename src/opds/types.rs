@@ -1,42 +1,6 @@
+pub use crate::settings_config::{OpdsCatalog, default_opds_catalogs};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpdsCatalog {
-    pub id: String,
-    pub name: String,
-    pub url: String,
-    #[serde(default)]
-    pub username: Option<String>,
-    #[serde(skip)]
-    pub password: Option<String>,
-    #[serde(default)]
-    pub is_default: bool,
-}
-
-impl std::fmt::Debug for OpdsCatalog {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpdsCatalog")
-            .field("id", &self.id)
-            .field("name", &self.name)
-            .field("url", &self.url)
-            .field("username", &self.username)
-            .field(
-                "password",
-                &if self
-                    .password
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty())
-                {
-                    "<redacted>"
-                } else {
-                    ""
-                },
-            )
-            .field("is_default", &self.is_default)
-            .finish()
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpdsAcquisitionLink {
@@ -107,33 +71,4 @@ pub struct DownloadItem {
 pub struct OpdsBreadcrumb {
     pub title: String,
     pub url: String,
-}
-
-pub fn default_opds_catalogs() -> Vec<OpdsCatalog> {
-    vec![
-        OpdsCatalog {
-            id: "standard_ebooks".into(),
-            name: "Standard Ebooks".into(),
-            url: "https://standardebooks.org/opds/all-records".into(),
-            username: None,
-            password: None,
-            is_default: true,
-        },
-        OpdsCatalog {
-            id: "gutenberg".into(),
-            name: "Project Gutenberg".into(),
-            url: "https://m.gutenberg.org/ebooks.opds/".into(),
-            username: None,
-            password: None,
-            is_default: true,
-        },
-        OpdsCatalog {
-            id: "feedbooks".into(),
-            name: "Feedbooks Free".into(),
-            url: "https://openbooks.feedbooks.com/catalog.atom".into(),
-            username: None,
-            password: None,
-            is_default: true,
-        },
-    ]
 }

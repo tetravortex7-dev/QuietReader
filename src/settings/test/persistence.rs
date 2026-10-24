@@ -27,6 +27,22 @@ fn test_reading_progress_persistence_and_normalization() {
 }
 
 #[test]
+fn test_book_progress_paragraph_anchor_roundtrip() {
+    let mut settings = AppSettings::default();
+    let path = PathBuf::from("C:\\Books\\anchor.epub");
+
+    settings.record_book_progress_anchored(&path, "Anchor", "Author", 2, 400.0, Some(9));
+    assert_eq!(settings.get_book_paragraph(&path), Some(9));
+    assert_eq!(settings.get_book_progress(&path), Some((2, 400.0)));
+
+    settings.record_book_progress(&path, "Anchor", "Author", 2, 420.0);
+    assert_eq!(settings.get_book_paragraph(&path), Some(9));
+
+    settings.record_book_progress(&path, "Anchor", "Author", 3, 0.0);
+    assert_eq!(settings.get_book_paragraph(&path), None);
+}
+
+#[test]
 fn test_atomic_settings_save_and_backup_safety() {
     let temp_dir = unique_test_dir("save_safety");
     let settings_path = temp_dir.join("settings.json");
@@ -243,6 +259,26 @@ fn test_settings_save_debounce_state_and_flush() {
 }
 
 #[test]
+fn test_progress_save_debounce_is_separate_from_settings() {
+    use crate::app::QuietReaderApp;
+    use crate::settings::AppSettings;
+
+    let mut app = QuietReaderApp::from_settings(AppSettings::default());
+    assert!(!app.progress_dirty);
+
+    app.mark_progress_dirty();
+    assert!(app.progress_dirty);
+    assert!(!app.settings_dirty);
+
+    app.flush_debounced_settings();
+    assert!(app.progress_dirty);
+
+    app.flush_settings_now();
+    assert!(!app.progress_dirty);
+    assert!(!app.settings_dirty);
+}
+
+#[test]
 fn test_settings_window_state_and_recent_books() {
     let mut settings = AppSettings::default();
 
@@ -337,4 +373,82 @@ fn test_reading_progress_case_insensitive_lookup() {
     settings.record_book_progress(&path_upper, "My Book", "Author", 3, 145.5);
     let prog = settings.get_book_progress(&path_lower);
     assert_eq!(prog, Some((3, 145.5)));
+}
+
+#[test]
+fn test_license_key_not_serialized_and_trial_timestamp_recoverable() {
+    let mut settings = AppSettings::default();
+    settings.license_key = "QR1.payload.signature".to_string();
+    settings.trial_started_at_unix = Some(1_700_000_000);
+
+    let json = serde_json::to_string(&settings).unwrap();
+    assert!(!json.contains("license_key"));
+    assert!(!json.contains("QR1.payload.signature"));
+
+    let debug = format!("{settings:?}");
+    assert!(debug.contains("<redacted>"));
+    assert!(!debug.contains("QR1.payload.signature"));
+
+    let loaded: AppSettings = serde_json::from_str(&json).unwrap();
+    assert!(loaded.license_key.is_empty());
+    assert_eq!(loaded.trial_started_at_unix, Some(1_700_000_000));
+}
+
+#[test]
+fn test_pro_flags_persist_but_do_not_apply_without_entitlement() {
+    let mut settings = AppSettings::default();
+    settings.bionic_reading = true;
+    settings.reading_ruler = true;
+    settings.font_family = crate::settings::OPEN_DYSLEXIC_FONT.to_string();
+    settings.pdf.auto_crop = true;
+
+    assert!(!settings.effective_bionic_reading());
+    assert!(!settings.effective_reading_ruler());
+    assert_eq!(settings.effective_font_family(), "Georgia");
+    assert!(!settings.effective_pdf_auto_crop());
+    assert!(settings.bionic_reading);
+    assert!(settings.reading_ruler);
+    assert_eq!(settings.font_family, crate::settings::OPEN_DYSLEXIC_FONT);
+    assert!(settings.pdf.auto_crop);
+
+    settings.trial_started_at_unix = Some(crate::core::license::unix_now());
+    assert!(settings.effective_bionic_reading());
+    assert!(settings.effective_reading_ruler());
+    assert_eq!(
+        settings.effective_font_family(),
+        crate::settings::OPEN_DYSLEXIC_FONT
+    );
+    assert!(settings.effective_pdf_auto_crop());
+}
+
+#[test]
+fn test_typography_settings_defaults_migration_and_roundtrip() {
+    let dir = unique_test_dir("typography_settings");
+    let path = dir.join("settings.json");
+    let old = r#"{"schema_version":2,"font_size":21.0,"theme":"Dark"}"#;
+    std::fs::write(&path, old).unwrap();
+
+    let migrated = AppSettings::load_from_path(&path);
+    assert_eq!(migrated.line_height_scale, 1.45);
+    assert_eq!(migrated.max_column_width, 760.0);
+    assert_eq!(
+        migrated.schema_version,
+        settings::CURRENT_SETTINGS_SCHEMA_VERSION
+    );
+
+    let mut settings = AppSettings::default();
+    settings.line_height_scale = 1.8;
+    settings.max_column_width = 980.0;
+    settings.save_to_path(&path).unwrap();
+    let reloaded = AppSettings::load_from_path(&path);
+    assert_eq!(reloaded.line_height_scale, 1.8);
+    assert_eq!(reloaded.max_column_width, 980.0);
+
+    let mut clamped = AppSettings::default();
+    clamped.line_height_scale = 5.0;
+    clamped.max_column_width = 100.0;
+    assert_eq!(clamped.effective_line_height_scale(), 2.0);
+    assert_eq!(clamped.effective_max_column_width(), 520.0);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

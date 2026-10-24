@@ -8,6 +8,7 @@ pub mod i18n;
 pub mod opds;
 mod platform;
 mod settings;
+mod settings_config;
 pub mod updater;
 
 use app::QuietReaderApp;

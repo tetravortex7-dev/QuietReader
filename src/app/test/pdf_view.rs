@@ -1,4 +1,14 @@
 #[test]
+fn test_span_matches_search_normalizes_case_and_yo() {
+    use crate::app::pdf_view::span_matches_search;
+
+    assert!(span_matches_search("Привет, мир", "привет"));
+    assert!(span_matches_search("Ещё один", "еще"));
+    assert!(!span_matches_search("Привет", "мир"));
+    assert!(!span_matches_search("Привет", ""));
+}
+
+#[test]
 fn test_pdf_view_scale_discretization() {
     use crate::app::pdf_view::PdfViewState;
     use crate::settings::PdfSettings;

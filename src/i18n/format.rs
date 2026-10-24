@@ -251,7 +251,7 @@ pub fn format_opds_auth_error(err: OpdsAuthError, lang: UiLanguage) -> String {
 pub fn format_opds_error(err: &OpdsError, lang: UiLanguage) -> String {
     let t = lang.t();
     match err {
-        OpdsError::Message(message) => message.clone(),
+        OpdsError::Message(message) => format_error_detail(t.extra.opds_feed_error, message, lang),
         OpdsError::ResponseTooLarge { limit } => t
             .opds_response_too_large
             .replace("{}", &(limit / (1024 * 1024)).to_string()),

@@ -102,3 +102,17 @@ fn test_document_format_name_and_custom_toc() {
     assert_eq!(fb2.format_name(), "FB2");
     assert!(fb2.has_custom_toc());
 }
+
+#[test]
+fn test_image_token_helpers_and_stripping() {
+    use document::{image_token, image_token_id, strip_formatting_tags};
+
+    let token = image_token("epub_img_3");
+    assert_eq!(token, "{{image:epub_img_3}}");
+    assert_eq!(image_token_id(&token), Some("epub_img_3"));
+    assert_eq!(image_token_id("text {{image:x}}"), None);
+    assert_eq!(
+        strip_formatting_tags("Before {{image:pic}} after {{note:n1}}"),
+        "Before  after "
+    );
+}

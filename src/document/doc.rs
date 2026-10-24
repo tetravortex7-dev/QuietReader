@@ -1,6 +1,4 @@
-use crate::document::{
-    BookChapter, BookMetadata, Document, DocumentError, HasToc, TextContent, TocItem,
-};
+use crate::document::{BookChapter, BookMetadata, Document, DocumentError, TextContent, TocItem};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -9,17 +7,14 @@ pub struct DocDocument {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+    footnotes: std::collections::HashMap<String, String>,
+    header_text: Option<String>,
+    footer_text: Option<String>,
 }
 
 impl TextContent for DocDocument {
     fn chapters(&self) -> &[BookChapter] {
         &self.chapters
-    }
-}
-
-impl HasToc for DocDocument {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
     }
 }
 
@@ -48,8 +43,16 @@ impl Document for DocDocument {
         Some(self)
     }
 
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
-        Some(self)
+    fn footnote(&self, id: &str) -> Option<&str> {
+        self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn header_text(&self) -> Option<&str> {
+        self.header_text.as_deref()
+    }
+
+    fn footer_text(&self) -> Option<&str> {
+        self.footer_text.as_deref()
     }
 }
 
@@ -85,12 +88,16 @@ impl DocDocument {
             ));
         }
 
-        let (chapters, toc, metadata) = parse_doc(bytes, default_title)?;
+        let (chapters, toc, metadata, footnotes, header_text, footer_text) =
+            parse_doc(bytes, default_title)?;
 
         Ok(Self {
             metadata,
             chapters,
             toc,
+            footnotes,
+            header_text,
+            footer_text,
         })
     }
 }
@@ -104,7 +111,17 @@ struct OleStream {
 fn parse_doc(
     bytes: &[u8],
     default_title: &str,
-) -> Result<(Vec<BookChapter>, Vec<TocItem>, BookMetadata), DocumentError> {
+) -> Result<
+    (
+        Vec<BookChapter>,
+        Vec<TocItem>,
+        BookMetadata,
+        std::collections::HashMap<String, String>,
+        Option<String>,
+        Option<String>,
+    ),
+    DocumentError,
+> {
     if bytes.len() < 512 {
         return Err(DocumentError::Corrupted(
             "Файл слишком короткий для формата DOC".to_string(),
@@ -125,8 +142,14 @@ fn parse_doc(
     }
     let sector_size = 1 << sector_shift;
 
+    let mini_sector_shift = u16::from_le_bytes([bytes[32], bytes[33]]) as usize;
+    let mini_sector_size = 1usize << mini_sector_shift.clamp(4, 12);
     let num_fat_sectors = u32::from_le_bytes([bytes[44], bytes[45], bytes[46], bytes[47]]) as usize;
     let first_dir_sector = u32::from_le_bytes([bytes[48], bytes[49], bytes[50], bytes[51]]);
+    let mini_cutoff = u32::from_le_bytes([bytes[56], bytes[57], bytes[58], bytes[59]]) as usize;
+    let first_mini_fat_sector = u32::from_le_bytes([bytes[60], bytes[61], bytes[62], bytes[63]]);
+    let num_mini_fat_sectors =
+        u32::from_le_bytes([bytes[64], bytes[65], bytes[66], bytes[67]]) as usize;
 
     let mut fat_sector_ids = Vec::new();
     let msat_entries = num_fat_sectors.min(109);
@@ -149,35 +172,34 @@ fn parse_doc(
         }
     }
 
-    let read_stream = |start_sec: u32, size: usize| -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut cur = start_sec;
-        let mut visited = std::collections::HashSet::new();
-        while cur < 0xFFFFFFFD && out.len() < size {
-            if !visited.insert(cur) {
-                break;
-            }
-            let off = (cur as usize + 1) * sector_size;
-            if off + sector_size > bytes.len() {
-                break;
-            }
-            out.extend_from_slice(&bytes[off..off + sector_size]);
-            if let Some(&next) = fat.get(cur as usize) {
-                cur = next;
-            } else {
-                break;
-            }
-        }
-        out.truncate(size);
-        out
+    let mini_fat_bytes = if num_mini_fat_sectors > 0 {
+        read_fat_chain(
+            bytes,
+            sector_size,
+            &fat,
+            first_mini_fat_sector,
+            num_mini_fat_sectors.saturating_mul(sector_size),
+        )
+    } else {
+        Vec::new()
     };
+    let mini_fat: Vec<u32> = mini_fat_bytes
+        .chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect();
 
-    let dir_bytes = read_stream(first_dir_sector, 1024 * 1024);
+    let dir_bytes = read_fat_chain(bytes, sector_size, &fat, first_dir_sector, 1024 * 1024);
     let mut streams: Vec<OleStream> = Vec::new();
+    let mut root_stream: Option<(u32, usize)> = None;
 
     for chunk in dir_bytes.chunks_exact(128) {
         let name_len = u16::from_le_bytes([chunk[64], chunk[65]]) as usize;
         let obj_type = chunk[66];
+        let start_sec = u32::from_le_bytes([chunk[116], chunk[117], chunk[118], chunk[119]]);
+        let size = u32::from_le_bytes([chunk[120], chunk[121], chunk[122], chunk[123]]) as usize;
+        if obj_type == 5 {
+            root_stream = Some((start_sec, size));
+        }
         if (obj_type == 2 || obj_type == 5) && name_len > 2 && name_len <= 64 {
             let raw_chars = &chunk[0..name_len.saturating_sub(2)];
             let mut name = String::new();
@@ -187,9 +209,6 @@ fn parse_doc(
                     name.push(ch);
                 }
             }
-            let start_sec = u32::from_le_bytes([chunk[116], chunk[117], chunk[118], chunk[119]]);
-            let size =
-                u32::from_le_bytes([chunk[120], chunk[121], chunk[122], chunk[123]]) as usize;
             streams.push(OleStream {
                 name,
                 start_sector: start_sec,
@@ -197,6 +216,24 @@ fn parse_doc(
             });
         }
     }
+
+    let mini_stream = match root_stream {
+        Some((start_sec, size)) if size > 0 => {
+            read_fat_chain(bytes, sector_size, &fat, start_sec, size)
+        }
+        _ => Vec::new(),
+    };
+
+    let read_stream = |start_sec: u32, size: usize| -> Vec<u8> {
+        if size == 0 {
+            return Vec::new();
+        }
+        if mini_cutoff > 0 && size < mini_cutoff && !mini_stream.is_empty() {
+            read_mini_chain(&mini_stream, &mini_fat, start_sec, size, mini_sector_size)
+        } else {
+            read_fat_chain(bytes, sector_size, &fat, start_sec, size)
+        }
+    };
 
     let word_stream = streams.iter().find(|s| s.name == "WordDocument");
     let word_doc_bytes = if let Some(s) = word_stream {
@@ -346,6 +383,9 @@ fn parse_doc(
         }
     }
 
+    let (doc_text, footnotes, header_text, footer_text) =
+        split_doc_stories(doc_text, &word_doc_bytes);
+
     let mut chapters = Vec::new();
     let current_paras = Vec::new();
 
@@ -401,7 +441,146 @@ fn parse_doc(
         author: "Неизвестный автор".to_string(),
     };
 
-    Ok((chapters, toc, metadata))
+    Ok((chapters, toc, metadata, footnotes, header_text, footer_text))
+}
+
+fn read_fat_chain(
+    bytes: &[u8],
+    sector_size: usize,
+    fat: &[u32],
+    start: u32,
+    size: usize,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(size.min(bytes.len()));
+    let mut cur = start;
+    let mut visited = std::collections::HashSet::new();
+    while cur < 0xFFFFFFFD && out.len() < size {
+        if !visited.insert(cur) {
+            break;
+        }
+        let off = (cur as usize + 1).saturating_mul(sector_size);
+        if off + sector_size > bytes.len() {
+            break;
+        }
+        let take = (size - out.len()).min(sector_size);
+        out.extend_from_slice(&bytes[off..off + take]);
+        cur = match fat.get(cur as usize) {
+            Some(&next) => next,
+            None => break,
+        };
+    }
+    out
+}
+
+fn read_mini_chain(
+    container: &[u8],
+    mini_fat: &[u32],
+    start: u32,
+    size: usize,
+    mini_sector_size: usize,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(size.min(container.len()));
+    let mut cur = start;
+    let mut visited = std::collections::HashSet::new();
+    while cur < 0xFFFFFFFD && out.len() < size {
+        if !visited.insert(cur) {
+            break;
+        }
+        let off = (cur as usize).saturating_mul(mini_sector_size);
+        if off + mini_sector_size > container.len() {
+            break;
+        }
+        let take = (size - out.len()).min(mini_sector_size);
+        out.extend_from_slice(&container[off..off + take]);
+        cur = match mini_fat.get(cur as usize) {
+            Some(&next) => next,
+            None => break,
+        };
+    }
+    out
+}
+
+fn split_doc_stories(
+    doc_text: String,
+    fib: &[u8],
+) -> (
+    String,
+    std::collections::HashMap<String, String>,
+    Option<String>,
+    Option<String>,
+) {
+    let read_u32 = |offset: usize| -> Option<usize> {
+        let chunk = fib.get(offset..offset + 4)?;
+        Some(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as usize)
+    };
+    let Some(ccp_text) = read_u32(0x4C) else {
+        return (doc_text, std::collections::HashMap::new(), None, None);
+    };
+    let ccp_footnotes = read_u32(0x50).unwrap_or(0);
+    let ccp_headers = read_u32(0x54).unwrap_or(0);
+    let ccp_annotations = read_u32(0x5C).unwrap_or(0);
+    let ccp_endnotes = read_u32(0x60).unwrap_or(0);
+    let chars: Vec<char> = doc_text.chars().collect();
+    if ccp_text == 0 || ccp_text > chars.len() {
+        return (doc_text, std::collections::HashMap::new(), None, None);
+    }
+
+    let main_end = ccp_text;
+    let footnotes_end = main_end.saturating_add(ccp_footnotes).min(chars.len());
+    let annotations_end = footnotes_end
+        .saturating_add(ccp_annotations)
+        .min(chars.len());
+    let endnotes_end = annotations_end
+        .saturating_add(ccp_endnotes)
+        .min(chars.len());
+    let headers_end = endnotes_end.saturating_add(ccp_headers).min(chars.len());
+
+    let main_text: String = chars[..main_end].iter().collect();
+    let footnotes_text: String = chars[main_end..footnotes_end]
+        .iter()
+        .chain(chars[annotations_end..endnotes_end].iter())
+        .collect();
+    let headers_text: String = chars[endnotes_end..headers_end].iter().collect();
+
+    let notes: Vec<String> = footnotes_text
+        .split(['\r', '\n', '\u{000B}'])
+        .map(clean_word_text)
+        .filter(|note| !note.is_empty())
+        .collect();
+    let mut footnotes = std::collections::HashMap::new();
+    let mut note_index = 0usize;
+    let mut text = String::with_capacity(main_text.len());
+    for ch in main_text.chars() {
+        if ch == '\u{0002}' {
+            if let Some(note) = notes.get(note_index) {
+                let id = format!("doc_fn_{note_index}");
+                text.push_str(&crate::document::footnote_token(&id));
+                footnotes.insert(id, note.clone());
+            }
+            note_index += 1;
+        } else {
+            text.push(ch);
+        }
+    }
+
+    let header_parts: Vec<String> = headers_text
+        .split(['\r', '\n', '\u{000B}'])
+        .map(clean_word_text)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let (header_text, footer_text) = if header_parts.is_empty() {
+        (None, None)
+    } else if header_parts.len() >= 2 {
+        let middle = header_parts.len() / 2;
+        (
+            Some(header_parts[..middle].join(" • ")),
+            Some(header_parts[middle..].join(" • ")),
+        )
+    } else {
+        (header_parts.into_iter().next(), None)
+    };
+
+    (text, footnotes, header_text, footer_text)
 }
 
 fn clean_word_text(s: &str) -> String {

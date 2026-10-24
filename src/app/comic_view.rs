@@ -3,6 +3,7 @@ use super::document_loader::{
 };
 use super::icons::{Icon, IconButton, IconLabel};
 use super::theme::ReaderTheme;
+use crate::core::license::ProFeature;
 use crate::document::{DecodedImage, Document, DocumentError};
 use crate::settings::ComicSettings;
 use eframe::egui::{self, RichText, ScrollArea, Vec2};
@@ -30,7 +31,8 @@ struct LoadResponse {
 
 pub struct ComicViewState {
     pub current_page: usize,
-    pub textures: HashMap<usize, (egui::TextureHandle, u64)>,
+    pub textures: HashMap<usize, (egui::TextureHandle, u64, usize)>,
+    pub total_texture_bytes: usize,
     pub page_bboxes: HashMap<usize, egui::Rect>,
     pub pending_pages: HashSet<usize>,
     pub failed_pages: HashMap<usize, String>,
@@ -44,6 +46,31 @@ pub struct ComicViewState {
     pub last_crop_tolerance: u8,
     req_tx: Sender<LoadRequest>,
     resp_rx: Receiver<LoadResponse>,
+}
+
+const MAX_CACHED_TEXTURES: usize = 16;
+const MAX_TEXTURE_BYTES: usize = 384 * 1024 * 1024;
+
+pub(crate) fn comic_pages_to_show(
+    current_page: usize,
+    page_count: usize,
+    double_layout: bool,
+    is_manga: bool,
+) -> Vec<usize> {
+    let is_double = double_layout && current_page > 0 && current_page + 1 < page_count;
+    if is_double {
+        if is_manga {
+            vec![current_page + 1, current_page]
+        } else {
+            vec![current_page, current_page + 1]
+        }
+    } else {
+        vec![current_page]
+    }
+}
+
+pub(crate) fn texture_byte_size(width: u32, height: u32) -> usize {
+    super::rgba_byte_size(width, height)
 }
 
 fn spawn_comic_worker() -> (Sender<LoadRequest>, Receiver<LoadResponse>) {
@@ -111,6 +138,7 @@ impl Default for ComicViewState {
         Self {
             current_page: 0,
             textures: HashMap::new(),
+            total_texture_bytes: 0,
             page_bboxes: HashMap::new(),
             pending_pages: HashSet::new(),
             failed_pages: HashMap::new(),
@@ -131,6 +159,7 @@ impl Default for ComicViewState {
 impl ComicViewState {
     pub fn clear_cache(&mut self) {
         self.textures.clear();
+        self.total_texture_bytes = 0;
         self.page_bboxes.clear();
         self.pending_pages.clear();
         self.failed_pages.clear();
@@ -170,15 +199,30 @@ impl ComicViewState {
             return;
         }
         let is_double = settings.page_layout == "Double" && settings.reading_mode != "Webtoon";
-        let step = if is_double { 2 } else { 1 };
-        self.current_page = (self.current_page + step).min(total_pages.saturating_sub(1));
+        let next = if is_double {
+            if self.current_page == 0 {
+                1
+            } else {
+                self.current_page.saturating_add(2)
+            }
+        } else {
+            self.current_page.saturating_add(1)
+        };
+        self.current_page = next.min(total_pages.saturating_sub(1));
         self.pan_offset = Vec2::ZERO;
     }
 
     pub fn prev_page(&mut self, settings: &ComicSettings) {
         let is_double = settings.page_layout == "Double" && settings.reading_mode != "Webtoon";
-        let step = if is_double { 2 } else { 1 };
-        self.current_page = self.current_page.saturating_sub(step);
+        self.current_page = if is_double {
+            if self.current_page <= 1 {
+                0
+            } else {
+                self.current_page.saturating_sub(2)
+            }
+        } else {
+            self.current_page.saturating_sub(1)
+        };
         self.pan_offset = Vec2::ZERO;
     }
 
@@ -210,16 +254,31 @@ impl ComicViewState {
                                 color_image,
                                 egui::TextureOptions::LINEAR,
                             );
-
-                            const MAX_CACHED_TEXTURES: usize = 16;
-                            if self.textures.len() >= MAX_CACHED_TEXTURES
-                                && let Some((&oldest_key, _)) =
-                                    self.textures.iter().min_by_key(|(_, (_, acc))| *acc)
-                            {
-                                self.textures.remove(&oldest_key);
+                            let byte_size = texture_byte_size(img.width, img.height);
+                            if let Some((_, _, old_size)) = self.textures.remove(&resp.page_idx) {
+                                self.total_texture_bytes =
+                                    self.total_texture_bytes.saturating_sub(old_size);
                             }
-
-                            self.textures.insert(resp.page_idx, (texture, counter));
+                            while self.textures.len() >= MAX_CACHED_TEXTURES
+                                || self.total_texture_bytes.saturating_add(byte_size)
+                                    > MAX_TEXTURE_BYTES
+                            {
+                                let Some((&oldest_key, _)) = self
+                                    .textures
+                                    .iter()
+                                    .min_by_key(|(_, (_, access, _))| *access)
+                                else {
+                                    break;
+                                };
+                                if let Some((_, _, old_size)) = self.textures.remove(&oldest_key) {
+                                    self.total_texture_bytes =
+                                        self.total_texture_bytes.saturating_sub(old_size);
+                                }
+                            }
+                            self.textures
+                                .insert(resp.page_idx, (texture, counter, byte_size));
+                            self.total_texture_bytes =
+                                self.total_texture_bytes.saturating_add(byte_size);
                         }
                         Err(e) => {
                             let msg = format_page_error(&e, lang);
@@ -263,6 +322,7 @@ impl ComicViewState {
         page_idx: usize,
         settings: &ComicSettings,
         theme: &ReaderTheme,
+        smart_scan_allowed: bool,
     ) -> Option<egui::TextureHandle> {
         self.access_counter += 1;
         let counter = self.access_counter;
@@ -280,7 +340,7 @@ impl ComicViewState {
         self.pending_pages.insert(page_idx);
         let target_bg = theme.bg_color();
         let target_text = theme.text_color();
-        let smart_dark = settings.smart_dark && theme.is_dark();
+        let smart_dark = settings.smart_dark && smart_scan_allowed && theme.is_dark();
         let _ = self.req_tx.send(LoadRequest {
             doc_generation: self.doc_generation,
             doc,
@@ -302,8 +362,12 @@ impl ComicViewState {
         theme: &ReaderTheme,
         is_manga: bool,
         lang: crate::i18n::UiLanguage,
+        smart_scan_allowed: bool,
+        on_pro_required: &mut Option<ProFeature>,
     ) {
         let t = lang.t();
+        let effective_smart_dark = settings.smart_dark && smart_scan_allowed;
+        let effective_auto_crop = settings.auto_crop && smart_scan_allowed;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
 
@@ -469,11 +533,15 @@ impl ComicViewState {
                     crate::app::icons::Icon::Moon,
                     t.smart_dark_mode,
                 )
-                .selected(settings.smart_dark),
+                .selected(effective_smart_dark),
             );
             if dark_resp.on_hover_text(t.smart_dark_mode_tooltip).clicked() {
-                settings.smart_dark = !settings.smart_dark;
-                self.clear_cache();
+                if smart_scan_allowed {
+                    settings.smart_dark = !settings.smart_dark;
+                    self.clear_cache();
+                } else {
+                    *on_pro_required = Some(ProFeature::SmartScanProcessing);
+                }
             }
 
             let crop_resp = ui
@@ -482,21 +550,27 @@ impl ComicViewState {
                         crate::app::icons::Icon::Crop,
                         t.auto_crop_margins,
                     )
-                    .selected(settings.auto_crop),
+                    .selected(effective_auto_crop),
                 )
                 .on_hover_text(t.auto_crop_margins_tooltip);
             if crop_resp.clicked() {
-                settings.auto_crop = !settings.auto_crop;
-                self.pan_offset = Vec2::ZERO;
-            }
-            crop_resp.context_menu(|ui| {
-                ui.label(RichText::new(t.crop_sensitivity).strong());
-                let slider = egui::Slider::new(&mut settings.auto_crop_tolerance, 5..=80)
-                    .text(t.crop_tolerance);
-                if ui.add(slider).changed() {
-                    self.clear_cache();
+                if smart_scan_allowed {
+                    settings.auto_crop = !settings.auto_crop;
+                    self.pan_offset = Vec2::ZERO;
+                } else {
+                    *on_pro_required = Some(ProFeature::SmartScanProcessing);
                 }
-            });
+            }
+            if effective_auto_crop {
+                crop_resp.context_menu(|ui| {
+                    ui.label(RichText::new(t.crop_sensitivity).strong());
+                    let slider = egui::Slider::new(&mut settings.auto_crop_tolerance, 5..=80)
+                        .text(t.crop_tolerance);
+                    if ui.add(slider).changed() {
+                        self.clear_cache();
+                    }
+                });
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let badge_txt = if is_manga {
@@ -527,14 +601,18 @@ impl ComicViewState {
         max_scroll_y: &mut f32,
         status_message: &mut Option<String>,
         lang: crate::i18n::UiLanguage,
+        smart_scan_allowed: bool,
+        on_pro_required: &mut Option<ProFeature>,
     ) {
         self.poll_responses(ctx, status_message, lang);
 
-        if settings.smart_dark != self.last_smart_dark
+        let effective_smart_dark = settings.smart_dark && smart_scan_allowed;
+        let auto_crop = settings.auto_crop && smart_scan_allowed;
+        if effective_smart_dark != self.last_smart_dark
             || theme.bg_color() != self.last_theme_bg
             || settings.auto_crop_tolerance != self.last_crop_tolerance
         {
-            self.last_smart_dark = settings.smart_dark;
+            self.last_smart_dark = effective_smart_dark;
             self.last_theme_bg = theme.bg_color();
             self.last_crop_tolerance = settings.auto_crop_tolerance;
             self.clear_cache();
@@ -553,7 +631,16 @@ impl ComicViewState {
         let t = lang.t();
 
         ui.add_space(2.0);
-        self.render_toolbar(ui, page_count, settings, theme, is_manga, lang);
+        self.render_toolbar(
+            ui,
+            page_count,
+            settings,
+            theme,
+            is_manga,
+            lang,
+            smart_scan_allowed,
+            on_pro_required,
+        );
         ui.add_space(4.0);
         ui.separator();
 
@@ -583,10 +670,15 @@ impl ComicViewState {
                             self.current_page = first_visible.min(page_count.saturating_sub(1));
                         }
                         for p in row_range {
-                            if let Some(tex) =
-                                self.request_page_texture(ctx, document, p, settings, theme)
-                            {
-                                let uv_rect = if settings.auto_crop {
+                            if let Some(tex) = self.request_page_texture(
+                                ctx,
+                                document,
+                                p,
+                                settings,
+                                theme,
+                                smart_scan_allowed,
+                            ) {
+                                let uv_rect = if auto_crop {
                                     self.page_bboxes.get(&p).copied().unwrap_or(
                                         egui::Rect::from_min_max(
                                             egui::Pos2::ZERO,
@@ -643,20 +735,23 @@ impl ComicViewState {
             );
         } else {
             let avail_size = ui.available_size();
-            let is_double = settings.page_layout == "Double" && self.current_page + 1 < page_count;
-
-            let pages_to_show: Vec<usize> = if is_double {
-                if is_manga {
-                    vec![self.current_page + 1, self.current_page]
-                } else {
-                    vec![self.current_page, self.current_page + 1]
-                }
-            } else {
-                vec![self.current_page]
-            };
+            let double_layout =
+                settings.page_layout == "Double" && settings.reading_mode != "Webtoon";
+            if double_layout && self.current_page > 0 && self.current_page % 2 == 0 {
+                self.current_page -= 1;
+            }
+            let pages_to_show =
+                comic_pages_to_show(self.current_page, page_count, double_layout, is_manga);
 
             for &p in &pages_to_show {
-                let _ = self.request_page_texture(ctx, document, p, settings, theme);
+                let _ = self.request_page_texture(
+                    ctx,
+                    document,
+                    p,
+                    settings,
+                    theme,
+                    smart_scan_allowed,
+                );
             }
 
             let tex_sizes: Vec<Vec2> = pages_to_show
@@ -667,9 +762,7 @@ impl ComicViewState {
                         .get(&p)
                         .map(|t| t.0.size_vec2())
                         .unwrap_or(Vec2::new(600.0, 800.0));
-                    if settings.auto_crop
-                        && let Some(bbox) = self.page_bboxes.get(&p)
-                    {
+                    if auto_crop && let Some(bbox) = self.page_bboxes.get(&p) {
                         Vec2::new(raw.x * bbox.width(), raw.y * bbox.height())
                     } else {
                         raw
@@ -712,7 +805,7 @@ impl ComicViewState {
                     let display_size = geom.page_sizes[idx];
                     if let Some(entry) = self.textures.get(&p) {
                         let tex = entry.0.clone();
-                        let uv_rect = if settings.auto_crop {
+                        let uv_rect = if auto_crop {
                             self.page_bboxes
                                 .get(&p)
                                 .copied()
@@ -768,23 +861,31 @@ impl ComicViewState {
                 }
             });
 
-            if self.current_page + 1 < page_count {
-                let _ = self.request_page_texture(
-                    ctx,
-                    document,
-                    self.current_page + 1,
-                    settings,
-                    theme,
-                );
+            for offset in [1usize, 2] {
+                if let Some(page) = self.current_page.checked_add(offset)
+                    && page < page_count
+                {
+                    let _ = self.request_page_texture(
+                        ctx,
+                        document,
+                        page,
+                        settings,
+                        theme,
+                        smart_scan_allowed,
+                    );
+                }
             }
-            if self.current_page > 0 {
-                let _ = self.request_page_texture(
-                    ctx,
-                    document,
-                    self.current_page - 1,
-                    settings,
-                    theme,
-                );
+            for offset in [1usize, 2] {
+                if let Some(page) = self.current_page.checked_sub(offset) {
+                    let _ = self.request_page_texture(
+                        ctx,
+                        document,
+                        page,
+                        settings,
+                        theme,
+                        smart_scan_allowed,
+                    );
+                }
             }
 
             if next_clicked {

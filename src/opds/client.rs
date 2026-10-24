@@ -92,8 +92,10 @@ pub enum OpdsEvent {
 
 pub struct OpdsClient {
     tx_cmd: Sender<OpdsCommand>,
+    tx_event: Sender<OpdsEvent>,
     rx_event: Receiver<OpdsEvent>,
     next_id: Arc<AtomicU64>,
+    worker_started: bool,
 }
 
 impl Default for OpdsClient {
@@ -109,7 +111,7 @@ impl OpdsClient {
         let next_id = Arc::new(AtomicU64::new(1));
 
         let tx_evt_clone = tx_event.clone();
-        thread::Builder::new()
+        let worker_started = thread::Builder::new()
             .name("opds-worker".to_string())
             .spawn(move || {
                 let agent = ureq::Agent::config_builder()
@@ -195,17 +197,29 @@ impl OpdsClient {
                     }
                 }
             })
-            .expect("Failed to spawn opds worker thread");
+            .is_ok();
 
         Self {
             tx_cmd,
+            tx_event,
             rx_event,
             next_id,
+            worker_started,
         }
     }
 
     pub fn fetch_feed(&self, url: &str, auth: Option<OpdsAuth>) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        if !self.worker_started {
+            let _ = self.tx_event.send(OpdsEvent::FeedLoaded {
+                request_id: id,
+                url: url.to_string(),
+                result: Err(OpdsError::Network(
+                    "OPDS worker thread is unavailable".to_string(),
+                )),
+            });
+            return id;
+        }
         let _ = self.tx_cmd.send(OpdsCommand::FetchFeed {
             request_id: id,
             url: url.to_string(),
@@ -222,6 +236,16 @@ impl OpdsClient {
         auth: Option<OpdsAuth>,
     ) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        if !self.worker_started {
+            let _ = self.tx_event.send(OpdsEvent::FeedLoaded {
+                request_id: id,
+                url: String::new(),
+                result: Err(OpdsError::Network(
+                    "OPDS worker thread is unavailable".to_string(),
+                )),
+            });
+            return id;
+        }
         let _ = self.tx_cmd.send(OpdsCommand::ResolveSearchAndFetch {
             request_id: id,
             search_template,
@@ -242,6 +266,15 @@ impl OpdsClient {
         auth: Option<OpdsAuth>,
         downloads_dir: PathBuf,
     ) {
+        if !self.worker_started {
+            let _ = self.tx_event.send(OpdsEvent::DownloadFinished {
+                download_id: download_id.to_string(),
+                result: Err(OpdsError::DownloadConnect(
+                    "OPDS worker thread is unavailable".to_string(),
+                )),
+            });
+            return;
+        }
         let _ = self.tx_cmd.send(OpdsCommand::DownloadBook {
             download_id: download_id.to_string(),
             url: url.to_string(),
@@ -251,6 +284,19 @@ impl OpdsClient {
             auth,
             downloads_dir,
         });
+    }
+
+    #[cfg(all(test, feature = "enable_tests"))]
+    pub(crate) fn new_without_worker_for_test() -> Self {
+        let (tx_cmd, _rx_cmd) = channel::<OpdsCommand>();
+        let (tx_event, rx_event) = channel::<OpdsEvent>();
+        Self {
+            tx_cmd,
+            tx_event,
+            rx_event,
+            next_id: Arc::new(AtomicU64::new(1)),
+            worker_started: false,
+        }
     }
 
     pub fn poll_events(&self) -> Vec<OpdsEvent> {

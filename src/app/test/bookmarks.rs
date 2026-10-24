@@ -1,5 +1,5 @@
-use crate::app::bookmarks_view::generate_markdown_conspectus;
 use crate::app::input::process_keyboard_events;
+use crate::app::theme::{bookmark_color, bookmark_highlight_color};
 use crate::core::{Bookmark, BookmarkColor, BookmarkKind, Command};
 use crate::i18n::UiLanguage;
 use crate::settings::AppSettings;
@@ -12,29 +12,29 @@ fn test_bookmark_colors_and_highlights() {
 
     let yellow = BookmarkColor::Yellow;
     assert_eq!(
-        yellow.to_color32(),
+        bookmark_color(yellow),
         eframe::egui::Color32::from_rgb(235, 195, 60)
     );
-    let y_light = yellow.to_highlight_color(false);
-    let y_dark = yellow.to_highlight_color(true);
+    let y_light = bookmark_highlight_color(yellow, false);
+    let y_dark = bookmark_highlight_color(yellow, true);
     assert_ne!(y_light.a(), 0);
     assert_ne!(y_dark.a(), 0);
 
     let green = BookmarkColor::Green;
     assert_eq!(
-        green.to_color32(),
+        bookmark_color(green),
         eframe::egui::Color32::from_rgb(72, 187, 120)
     );
 
     let blue = BookmarkColor::Blue;
     assert_eq!(
-        blue.to_color32(),
+        bookmark_color(blue),
         eframe::egui::Color32::from_rgb(66, 153, 225)
     );
 
     let red = BookmarkColor::Red;
     assert_eq!(
-        red.to_color32(),
+        bookmark_color(red),
         eframe::egui::Color32::from_rgb(245, 101, 101)
     );
 }
@@ -113,73 +113,6 @@ fn test_hotkey_ctrl_d_toggle_bookmark() {
 
     let cmds_typing = process_keyboard_events(true, |k| k == Key::D, ctrl_mod, false);
     assert!(cmds_typing.is_empty());
-}
-
-#[test]
-fn test_markdown_conspectus_generation() {
-    let t = UiLanguage::Ru.t();
-    let b1 = Bookmark {
-        id: "1".to_string(),
-        book_path: PathBuf::from("war_and_peace.epub"),
-        chapter: 0,
-        scroll_y: 100.0,
-        label: "Глава 1".to_string(),
-        text: "Елена Васильевна улыбнулась...".to_string(),
-        note: "Характеристика персонажа".to_string(),
-        color: BookmarkColor::Yellow,
-        kind: BookmarkKind::Quote,
-        timestamp: 10,
-        progress_percent: 5.0,
-        page_number: None,
-    };
-    let b2 = Bookmark {
-        id: "2".to_string(),
-        book_path: PathBuf::from("war_and_peace.epub"),
-        chapter: 0,
-        scroll_y: 50.0,
-        label: "Глава 1".to_string(),
-        text: "В салоне Анны Павловны...".to_string(),
-        note: String::new(),
-        color: BookmarkColor::Blue,
-        kind: BookmarkKind::Bookmark,
-        timestamp: 5,
-        progress_percent: 2.0,
-        page_number: None,
-    };
-    let b3 = Bookmark {
-        id: "3".to_string(),
-        book_path: PathBuf::from("war_and_peace.epub"),
-        chapter: 1,
-        scroll_y: 200.0,
-        label: "Глава 2".to_string(),
-        text: "Пьер был неуклюж.".to_string(),
-        note: "Важная сцена".to_string(),
-        color: BookmarkColor::Red,
-        kind: BookmarkKind::Quote,
-        timestamp: 20,
-        progress_percent: 15.0,
-        page_number: None,
-    };
-
-    let bookmarks = vec![b1, b3, b2];
-    let md = generate_markdown_conspectus("Война и мир", "Лев Толстой", &bookmarks, t);
-
-    assert!(md.contains("# Война и мир"));
-    assert!(md.contains("**Author**: Лев Толстой"));
-    assert!(md.contains("## Глава 1"));
-    assert!(md.contains("## Глава 2"));
-    assert!(md.contains("> Елена Васильевна улыбнулась..."));
-    assert!(md.contains("**Заметка**: Характеристика персонажа"));
-    assert!(md.contains("> Пьер был неуклюж."));
-    assert!(md.contains("**Заметка**: Важная сцена"));
-
-    let pos_ch1 = md.find("## Глава 1").unwrap();
-    let pos_ch2 = md.find("## Глава 2").unwrap();
-    assert!(pos_ch1 < pos_ch2);
-
-    let pos_b2 = md.find("В салоне Анны Павловны...").unwrap();
-    let pos_b1 = md.find("Елена Васильевна улыбнулась...").unwrap();
-    assert!(pos_b2 < pos_b1);
 }
 
 #[test]

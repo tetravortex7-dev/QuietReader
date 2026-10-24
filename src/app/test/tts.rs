@@ -39,20 +39,27 @@ fn test_edge_tts_synth() {
 #[test]
 fn test_tts_controller_engine_and_rate_switching() {
     use crate::app::tts::{TtsController, TtsEngineKind};
+    use crate::settings::TtsSettings;
 
-    let mut controller = TtsController::new();
+    let mut controller = TtsController::new(TtsSettings::default());
     let initial_status = controller.status();
     assert_eq!(initial_status.rate, 1.0);
 
     controller.set_rate(1.5);
     assert_eq!(controller.status().rate, 1.5);
+    assert_eq!(controller.preferences().rate, 1.5);
 
     controller.set_engine(TtsEngineKind::Edge);
     assert_eq!(controller.status().engine, TtsEngineKind::Edge);
+    assert_eq!(controller.preferences().engine, "edge");
 
     controller.set_voice("ru-RU-DmitryNeural".to_string());
     assert_eq!(
         controller.status().selected_voice_id.as_deref(),
+        Some("ru-RU-DmitryNeural")
+    );
+    assert_eq!(
+        controller.preferences().voice_id.as_deref(),
         Some("ru-RU-DmitryNeural")
     );
 
@@ -64,6 +71,24 @@ fn test_tts_controller_engine_and_rate_switching() {
 
     controller.set_engine(TtsEngineKind::System);
     assert_eq!(controller.status().engine, TtsEngineKind::System);
+    assert_eq!(controller.preferences().engine, "system");
+}
+
+#[test]
+fn test_tts_preferences_are_initialized_from_settings() {
+    use crate::app::tts::TtsController;
+    use crate::settings::TtsSettings;
+
+    let controller = TtsController::new(TtsSettings {
+        engine: "edge".to_string(),
+        voice_id: Some("ru-RU-DmitryNeural".to_string()),
+        rate: 1.25,
+    });
+
+    let preferences = controller.preferences();
+    assert_eq!(preferences.engine, "edge");
+    assert_eq!(preferences.voice_id.as_deref(), Some("ru-RU-DmitryNeural"));
+    assert_eq!(preferences.rate, 1.25);
 }
 
 #[test]

@@ -1,3 +1,4 @@
+mod config;
 mod persistence;
 mod secrets;
 

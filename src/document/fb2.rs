@@ -1,8 +1,9 @@
 use crate::document::{
-    BookChapter, BookMetadata, Document, DocumentError, HasToc, MAX_ARCHIVE_ENTRIES,
+    BookChapter, BookMetadata, Document, DocumentError, MAX_ARCHIVE_ENTRIES,
     MAX_SINGLE_ENTRY_BYTES, MAX_TOTAL_UNPACK_BYTES, TextContent, TocItem, is_safe_archive_path,
     read_bounded,
 };
+use base64::Engine;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use std::collections::HashMap;
@@ -10,21 +11,22 @@ use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;
 
+mod footnotes;
+mod lenient;
+
+use lenient::{extract_fb2_lenient, normalize_whitespace};
+
 pub struct Fb2Document {
     metadata: BookMetadata,
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
+    footnotes: HashMap<String, String>,
+    images: HashMap<String, Vec<u8>>,
 }
 
 impl TextContent for Fb2Document {
     fn chapters(&self) -> &[BookChapter] {
         &self.chapters
-    }
-}
-
-impl HasToc for Fb2Document {
-    fn toc(&self) -> &[TocItem] {
-        &self.toc
     }
 }
 
@@ -53,8 +55,12 @@ impl Document for Fb2Document {
         Some(self)
     }
 
-    fn toc_capability(&self) -> Option<&dyn HasToc> {
-        Some(self)
+    fn footnote(&self, id: &str) -> Option<&str> {
+        self.footnotes.get(id).map(String::as_str)
+    }
+
+    fn image_bytes(&self, id: &str) -> Option<Vec<u8>> {
+        self.images.get(id).cloned()
     }
 }
 
@@ -186,6 +192,7 @@ impl Fb2Document {
         let mut explicit_toc_links: Vec<TocLink> = Vec::new();
         let mut current_link_href: Option<String> = None;
         let mut current_link_text = String::new();
+        let mut current_note_link: Option<String> = None;
 
         let mut tag_stack: Vec<String> = Vec::new();
         let mut in_title = false;
@@ -194,6 +201,16 @@ impl Fb2Document {
 
         let mut in_paragraph = false;
         let mut current_paragraph = String::new();
+        let mut images: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut image_total = 0usize;
+        let mut in_binary = false;
+        let mut binary_id = String::new();
+        let mut binary_data = String::new();
+        let mut in_table = false;
+        let mut in_row = false;
+        let mut in_cell = false;
+        let mut cell_text = String::new();
+        let mut row_cells: Vec<String> = Vec::new();
         let mut buf = Vec::new();
 
         loop {
@@ -202,6 +219,46 @@ impl Fb2Document {
                     let tag_name = local_name(e.name().as_ref()).to_ascii_lowercase();
 
                     match tag_name.as_str() {
+                        "binary" => {
+                            let mut id = String::new();
+                            for attr in e.attributes().flatten() {
+                                if local_name(attr.key.as_ref()).eq_ignore_ascii_case("id") {
+                                    id = attr.value.to_string();
+                                }
+                            }
+                            if !id.is_empty() {
+                                in_binary = true;
+                                binary_id = id;
+                                binary_data.clear();
+                            }
+                        }
+                        "image" => {
+                            let mut href = String::new();
+                            for attr in e.attributes().flatten() {
+                                if local_name(attr.key.as_ref()).eq_ignore_ascii_case("href") {
+                                    href = attr.value.to_string();
+                                }
+                            }
+                            let id = href.trim_start_matches('#').trim();
+                            if !id.is_empty() && !in_title && current_body.is_some() {
+                                if in_paragraph {
+                                    let paragraph = normalize_whitespace(&current_paragraph);
+                                    if !paragraph.is_empty() {
+                                        push_fb2_paragraph(
+                                            &mut section_stack,
+                                            &mut current_body,
+                                            paragraph,
+                                        );
+                                    }
+                                    current_paragraph.clear();
+                                }
+                                push_fb2_paragraph(
+                                    &mut section_stack,
+                                    &mut current_body,
+                                    crate::document::image_token(id),
+                                );
+                            }
+                        }
                         "title-info" => in_title_info = true,
                         "author" if in_title_info => in_author = true,
                         "book-title" if in_title_info => in_book_title = true,
@@ -253,6 +310,26 @@ impl Fb2Document {
                             }
                         }
 
+                        "table" => {
+                            in_table = true;
+                            in_row = false;
+                            in_cell = false;
+                            in_paragraph = false;
+                            current_paragraph.clear();
+                        }
+
+                        "tr" if in_table => {
+                            in_row = true;
+                            row_cells.clear();
+                        }
+
+                        "td" | "th" if in_row => {
+                            in_cell = true;
+                            cell_text.clear();
+                        }
+
+                        "p" | "v" | "subtitle" | "text-author" if in_cell => {}
+
                         "p" | "v" | "subtitle" | "text-author" => {
                             if in_title {
                                 current_title_paragraph.clear();
@@ -263,31 +340,45 @@ impl Fb2Document {
                         }
 
                         "strong" | "b" => {
-                            if in_paragraph && !in_title {
+                            if in_paragraph && !in_title && current_note_link.is_none() {
                                 current_paragraph.push_str("<b>");
                             }
                         }
 
                         "emphasis" | "i" | "em" => {
-                            if in_paragraph && !in_title {
+                            if in_paragraph && !in_title && current_note_link.is_none() {
                                 current_paragraph.push_str("<i>");
                             }
                         }
 
                         "a" => {
-                            if let Some(ref body) = current_body
-                                && body
-                                    .name
-                                    .as_deref()
-                                    .unwrap_or("")
-                                    .eq_ignore_ascii_case("toc")
+                            let mut href = None;
+                            let mut link_type = String::new();
+                            for attr in e.attributes().flatten() {
+                                let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
+                                match key.as_str() {
+                                    "href" => href = Some(attr.value.to_string()),
+                                    "type" => link_type = attr.value.to_string(),
+                                    _ => {}
+                                }
+                            }
+                            let in_toc = current_body
+                                .as_ref()
+                                .and_then(|body| body.name.as_deref())
+                                .map(|name| name.eq_ignore_ascii_case("toc"))
+                                .unwrap_or(false);
+                            if in_toc {
+                                if let Some(href) = href {
+                                    current_link_href = Some(href);
+                                    current_link_text.clear();
+                                }
+                            } else if link_type.to_ascii_lowercase().contains("note")
+                                && let Some(href) = href
                             {
-                                for attr in e.attributes().flatten() {
-                                    let key = local_name(attr.key.as_ref()).to_ascii_lowercase();
-                                    if key == "href" {
-                                        current_link_href = Some(attr.value.to_string());
-                                        current_link_text.clear();
-                                    }
+                                let id = href.strip_prefix('#').unwrap_or(&href);
+                                if !id.is_empty() {
+                                    current_note_link =
+                                        Some(crate::document::epub::percent_decode_str(id));
                                 }
                             }
                         }
@@ -305,6 +396,21 @@ impl Fb2Document {
                     tag_stack.pop();
 
                     match tag_name.as_str() {
+                        "binary" => {
+                            if in_binary {
+                                if let Some(bytes) = decode_fb2_base64(&binary_data)
+                                    && bytes.len()
+                                        <= crate::document::MAX_SINGLE_ENTRY_BYTES as usize
+                                    && image_total.saturating_add(bytes.len())
+                                        <= crate::document::MAX_TOTAL_UNPACK_BYTES as usize
+                                {
+                                    image_total += bytes.len();
+                                    images.insert(std::mem::take(&mut binary_id), bytes);
+                                }
+                                in_binary = false;
+                                binary_data.clear();
+                            }
+                        }
                         "title-info" => in_title_info = false,
                         "author" => in_author = false,
                         "book-title" => in_book_title = false,
@@ -313,7 +419,12 @@ impl Fb2Document {
                         "last-name" => in_last_name = false,
 
                         "a" => {
-                            if let (Some(href), false) = (
+                            if let Some(note_id) = current_note_link.take() {
+                                if in_paragraph && !in_title {
+                                    current_paragraph
+                                        .push_str(&crate::document::footnote_token(&note_id));
+                                }
+                            } else if let (Some(href), false) = (
                                 current_link_href.take(),
                                 current_link_text.trim().is_empty(),
                             ) {
@@ -323,6 +434,29 @@ impl Fb2Document {
                                 });
                             }
                         }
+
+                        "td" | "th" if in_cell => {
+                            row_cells.push(cell_text.trim().to_string());
+                            cell_text.clear();
+                            in_cell = false;
+                        }
+
+                        "tr" if in_row => {
+                            let row = row_cells.join(" | ");
+                            if !row.trim().is_empty() {
+                                push_fb2_paragraph(&mut section_stack, &mut current_body, row);
+                            }
+                            row_cells.clear();
+                            in_row = false;
+                        }
+
+                        "table" => {
+                            in_table = false;
+                            in_row = false;
+                            in_cell = false;
+                        }
+
+                        "p" | "v" | "subtitle" | "text-author" if in_cell => {}
 
                         "p" | "v" | "subtitle" | "text-author" => {
                             if in_title {
@@ -346,13 +480,13 @@ impl Fb2Document {
                         }
 
                         "strong" | "b" => {
-                            if in_paragraph && !in_title {
+                            if in_paragraph && !in_title && current_note_link.is_none() {
                                 current_paragraph.push_str("</b>");
                             }
                         }
 
                         "emphasis" | "i" | "em" => {
-                            if in_paragraph && !in_title {
+                            if in_paragraph && !in_title && current_note_link.is_none() {
                                 current_paragraph.push_str("</i>");
                             }
                         }
@@ -406,10 +540,32 @@ impl Fb2Document {
                 Ok(Event::Empty(ref e)) => {
                     let tag_name = local_name(e.name().as_ref()).to_ascii_lowercase();
                     if tag_name == "empty-line" && current_body.is_some() && !in_title {
-                        if let Some(sec) = section_stack.last_mut() {
-                            sec.paragraphs.push(String::new());
-                        } else if let Some(ref mut body) = current_body {
-                            body.direct_paragraphs.push(String::new());
+                        push_fb2_paragraph(&mut section_stack, &mut current_body, String::new());
+                    } else if tag_name == "image" && current_body.is_some() && !in_title {
+                        let mut href = String::new();
+                        for attr in e.attributes().flatten() {
+                            if local_name(attr.key.as_ref()).eq_ignore_ascii_case("href") {
+                                href = attr.value.to_string();
+                            }
+                        }
+                        let id = href.trim_start_matches('#').trim();
+                        if !id.is_empty() {
+                            if in_paragraph {
+                                let paragraph = normalize_whitespace(&current_paragraph);
+                                if !paragraph.is_empty() {
+                                    push_fb2_paragraph(
+                                        &mut section_stack,
+                                        &mut current_body,
+                                        paragraph,
+                                    );
+                                }
+                                current_paragraph.clear();
+                            }
+                            push_fb2_paragraph(
+                                &mut section_stack,
+                                &mut current_body,
+                                crate::document::image_token(id),
+                            );
                         }
                     }
                 }
@@ -420,7 +576,11 @@ impl Fb2Document {
                         .map(|c| c.into_owned())
                         .unwrap_or_else(|_| raw_str.to_string());
 
-                    if in_book_title {
+                    if in_binary {
+                        binary_data.push_str(&text);
+                    } else if in_cell {
+                        cell_text.push_str(&text);
+                    } else if in_book_title {
                         book_title.push_str(&text);
                     } else if in_first_name {
                         author_first.push_str(&text);
@@ -430,6 +590,7 @@ impl Fb2Document {
                         author_last.push_str(&text);
                     } else if in_title {
                         current_title_paragraph.push_str(&text);
+                    } else if current_note_link.is_some() {
                     } else if current_link_href.is_some() {
                         current_link_text.push_str(&text);
                     } else if in_paragraph {
@@ -455,6 +616,7 @@ impl Fb2Document {
                             author_last.push_str(repl);
                         } else if in_title {
                             current_title_paragraph.push_str(repl);
+                        } else if current_note_link.is_some() {
                         } else if current_link_href.is_some() {
                             current_link_text.push_str(repl);
                         } else if in_paragraph {
@@ -496,7 +658,8 @@ impl Fb2Document {
             book_title.trim().to_string()
         };
 
-        let (mut chapters, mut toc, section_id_to_chapter) = build_chapters_and_toc(bodies);
+        let (mut chapters, mut toc, section_id_to_chapter, footnotes) =
+            build_chapters_and_toc(bodies);
 
         if chapters.is_empty() || chapters.iter().all(|c| c.is_empty()) {
             let (fb_title, fb_author, fb_chapters) = extract_fb2_lenient(xml);
@@ -557,8 +720,32 @@ impl Fb2Document {
             metadata: BookMetadata { title, author },
             chapters,
             toc,
+            footnotes,
+            images,
         })
     }
+}
+
+fn push_fb2_paragraph(
+    section_stack: &mut [SectionNode],
+    body: &mut Option<BodyNode>,
+    paragraph: String,
+) {
+    if let Some(section) = section_stack.last_mut() {
+        section.paragraphs.push(paragraph);
+    } else if let Some(body) = body.as_mut() {
+        body.direct_paragraphs.push(paragraph);
+    }
+}
+
+fn decode_fb2_base64(text: &str) -> Option<Vec<u8>> {
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.is_empty() {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(compact)
+        .ok()
 }
 
 struct FlattenContext {
@@ -568,14 +755,24 @@ struct FlattenContext {
 
 fn build_chapters_and_toc(
     bodies: Vec<BodyNode>,
-) -> (Vec<BookChapter>, Vec<TocItem>, HashMap<String, usize>) {
+) -> (
+    Vec<BookChapter>,
+    Vec<TocItem>,
+    HashMap<String, usize>,
+    HashMap<String, String>,
+) {
     let mut ctx = FlattenContext {
         chapters: Vec::new(),
         section_id_to_chapter: HashMap::new(),
     };
     let mut root_toc: Vec<TocItem> = Vec::new();
+    let mut footnotes = HashMap::new();
 
     for body in bodies {
+        if footnotes::is_notes_body(body.name.as_deref()) {
+            footnotes::collect_body(&body, &mut footnotes);
+            continue;
+        }
         if body
             .name
             .as_deref()
@@ -628,7 +825,7 @@ fn build_chapters_and_toc(
         }
     }
 
-    (ctx.chapters, root_toc, ctx.section_id_to_chapter)
+    (ctx.chapters, root_toc, ctx.section_id_to_chapter, footnotes)
 }
 
 fn flatten_section(
@@ -732,126 +929,6 @@ fn flatten_section(
     }
 }
 
-pub fn extract_fb2_lenient(xml: &str) -> (String, String, Vec<BookChapter>) {
-    let mut title = String::new();
-    let mut author = String::new();
-    let mut chapters = Vec::new();
-    let mut current_paragraphs = Vec::new();
-    let mut current_title = String::new();
-    let mut in_title = false;
-    let mut in_p = false;
-    let mut current_p = String::new();
-
-    let mut i = 0;
-    let bytes = xml.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == b'<' {
-            let rest = &xml[i + 1..];
-            if let Some(end_bracket) = rest.find('>') {
-                let tag_raw = rest[..end_bracket].trim();
-                let is_closing = tag_raw.starts_with('/');
-                let tag_name = tag_raw
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim_start_matches('/')
-                    .to_ascii_lowercase();
-
-                match tag_name.as_str() {
-                    "book-title" => {
-                        if is_closing && title.is_empty() {
-                            title = current_p.trim().to_string();
-                            current_p.clear();
-                        }
-                    }
-                    "author" => {
-                        if is_closing && author.is_empty() {
-                            author = current_p.trim().to_string();
-                            current_p.clear();
-                        }
-                    }
-                    "title" => {
-                        in_title = !is_closing;
-                        if is_closing {
-                            current_title = current_p.trim().to_string();
-                            current_p.clear();
-                        }
-                    }
-                    "section" if is_closing => {
-                        if !current_paragraphs.is_empty() || !current_title.is_empty() {
-                            chapters.push(BookChapter {
-                                id: None,
-                                title: std::mem::take(&mut current_title),
-                                paragraphs: std::mem::take(&mut current_paragraphs),
-                            });
-                        }
-                    }
-                    "p" | "v" | "subtitle" => {
-                        in_p = !is_closing;
-                        if is_closing {
-                            let p_clean = normalize_whitespace(&current_p);
-                            if !p_clean.is_empty() {
-                                if in_title {
-                                    current_title = p_clean;
-                                } else {
-                                    current_paragraphs.push(p_clean);
-                                }
-                            }
-                            current_p.clear();
-                        }
-                    }
-                    "strong" | "b" => {
-                        if in_p && !in_title {
-                            if is_closing {
-                                current_p.push_str("</b>");
-                            } else {
-                                current_p.push_str("<b>");
-                            }
-                        }
-                    }
-                    "emphasis" | "i" | "em" => {
-                        if in_p && !in_title {
-                            if is_closing {
-                                current_p.push_str("</i>");
-                            } else {
-                                current_p.push_str("<i>");
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-                i += 1 + end_bracket + 1;
-                continue;
-            }
-        }
-
-        if in_p || title.is_empty() || author.is_empty() {
-            let start = i;
-            while i < bytes.len() && bytes[i] != b'<' {
-                i += 1;
-            }
-            if let Ok(text_slice) = std::str::from_utf8(&bytes[start..i]) {
-                let unescaped = quick_xml::escape::unescape(text_slice)
-                    .map(|c| c.into_owned())
-                    .unwrap_or_else(|_| text_slice.to_string());
-                current_p.push_str(&unescaped);
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    if !current_paragraphs.is_empty() || !current_title.is_empty() {
-        chapters.push(BookChapter {
-            id: None,
-            title: current_title,
-            paragraphs: current_paragraphs,
-        });
-    }
-
-    (title, author, chapters)
-}
-
 fn local_name(name: &str) -> &str {
     if let Some(pos) = name.rfind(':') {
         &name[pos + 1..]
@@ -912,23 +989,6 @@ fn find_xml_encoding(header: &str) -> Option<&str> {
     let rest = &remainder[1..];
     let end_idx = rest.find(quote)?;
     Some(&rest[..end_idx])
-}
-
-fn normalize_whitespace(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut last_was_space = false;
-    for c in s.chars() {
-        if c.is_whitespace() {
-            if !last_was_space && !result.is_empty() {
-                result.push(' ');
-                last_was_space = true;
-            }
-        } else {
-            result.push(c);
-            last_was_space = false;
-        }
-    }
-    result.trim().to_string()
 }
 
 #[cfg(all(test, feature = "enable_tests"))]

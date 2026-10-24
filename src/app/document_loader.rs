@@ -44,6 +44,7 @@ pub struct DocumentLoadRequest {
     pub request_id: u64,
     pub path: PathBuf,
     pub lang: crate::i18n::UiLanguage,
+    pub encoding: Option<String>,
     pub ctx: Option<egui::Context>,
 }
 
@@ -79,8 +80,9 @@ fn spawn_loader_worker(
             while let Ok(req) = req_rx.recv() {
                 let path = req.path.clone();
                 let lang = req.lang;
+                let encoding = req.encoding.clone();
                 let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    crate::document::open_document(&path)
+                    crate::document::open_document_with_encoding(&path, encoding.as_deref())
                         .map(|doc| {
                             super::localized_document::LocalizedDocument::wrap(Arc::from(doc), lang)
                         })
@@ -127,13 +129,19 @@ impl DocumentLoader {
         }
     }
 
-    pub fn request_load(&mut self, path: PathBuf, lang: crate::i18n::UiLanguage) -> u64 {
+    pub fn request_load(
+        &mut self,
+        path: PathBuf,
+        lang: crate::i18n::UiLanguage,
+        encoding: Option<String>,
+    ) -> u64 {
         self.request_counter = self.request_counter.wrapping_add(1);
         let request_id = self.request_counter;
         let _ = self.req_tx.send(DocumentLoadRequest {
             request_id,
             path,
             lang,
+            encoding,
             ctx: self.ctx.clone(),
         });
         request_id
@@ -169,7 +177,7 @@ impl DocumentLoader {
         let is_comic = doc.page_content().is_some();
         let comic_page_count = doc.page_content().map(|c| c.page_count()).unwrap_or(0);
 
-        let (ch, scroll_y) =
+        let (ch, saved_scroll) =
             if let Some((saved_ch, saved_scroll)) = settings.get_book_progress(&path) {
                 (saved_ch, saved_scroll)
             } else {
@@ -188,12 +196,36 @@ impl DocumentLoader {
             ch.min(total_chapters.saturating_sub(1))
         };
 
-        settings.record_book_progress(
+        let paragraph = if is_comic {
+            None
+        } else {
+            settings.get_book_paragraph(&path).map(|paragraph| {
+                doc.chapters()
+                    .get(effective_ch)
+                    .map(|chapter| paragraph.min(chapter.paragraphs.len().saturating_sub(1)))
+                    .unwrap_or(0)
+            })
+        };
+        let scroll_y = if let Some(paragraph) = paragraph {
+            crate::core::ReaderCore::paragraph_anchor_scroll_y(
+                doc.as_ref(),
+                effective_ch,
+                paragraph,
+                settings.font_size,
+                settings.effective_line_height_scale(),
+                settings.effective_max_column_width(),
+            )
+        } else {
+            saved_scroll
+        };
+
+        settings.record_book_progress_anchored(
             &path,
             &title,
             &author,
             if is_comic { comic_page } else { effective_ch },
             scroll_y,
+            paragraph,
         );
         let fmt = doc.format_name();
         let t = settings.ui_language.t();
