@@ -23,6 +23,7 @@ pub fn zoom_reset(zoom_percent: &mut f32, fit_mode: &mut String, pan_offset: &mu
     *pan_offset = Vec2::ZERO;
 }
 
+#[allow(dead_code)]
 pub fn calculate_paged_dimensions(
     orig_w: f32,
     orig_h: f32,

@@ -140,7 +140,7 @@ pub(super) fn show_hover_card(
 ) -> Option<String> {
     let pointer = ui.input(|i| i.pointer.hover_pos());
     let clicked = ui.input(|i| i.pointer.primary_clicked());
-    let card_state_id = egui::Id::new("quietreader_footnote_card_last");
+    let card_state_id = egui::Id::unique("quietreader_footnote_card_last");
     let last_card: Option<(String, egui::Rect)> =
         ui.ctx().data(|data| data.get_temp(card_state_id));
     let origin = match galley.job.halign {
@@ -261,7 +261,7 @@ fn show_card(
         });
     ui.ctx().data_mut(|data| {
         data.insert_temp(
-            egui::Id::new("quietreader_footnote_card_last"),
+            egui::Id::unique("quietreader_footnote_card_last"),
             (marker.id.clone(), card.response.rect),
         );
     });

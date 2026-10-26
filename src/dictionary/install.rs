@@ -80,7 +80,7 @@ fn download(
     let agent = crate::net::agent(Duration::from_secs(300));
     let mut response = agent
         .get(url)
-        .header("User-Agent", "QuietReader/0.13")
+        .header("User-Agent", crate::net::APP_USER_AGENT)
         .call()
         .map_err(|error| error.to_string())?;
     let mut reader = response.body_mut().as_reader();

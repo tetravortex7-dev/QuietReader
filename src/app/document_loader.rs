@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
+#[allow(dead_code)]
 pub fn format_document_error(err: &DocumentError) -> String {
     crate::i18n::format::format_document_error(err, crate::i18n::UiLanguage::Auto)
 }
@@ -277,6 +278,7 @@ impl DocumentLoader {
         }
     }
 
+    #[allow(dead_code)]
     pub fn load_file_sync(
         path: PathBuf,
         settings: &mut AppSettings,

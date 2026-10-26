@@ -291,3 +291,23 @@ fn test_pdf_transitive_glyph_sorting_and_line_clustering() {
     assert_eq!(spans[0].text, "Helo");
     assert_eq!(spans[1].text, "World");
 }
+
+#[test]
+fn test_pdf_permissions_extraction() {
+    use crate::document::pdf::extract_pdf_permissions;
+
+    let unencrypted = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+    let perms = extract_pdf_permissions(unencrypted);
+    assert!(perms.can_print);
+    assert!(perms.can_copy);
+
+    let encrypted_no_print = b"4 0 obj\n<< /Filter /Standard /V 2 /R 3 /P -8 >>\nendobj\n";
+    let perms_no_print = extract_pdf_permissions(encrypted_no_print);
+    assert!(!perms_no_print.can_print);
+    assert!(perms_no_print.can_copy);
+
+    let encrypted_no_copy = b"4 0 obj\n<< /Filter /Standard /V 2 /R 3 /P -20 >>\nendobj\n";
+    let perms_no_copy = extract_pdf_permissions(encrypted_no_copy);
+    assert!(perms_no_copy.can_print);
+    assert!(!perms_no_copy.can_copy);
+}

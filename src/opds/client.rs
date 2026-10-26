@@ -361,13 +361,11 @@ fn fetch_feed_sync(
     url: &str,
     auth: Option<&OpdsAuth>,
 ) -> Result<OpdsFeed, OpdsError> {
-    let mut req = agent
-        .get(url)
-        .header("User-Agent", "QuietReader/0.7.1 (OPDS Client)")
-        .header(
-            "Accept",
-            "application/atom+xml,application/xml,text/xml,*/*",
-        );
+    let ua = crate::net::user_agent(Some("OPDS Client"));
+    let mut req = agent.get(url).header("User-Agent", &ua).header(
+        "Accept",
+        "application/atom+xml,application/xml,text/xml,*/*",
+    );
     if let Some(header) = auth.and_then(|auth| auth.header_for(url)) {
         req = req.header("Authorization", header);
     }
@@ -391,9 +389,8 @@ fn resolve_and_fetch_search(
     let template = if let Some(tmpl) = search_template {
         tmpl.to_string()
     } else if let Some(desc_url) = descriptor_url {
-        let mut req = agent
-            .get(desc_url)
-            .header("User-Agent", "QuietReader/0.7.1 (OPDS Client)");
+        let ua = crate::net::user_agent(Some("OPDS Client"));
+        let mut req = agent.get(desc_url).header("User-Agent", &ua);
         if let Some(header) = auth.and_then(|auth| auth.header_for(desc_url)) {
             req = req.header("Authorization", header);
         }
@@ -464,9 +461,8 @@ where
     let target_path = make_unique_filepath(downloads_dir, author, title, ext);
     let temp_path = target_path.with_extension(format!("tmp.{}", std::process::id()));
 
-    let mut req = agent
-        .get(url)
-        .header("User-Agent", "QuietReader/0.7.1 (OPDS Downloader)");
+    let ua = crate::net::user_agent(Some("OPDS Downloader"));
+    let mut req = agent.get(url).header("User-Agent", &ua);
     if let Some(header) = auth.and_then(|auth| auth.header_for(url)) {
         req = req.header("Authorization", header);
     }

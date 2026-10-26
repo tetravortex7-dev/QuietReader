@@ -265,6 +265,7 @@ impl PdfViewState {
         lang: crate::i18n::UiLanguage,
         on_translate: &mut Option<String>,
         on_dictionary: &mut Option<String>,
+        can_copy: bool,
     ) {
         let t = lang.t();
         let copied_text =
@@ -274,11 +275,15 @@ impl PdfViewState {
                 (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::C)
             });
             if ctrl_c {
-                ctx.copy_text(self.selected_text.clone());
-                let preview = truncate_str(&self.selected_text, 35);
-                let copied = copied_text(&preview);
-                *status_message = Some(copied.clone());
-                self.copy_notification = Some((copied, Instant::now()));
+                if !can_copy {
+                    *status_message = Some(t.extra.copy_restricted.to_string());
+                } else {
+                    ctx.copy_text(self.selected_text.clone());
+                    let preview = truncate_str(&self.selected_text, 35);
+                    let copied = copied_text(&preview);
+                    *status_message = Some(copied.clone());
+                    self.copy_notification = Some((copied, Instant::now()));
+                }
             }
         }
 
@@ -296,11 +301,15 @@ impl PdfViewState {
                                 .button(RichText::new(t.extra.pdf_copy_btn).size(12.0))
                                 .clicked()
                             {
-                                ctx.copy_text(self.selected_text.clone());
-                                let preview = truncate_str(&self.selected_text, 35);
-                                let copied = copied_text(&preview);
-                                *status_message = Some(copied.clone());
-                                self.copy_notification = Some((copied, Instant::now()));
+                                if !can_copy {
+                                    *status_message = Some(t.extra.copy_restricted.to_string());
+                                } else {
+                                    ctx.copy_text(self.selected_text.clone());
+                                    let preview = truncate_str(&self.selected_text, 35);
+                                    let copied = copied_text(&preview);
+                                    *status_message = Some(copied.clone());
+                                    self.copy_notification = Some((copied, Instant::now()));
+                                }
                             }
                             if ui
                                 .button(RichText::new(lang.t().translate_selection).size(12.0))

@@ -160,3 +160,8 @@ Every new feature or capability introduced into the project must be documented i
 - Stop the running app before editing the settings file, write it as UTF-8 without BOM, and verify the value before launching; a running instance can overwrite the file with its in-memory settings.
 - Enable the prompt (`"dismiss_association_prompt": false`) only for a production release: restore it before the final release build and before replacing the root `QuietReader.exe`, so first-run users see the association dialog.
 
+22. User-Agent Policy
+
+- Network requests that send a `User-Agent` header must always reflect the current application version dynamically using `env!("CARGO_PKG_VERSION")`, `crate::net::APP_USER_AGENT`, or `crate::net::user_agent(...)`.
+- Hardcoding static, legacy, or outdated version strings in `User-Agent` headers is strictly prohibited. When adding or modifying network integrations, ensure the user agent format follows `QuietReader/<version>` or `QuietReader/<version> (<component>)`.
+

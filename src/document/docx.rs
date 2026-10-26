@@ -88,6 +88,7 @@ impl DocxDocument {
         Self::from_reader(file, default_title)
     }
 
+    #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8], default_title: &str) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > crate::document::MAX_TOTAL_UNPACK_BYTES {
             return Err(DocumentError::LimitExceeded(

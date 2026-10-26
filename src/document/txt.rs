@@ -45,6 +45,7 @@ impl Document for TxtDocument {
 impl TxtDocument {
     pub const MAX_TXT_SIZE: u64 = 100 * 1024 * 1024;
 
+    #[allow(dead_code)]
     pub fn from_text(text: &str, default_title: &str) -> Self {
         Self::from_bytes(text.as_bytes(), default_title, "txt").unwrap_or_else(|_| Self {
             metadata: BookMetadata {
@@ -94,6 +95,7 @@ impl TxtDocument {
         Self::from_bytes_with_encoding(&bytes, &default_title, &ext, encoding)
     }
 
+    #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8], default_title: &str, ext: &str) -> Result<Self, DocumentError> {
         Self::from_bytes_with_encoding(bytes, default_title, ext, None)
     }

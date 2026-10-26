@@ -11,6 +11,25 @@ use crate::document::{
     PageContent, PageInfo, PageTextSpan, TocItem,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PdfPermissions {
+    pub can_print: bool,
+    pub can_copy: bool,
+    pub can_modify: bool,
+    pub can_annotate: bool,
+}
+
+impl Default for PdfPermissions {
+    fn default() -> Self {
+        Self {
+            can_print: true,
+            can_copy: true,
+            can_modify: true,
+            can_annotate: true,
+        }
+    }
+}
+
 pub struct PdfDocument {
     metadata: BookMetadata,
     _path: PathBuf,
@@ -19,6 +38,7 @@ pub struct PdfDocument {
     chapters: Vec<BookChapter>,
     toc: Vec<TocItem>,
     links: std::collections::HashMap<usize, Vec<crate::document::PageLink>>,
+    permissions: PdfPermissions,
 }
 
 impl PdfDocument {
@@ -64,6 +84,7 @@ impl PdfDocument {
         Self::from_pdf_data(data, path_ref)
     }
 
+    #[allow(dead_code)]
     pub fn from_bytes(bytes: Vec<u8>, path: &Path) -> Result<Self, DocumentError> {
         Self::from_pdf_data(bytes.into(), path)
     }
@@ -87,9 +108,14 @@ impl PdfDocument {
             }
         }
 
-        let pdf = hayro::hayro_syntax::Pdf::new(data).map_err(|e| {
-            DocumentError::Corrupted(format!("Ошибка парсинга PDF документа: {e:?}"))
-        })?;
+        let permissions = extract_pdf_permissions(bytes);
+
+        let pdf = match hayro::hayro_syntax::Pdf::new(data.clone()) {
+            Ok(pdf) => pdf,
+            Err(_) => hayro::hayro_syntax::Pdf::new_with_password(data, "").map_err(|e| {
+                DocumentError::Corrupted(format!("Ошибка парсинга PDF документа: {e:?}"))
+            })?,
+        };
 
         let page_count = pdf.pages().len();
         if page_count == 0 {
@@ -143,7 +169,13 @@ impl PdfDocument {
             chapters,
             toc,
             links,
+            permissions,
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn permissions(&self) -> PdfPermissions {
+        self.permissions
     }
 }
 
@@ -170,6 +202,10 @@ impl Document for PdfDocument {
 
     fn view_kind(&self) -> DocumentViewKind {
         DocumentViewKind::Pdf
+    }
+
+    fn can_copy(&self) -> bool {
+        self.permissions.can_copy
     }
 
     fn page_content(&self) -> Option<&dyn PageContent> {
@@ -315,6 +351,82 @@ impl PageContent for PdfDocument {
     fn is_manga(&self) -> bool {
         false
     }
+}
+
+pub fn extract_pdf_permissions(data: &[u8]) -> PdfPermissions {
+    let mut pos = 0;
+    while let Some(idx) = find_subsequence(&data[pos..], b"/Filter") {
+        let filter_pos = pos + idx;
+        let window_start = filter_pos.saturating_sub(64);
+        let window_end = (filter_pos + 512).min(data.len());
+        let slice = &data[window_start..window_end];
+
+        if let Some(p_idx) = find_p_entry(slice) {
+            let p_slice = &slice[p_idx..];
+            if let Some(p_val) = parse_pdf_integer(p_slice) {
+                let p = if p_val < 0 {
+                    u32::from_be_bytes((p_val as i32).to_be_bytes())
+                } else {
+                    p_val as u32
+                };
+                return PdfPermissions {
+                    can_print: (p & 0x0004) != 0,
+                    can_modify: (p & 0x0008) != 0,
+                    can_copy: (p & 0x0010) != 0,
+                    can_annotate: (p & 0x0020) != 0,
+                };
+            }
+        }
+        pos = filter_pos + 7;
+    }
+    PdfPermissions::default()
+}
+
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn find_p_entry(slice: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i + 2 < slice.len() {
+        if slice[i] == b'/' && slice[i + 1] == b'P' {
+            let next = slice[i + 2];
+            if next.is_ascii_whitespace() || next == b'-' || next == b'+' {
+                return Some(i + 2);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_pdf_integer(slice: &[u8]) -> Option<i64> {
+    let mut i = 0;
+    while i < slice.len() && slice[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= slice.len() {
+        return None;
+    }
+    let mut is_negative = false;
+    if slice[i] == b'-' {
+        is_negative = true;
+        i += 1;
+    } else if slice[i] == b'+' {
+        i += 1;
+    }
+    let start = i;
+    while i < slice.len() && slice[i].is_ascii_digit() {
+        i += 1;
+    }
+    if start == i {
+        return None;
+    }
+    let s = std::str::from_utf8(&slice[start..i]).ok()?;
+    let val: i64 = s.parse().ok()?;
+    Some(if is_negative { -val } else { val })
 }
 
 #[cfg(all(test, feature = "enable_tests"))]

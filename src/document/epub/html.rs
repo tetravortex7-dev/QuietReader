@@ -742,6 +742,7 @@ pub fn parse_html_chapter_with_notes(
     )
 }
 
+#[allow(dead_code)]
 pub fn parse_html_chapter(html: &str) -> (String, Vec<String>, Vec<String>) {
     let parsed = parse_html_chapter_full(html);
     (parsed.title, parsed.paragraphs, parsed.anchors)

@@ -102,7 +102,15 @@ OFL 1.1 is available at https://scripts.sil.org/OFL. The fonts may be used,
 studied, modified and redistributed under the terms of that license, provided
 that the license notice is retained and the reserved font names are respected.
 
-9.3. Other components
+9.3. ZIP Archive Support (zip crate)
+
+ZIP archive processing (including EPUB and CBZ document decompression) is
+implemented using the `zip` crate (version 9.1.1), copyright (c) 2014-2024 zip-rs
+contributors, licensed under the MIT License. The full text of the MIT License is
+available at https://opensource.org/licenses/MIT. The crate may be used, modified,
+and redistributed under the terms of the MIT License.
+
+9.4. Other components
 
 Other third-party libraries remain subject to their respective licenses. Their
 notices are retained in the project documentation and dependency metadata.

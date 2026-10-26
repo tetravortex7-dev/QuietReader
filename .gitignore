@@ -31,6 +31,14 @@
 # Prompt & temporary notes
 prompt.md
 /free-vs-pro.md
+/AGENTS.md
+/todo.md
+todo.md
+todo/
+/docs/
+/rust_egui.md
+rust_egui.md
+rust_egui/
 
 # Operating System specific files
 Thumbs.db

@@ -60,3 +60,17 @@ fn pivot_and_pause_heuristics_are_stable() {
     assert_eq!(delay_factor("конец"), 1.0);
     assert_eq!(delay_factor("«конец!»"), 2.0);
 }
+
+#[test]
+fn rsvp_session_tracks_words_and_time() {
+    let mut session = crate::app::focus_read::RsvpSession::default();
+    assert_eq!(session.words_read_in_session, 0);
+    assert_eq!(session.elapsed_reading_secs, 0.0);
+
+    session.words_read_in_session = 50;
+    session.elapsed_reading_secs = 10.0;
+    let actual_wpm = ((session.words_read_in_session as f32)
+        / (session.elapsed_reading_secs / 60.0))
+        .round() as usize;
+    assert_eq!(actual_wpm, 300);
+}

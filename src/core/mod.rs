@@ -24,9 +24,6 @@ pub enum Command {
     PrevChapter,
     Home,
     End,
-    ScrollBy(f32),
-    GoToChapter(usize),
-    GoToPage(usize),
     ToggleFullscreen,
     ExitFullscreen,
     ToggleAutoscroll,
@@ -116,10 +113,12 @@ pub struct SearchHit {
 
 #[derive(Default)]
 pub struct ReaderCore {
+    #[allow(dead_code)]
     pub bookmarks: Vec<Bookmark>,
 }
 
 impl ReaderCore {
+    #[allow(dead_code)]
     pub fn add_bookmark(&mut self, bookmark: Bookmark) {
         if !self.bookmarks.iter().any(|b| {
             b.book_path == bookmark.book_path
@@ -130,15 +129,18 @@ impl ReaderCore {
         }
     }
 
+    #[allow(dead_code)]
     pub fn remove_bookmark(&mut self, book_path: &Path, chapter: usize) {
         self.bookmarks
             .retain(|b| !(b.book_path == book_path && b.chapter == chapter));
     }
 
+    #[allow(dead_code)]
     pub fn remove_bookmark_by_id(&mut self, id: &str) {
         self.bookmarks.retain(|b| b.id != id);
     }
 
+    #[allow(dead_code)]
     pub fn bookmarks_for_path<'a>(
         &'a self,
         book_path: &'a Path,
@@ -148,6 +150,7 @@ impl ReaderCore {
             .filter(move |b| b.book_path == book_path)
     }
 
+    #[allow(dead_code)]
     pub fn clear_bookmarks_for_path(&mut self, book_path: &Path) {
         self.bookmarks.retain(|b| b.book_path != book_path);
     }
@@ -168,6 +171,7 @@ impl ReaderCore {
         snippet
     }
 
+    #[allow(dead_code)]
     pub fn search_in_document(doc: &dyn Document, query: &str) -> Vec<SearchHit> {
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         Self::search_in_document_with_cancel(doc, query, &cancelled)
@@ -683,16 +687,6 @@ impl ReaderCore {
                 *pending_scroll_y = Some(max_scroll_y);
                 return true;
             }
-            Command::ScrollBy(delta) => {
-                *pending_scroll_y = Some((current_scroll_y + delta).clamp(0.0, max_scroll_y));
-                return true;
-            }
-            Command::GoToChapter(ch_idx) if *ch_idx < doc.chapters().len() => {
-                *current_chapter = *ch_idx;
-                *pending_scroll_y = Some(0.0);
-                *last_rendered_chapter = *current_chapter;
-                return true;
-            }
             _ => {}
         }
         false
@@ -766,10 +760,6 @@ impl ReaderCore {
                 }
                 Command::End => {
                     *current_page = page_count.saturating_sub(1);
-                    true
-                }
-                Command::GoToPage(p) => {
-                    *current_page = (*p).min(page_count.saturating_sub(1));
                     true
                 }
                 _ => false,

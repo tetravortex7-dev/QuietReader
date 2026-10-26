@@ -18,6 +18,14 @@ fn parses_help_and_version_flags() {
 }
 
 #[test]
+fn parses_portable_flag() {
+    assert_eq!(parse_args(args(&["--portable"])), CliAction::Run(vec![]));
+    assert_eq!(parse_args(args(&["-p"])), CliAction::Run(vec![]));
+    assert_eq!(parse_args(args(&["-portable"])), CliAction::Run(vec![]));
+    crate::settings::AppSettings::set_portable(false);
+}
+
+#[test]
 fn rejects_unknown_flags() {
     match parse_args(args(&["--unknown"])) {
         CliAction::Error(message) => assert!(message.contains("--unknown")),

@@ -122,7 +122,7 @@ pub fn fetch_catalog() -> Result<(String, Vec<CatalogEntry>), String> {
     let agent = crate::net::agent(Duration::from_secs(20));
     let mut response = agent
         .get(CATALOG_URL)
-        .header("User-Agent", "QuietReader/0.13")
+        .header("User-Agent", crate::net::APP_USER_AGENT)
         .call()
         .map_err(|error| error.to_string())?;
     let data = read_limited(&mut response.body_mut().as_reader(), CATALOG_LIMIT)?;

@@ -129,6 +129,7 @@ impl MobiDocument {
         })
     }
 
+    #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > MAX_MOBI_FILE_SIZE {
             return Err(DocumentError::LimitExceeded(

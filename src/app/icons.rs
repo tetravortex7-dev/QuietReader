@@ -31,6 +31,7 @@ pub enum Icon {
     Globe,
     ArrowLeft,
     ArrowRight,
+    #[allow(dead_code)]
     Home,
     Refresh,
     Download,

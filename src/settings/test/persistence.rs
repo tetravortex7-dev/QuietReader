@@ -516,3 +516,26 @@ fn test_typography_settings_defaults_migration_and_roundtrip() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn portable_mode_resolves_and_persists_settings() {
+    AppSettings::set_portable(true);
+    assert!(AppSettings::is_portable());
+
+    let dir = unique_test_dir("portable_test");
+    let portable_data = dir.join("portable_data");
+    std::fs::create_dir_all(&portable_data).unwrap();
+    let settings_path = portable_data.join("settings.json");
+
+    let mut settings = AppSettings::default();
+    settings.rsvp_wpm = 450;
+    settings.rsvp_auto_accelerate = true;
+    settings.save_to_path(&settings_path).unwrap();
+
+    let loaded = AppSettings::load_from_path(&settings_path);
+    assert_eq!(loaded.rsvp_wpm, 450);
+    assert!(loaded.rsvp_auto_accelerate);
+
+    AppSettings::set_portable(false);
+    let _ = std::fs::remove_dir_all(&dir);
+}

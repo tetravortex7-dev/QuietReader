@@ -39,6 +39,7 @@ pub struct ComicViewState {
     pub access_counter: u64,
     pub doc_generation: u64,
     pub pan_offset: Vec2,
+    #[allow(dead_code)]
     pub is_middle_dragging: bool,
     pub page_input: String,
     pub last_smart_dark: bool,

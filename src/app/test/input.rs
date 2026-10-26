@@ -18,6 +18,37 @@ fn test_hotkeys_b_v_j() {
     let cmds_ctrl_v = process_keyboard_events(false, |k| k == Key::V, ctrl_mod, false);
     assert!(cmds_ctrl_v.is_empty());
 
+    let cmds_media_play = process_keyboard_events(
+        false,
+        |k| k == Key::MediaPlayPause,
+        Modifiers::default(),
+        false,
+    );
+    assert_eq!(cmds_media_play, vec![Command::ToggleTTS]);
+
+    let cmds_media_stop =
+        process_keyboard_events(false, |k| k == Key::MediaStop, Modifiers::default(), false);
+    assert_eq!(cmds_media_stop, vec![Command::ToggleTTS]);
+
+    let cmds_f4 = process_keyboard_events(false, |k| k == Key::F4, Modifiers::default(), false);
+    assert!(cmds_f4.is_empty());
+
+    let cmds_track_next = process_keyboard_events(
+        false,
+        |k| k == Key::MediaTrackNext,
+        Modifiers::default(),
+        false,
+    );
+    assert_eq!(cmds_track_next, vec![Command::NextChapter]);
+
+    let cmds_track_prev = process_keyboard_events(
+        false,
+        |k| k == Key::MediaTrackPrevious,
+        Modifiers::default(),
+        false,
+    );
+    assert_eq!(cmds_track_prev, vec![Command::PrevChapter]);
+
     let cmds_typing = process_keyboard_events(
         true,
         |k| k == Key::B || k == Key::V || k == Key::J,

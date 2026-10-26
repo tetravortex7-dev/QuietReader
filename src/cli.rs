@@ -18,6 +18,9 @@ pub fn parse_args(args: impl Iterator<Item = OsString>) -> CliAction {
         match text.as_ref() {
             "-h" | "--help" => return CliAction::Help,
             "-V" | "--version" => return CliAction::Version,
+            "-p" | "--portable" | "-portable" => {
+                crate::settings::AppSettings::set_portable(true);
+            }
             _ if text.starts_with('-') && text.len() > 1 => {
                 return CliAction::Error(format!("unknown option: {text}"));
             }

@@ -25,6 +25,8 @@ pub struct RsvpSession {
     pub index: usize,
     pub accumulator: f32,
     pub file_path: Option<PathBuf>,
+    pub words_read_in_session: usize,
+    pub elapsed_reading_secs: f32,
 }
 
 impl RsvpSession {
@@ -366,6 +368,8 @@ impl QuietReaderApp {
         self.focus_read.rsvp.index = start;
         self.focus_read.rsvp.accumulator = 0.0;
         self.focus_read.rsvp.finished = false;
+        self.focus_read.rsvp.words_read_in_session = 0;
+        self.focus_read.rsvp.elapsed_reading_secs = 0.0;
         self.current_chapter = chapter_index;
         self.last_rendered_chapter = chapter_index;
         self.pending_scroll_y = Some(0.0);
@@ -389,6 +393,9 @@ impl QuietReaderApp {
     }
 
     fn advance_rsvp_word(&mut self) {
+        if self.focus_read.rsvp.playing {
+            self.focus_read.rsvp.words_read_in_session += 1;
+        }
         if self.focus_read.rsvp.index + 1 < self.focus_read.rsvp.words.len() {
             self.focus_read.rsvp.index += 1;
             self.apply_rsvp_progress();
@@ -487,6 +494,8 @@ impl QuietReaderApp {
     fn restart_rsvp(&mut self) {
         let chapter = self.focus_read.rsvp.chapter;
         self.focus_read.rsvp.playing = false;
+        self.focus_read.rsvp.words_read_in_session = 0;
+        self.focus_read.rsvp.elapsed_reading_secs = 0.0;
         self.open_rsvp_chapter(chapter, 0);
     }
 
@@ -702,9 +711,19 @@ impl QuietReaderApp {
             }
         }
 
+        let target_wpm = self.settings.rsvp_wpm.clamp(100, 1000) as f32;
+        let effective_wpm = if self.settings.rsvp_auto_accelerate {
+            let start_wpm = (target_wpm * 0.65).max(100.0);
+            let progress = (self.focus_read.rsvp.elapsed_reading_secs / 30.0).clamp(0.0, 1.0);
+            start_wpm + (target_wpm - start_wpm) * progress
+        } else {
+            target_wpm
+        };
+
         if self.focus_read.rsvp.playing && !self.focus_read.rsvp.finished {
             let dt = ui.input(|input| input.stable_dt).min(0.2);
-            let interval = 60.0 / self.settings.rsvp_wpm.clamp(100, 1000) as f32;
+            self.focus_read.rsvp.elapsed_reading_secs += dt;
+            let interval = 60.0 / effective_wpm;
             let mut elapsed = self.focus_read.rsvp.accumulator + dt;
             let mut steps = 0;
             loop {
@@ -855,22 +874,65 @@ impl QuietReaderApp {
                     .color(secondary),
             );
             ui.label(RichText::new(progress).size(12.0).color(secondary));
+            let actual_wpm = if self.focus_read.rsvp.elapsed_reading_secs >= 1.0
+                && self.focus_read.rsvp.words_read_in_session > 0
+            {
+                ((self.focus_read.rsvp.words_read_in_session as f32)
+                    / (self.focus_read.rsvp.elapsed_reading_secs / 60.0))
+                    .round() as usize
+            } else {
+                effective_wpm.round() as usize
+            };
+            let elapsed_secs = self.focus_read.rsvp.elapsed_reading_secs.round() as u64;
+            let elapsed_mins = elapsed_secs / 60;
+            let elapsed_rem = elapsed_secs % 60;
+            let words_left = self
+                .focus_read
+                .rsvp
+                .words
+                .len()
+                .saturating_sub(self.focus_read.rsvp.index);
+            let rem_secs = ((words_left as f32) / (effective_wpm / 60.0)).round() as u64;
+            let rem_mins = rem_secs / 60;
+            let rem_rem = rem_secs % 60;
+            let stats_line = format!(
+                "{} WPM ({})  •  {:02}:{:02} {}  •  {:02}:{:02} {}",
+                actual_wpm,
+                t.rsvp_actual_speed,
+                elapsed_mins,
+                elapsed_rem,
+                t.rsvp_elapsed,
+                rem_mins,
+                rem_rem,
+                t.rsvp_remaining
+            );
+            ui.label(RichText::new(stats_line).size(11.0).color(secondary));
             ui.add_space(8.0);
             let play_text = if self.focus_read.rsvp.playing {
                 t.rsvp_pause
             } else {
                 t.rsvp_play
             };
-            let speed_label = format!("{} {}", self.settings.rsvp_wpm, t.rsvp_speed);
+            let speed_label = if self.settings.rsvp_auto_accelerate {
+                format!(
+                    "{}/{} {}",
+                    effective_wpm.round() as usize,
+                    self.settings.rsvp_wpm,
+                    t.rsvp_speed
+                )
+            } else {
+                format!("{} {}", self.settings.rsvp_wpm, t.rsvp_speed)
+            };
             let row_width = icon_button_width(ui, play_text)
                 + icon_button_width(ui, t.rsvp_restart)
+                + icon_button_width(ui, t.rsvp_auto_accelerate)
                 + icon_button_width(ui, "-")
                 + icon_button_width(ui, "+")
                 + ui.painter()
                     .layout_no_wrap(speed_label.clone(), FontId::proportional(12.0), secondary)
                     .size()
                     .x
-                + ui.spacing().item_spacing.x * 4.0;
+                + ui.spacing().item_spacing.x * 5.0;
             let row_offset = ((ui.available_width() - row_width) * 0.5).max(0.0);
             ui.horizontal(|ui| {
                 ui.add_space(row_offset);
@@ -899,6 +961,19 @@ impl QuietReaderApp {
                     .clicked()
                 {
                     self.restart_rsvp();
+                }
+                if ui
+                    .add(
+                        IconButton::new(Icon::AutoScroll, t.rsvp_auto_accelerate)
+                            .selected(self.settings.rsvp_auto_accelerate),
+                    )
+                    .on_hover_text(t.rsvp_auto_accelerate_desc)
+                    .clicked()
+                {
+                    self.settings.rsvp_auto_accelerate = !self.settings.rsvp_auto_accelerate;
+                    self.focus_read.rsvp.words_read_in_session = 0;
+                    self.focus_read.rsvp.elapsed_reading_secs = 0.0;
+                    self.mark_settings_dirty();
                 }
                 if ui.add(IconButton::new(Icon::Minus, "-")).clicked() {
                     self.cycle_rsvp_speed(false);

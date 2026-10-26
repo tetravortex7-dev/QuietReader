@@ -48,6 +48,7 @@ impl BookTab {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new(
         file_path: PathBuf,
         document: Arc<dyn Document>,

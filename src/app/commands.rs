@@ -13,6 +13,17 @@ impl QuietReaderApp {
         match cmd {
             Command::CopyChapterText => {
                 if let Some(doc) = &self.document {
+                    if !doc.can_copy() {
+                        self.status_message = Some(
+                            self.settings
+                                .ui_language
+                                .t()
+                                .extra
+                                .copy_restricted
+                                .to_string(),
+                        );
+                        return;
+                    }
                     let text_opt = if view_kind == DocumentViewKind::Pdf {
                         doc.page_content()
                             .and_then(|c| c.extract_page_text(self.pdf_view.current_page))

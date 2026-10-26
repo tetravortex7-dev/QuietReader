@@ -59,6 +59,7 @@ pub struct PdfViewState {
     latest_requested_scales: Arc<Mutex<HashMap<usize, u32>>>,
     pub pan_offset: Vec2,
     pub last_avail_size: Vec2,
+    #[allow(dead_code)]
     pub is_middle_dragging: bool,
     pub page_input: String,
     pub pending_target_page: Option<usize>,
@@ -824,6 +825,7 @@ impl PdfViewState {
             self.selection_dirty = false;
         }
 
+        let can_copy = document.as_ref().map(|d| d.can_copy()).unwrap_or(true);
         self.render_selection_popups(
             ctx,
             theme,
@@ -831,6 +833,7 @@ impl PdfViewState {
             lang,
             on_translate,
             on_dictionary,
+            can_copy,
         );
     }
 }

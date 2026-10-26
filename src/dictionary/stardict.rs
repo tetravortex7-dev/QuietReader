@@ -11,7 +11,9 @@ const MAX_INDEX_ENTRIES: usize = 5_000_000;
 pub struct InstalledPack {
     pub id: String,
     pub name: String,
+    #[allow(dead_code)]
     pub wordcount: u64,
+    #[allow(dead_code)]
     pub folder: PathBuf,
     pub idx: PathBuf,
     pub dict: PathBuf,

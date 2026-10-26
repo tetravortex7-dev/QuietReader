@@ -316,7 +316,15 @@ pub fn render_system_tab(
         .show(ui, |ui| {
             ui.label(RichText::new(t.settings_storage).strong().color(text_color));
             ui.add_space(4.0);
-            let path_str = AppSettings::get_settings_path().display().to_string();
+            let path_str = if AppSettings::is_portable() {
+                format!(
+                    "{} ({})",
+                    AppSettings::get_settings_path().display(),
+                    t.settings_portable
+                )
+            } else {
+                AppSettings::get_settings_path().display().to_string()
+            };
             ui.label(
                 RichText::new(path_str)
                     .size(12.0)

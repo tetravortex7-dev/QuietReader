@@ -24,7 +24,7 @@ rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["fast"] }
-zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+zip = { version = "9.1.1", default-features = false, features = ["deflate"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 sevenz-rust = { version = "0.6.1", default-features = false }
 unrar-rs = { version = "0.14.1", default-features = false, features = ["crypto-host"] }

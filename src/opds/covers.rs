@@ -72,9 +72,10 @@ impl OpdsCoverManager {
                 .spawn(move || {
                     let agent = crate::net::agent(Duration::from_secs(6));
 
+                    let ua = crate::net::user_agent(Some("OPDS Cover"));
                     let mut req = agent
                         .get(&cover_url)
-                        .header("User-Agent", "QuietReader/0.7.1 (OPDS Cover)")
+                        .header("User-Agent", &ua)
                         .header("Accept", "image/jpeg,image/png,image/webp,image/*,*/*");
 
                     if let Some(header) = auth.as_ref().and_then(|auth| auth.header_for(&cover_url))

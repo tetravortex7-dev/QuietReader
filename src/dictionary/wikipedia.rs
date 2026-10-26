@@ -23,12 +23,10 @@ pub fn fetch(lang: &str, query: &str) -> Result<WikiArticle, String> {
         "https://{lang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch={encoded}&gsrlimit=1&prop=extracts%7Cinfo&inprop=url&explaintext=1&exintro=1&format=json&formatversion=2"
     );
     let agent = crate::net::agent(Duration::from_secs(12));
+    let ua = crate::net::user_agent(Some("https://github.com/tetravortex7-dev/QuietReader"));
     let mut response = agent
         .get(&url)
-        .header(
-            "User-Agent",
-            "QuietReader/0.13 (https://github.com/tetravortex7-dev/QuietReader)",
-        )
+        .header("User-Agent", &ua)
         .call()
         .map_err(|error| error.to_string())?;
     let data = read_limited(&mut response.body_mut().as_reader(), ARTICLE_LIMIT)?;

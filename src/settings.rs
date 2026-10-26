@@ -8,10 +8,12 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const OPEN_DYSLEXIC_FONT: &str = "OpenDyslexic";
 
 static LAST_SAVE_ERROR: Mutex<Option<String>> = Mutex::new(None);
+static PORTABLE_OVERRIDE: AtomicBool = AtomicBool::new(false);
 
 pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
 
@@ -110,6 +112,8 @@ pub struct AppSettings {
     pub text_paragraph_mode: bool,
     #[serde(default = "default_rsvp_wpm")]
     pub rsvp_wpm: u32,
+    #[serde(default)]
+    pub rsvp_auto_accelerate: bool,
     #[serde(default = "default_library_pin_hash")]
     pub library_pin_hash: Option<String>,
     #[serde(default)]
@@ -189,6 +193,7 @@ impl Default for AppSettings {
             text_two_columns: default_text_two_columns(),
             text_paragraph_mode: false,
             rsvp_wpm: default_rsvp_wpm(),
+            rsvp_auto_accelerate: false,
             library_pin_hash: default_library_pin_hash(),
             saved_words: Vec::new(),
             theme: "Sepia".to_string(),
@@ -233,13 +238,50 @@ impl AppSettings {
         }
     }
 
+    pub fn set_portable(enabled: bool) {
+        PORTABLE_OVERRIDE.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn is_portable() -> bool {
+        if PORTABLE_OVERRIDE.load(Ordering::Relaxed) {
+            return true;
+        }
+        if std::env::var_os("QUIETREADER_PORTABLE").is_some() {
+            return true;
+        }
+        if let Ok(exe_path) = std::env::current_exe()
+            && let Some(parent) = exe_path.parent()
+        {
+            if parent.join("portable.txt").exists()
+                || parent.join("portable.flag").exists()
+                || parent.join("portable_data").is_dir()
+                || parent.join("quietreader_settings.json").exists()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn get_settings_path() -> PathBuf {
         if let Ok(exe_path) = std::env::current_exe()
             && let Some(parent) = exe_path.parent()
         {
-            let local_settings = parent.join("quietreader_settings.json");
-            if local_settings.exists() {
-                return local_settings;
+            if Self::is_portable() {
+                let portable_dir = parent.join("portable_data");
+                if portable_dir.is_dir() {
+                    return portable_dir.join("settings.json");
+                }
+                let local_settings = parent.join("quietreader_settings.json");
+                if local_settings.exists() {
+                    return local_settings;
+                }
+                let root_settings = parent.join("settings.json");
+                if root_settings.exists() {
+                    return root_settings;
+                }
+                crate::platform::permissions::create_private_dir(&portable_dir);
+                return portable_dir.join("settings.json");
             }
         }
 

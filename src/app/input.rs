@@ -33,8 +33,8 @@ pub fn process_keyboard_events(
     } else if !ctrl && key_pressed(egui::Key::F) {
         cmds.push(Command::ToggleFullscreen);
     } else if (!ctrl && key_pressed(egui::Key::V))
-        || key_pressed(egui::Key::F4)
-        || (cmd_mod && shift && key_pressed(egui::Key::S))
+        || key_pressed(egui::Key::MediaPlayPause)
+        || key_pressed(egui::Key::MediaStop)
     {
         cmds.push(Command::ToggleTTS);
     } else if !ctrl && key_pressed(egui::Key::B) {
@@ -50,9 +50,13 @@ pub fn process_keyboard_events(
     } else if key_pressed(egui::Key::Escape) {
         cmds.push(Command::ExitFullscreen);
     }
-    if ctrl && (key_pressed(egui::Key::ArrowRight) || key_pressed(egui::Key::ArrowDown)) {
+    if ctrl && (key_pressed(egui::Key::ArrowRight) || key_pressed(egui::Key::ArrowDown))
+        || key_pressed(egui::Key::MediaTrackNext)
+    {
         cmds.push(Command::NextChapter);
-    } else if ctrl && (key_pressed(egui::Key::ArrowLeft) || key_pressed(egui::Key::ArrowUp)) {
+    } else if ctrl && (key_pressed(egui::Key::ArrowLeft) || key_pressed(egui::Key::ArrowUp))
+        || key_pressed(egui::Key::MediaTrackPrevious)
+    {
         cmds.push(Command::PrevChapter);
     }
 

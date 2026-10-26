@@ -454,6 +454,9 @@ pub trait Document: Send + Sync {
     fn view_kind(&self) -> DocumentViewKind {
         DocumentViewKind::Text
     }
+    fn can_copy(&self) -> bool {
+        true
+    }
     fn page_content(&self) -> Option<&dyn PageContent> {
         None
     }

@@ -32,6 +32,7 @@ pub mod reading_stats;
 pub mod scan_processor;
 pub mod search_view;
 pub mod selection;
+pub mod settings_about;
 pub mod settings_system;
 pub mod settings_view;
 pub mod tabs;

@@ -177,7 +177,7 @@ fn fetch_deepl_translation(
         .post(endpoint)
         .header("Authorization", &format!("DeepL-Auth-Key {key}"))
         .header("Content-Type", "application/json")
-        .header("User-Agent", "QuietReader/0.7.1")
+        .header("User-Agent", crate::net::APP_USER_AGENT)
         .send(&payload_bytes)
         .map_err(|e| TranslationError::Provider(e.to_string()))?;
 

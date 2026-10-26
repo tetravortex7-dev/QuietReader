@@ -101,9 +101,11 @@ struct GitHubAsset {
 pub fn check_for_updates_sync() -> Result<UpdateInfo, String> {
     let agent = crate::net::agent(std::time::Duration::from_secs(8));
 
+    let ua = crate::net::user_agent(Some("Updater"));
+
     let release_res = agent
         .get(GITHUB_API_LATEST_RELEASE)
-        .header("User-Agent", "QuietReader-Updater")
+        .header("User-Agent", &ua)
         .call();
 
     if let Ok(mut resp) = release_res {
@@ -148,7 +150,7 @@ pub fn check_for_updates_sync() -> Result<UpdateInfo, String> {
 
     let cargo_res = agent
         .get(RAW_CARGO_TOML_URL)
-        .header("User-Agent", "QuietReader-Updater")
+        .header("User-Agent", &ua)
         .call();
 
     match cargo_res {
