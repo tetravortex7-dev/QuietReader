@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "Dokumen rusak",
     err_limit_exceeded: "Batas keamanan terlampaui",
     err_unknown: "Kesalahan tidak dikenal",
+    err_password_required: "Dokumen dilindungi kata sandi",
+    pdf_password_title: "Dokumen Dilindungi Kata Sandi",
+    pdf_password_prompt: "Masukkan kata sandi untuk membuka dokumen:",
+    pdf_password_open: "Buka",
+    pdf_password_cancel: "Batal",
+    pdf_password_incorrect: "Kata sandi salah. Silakan coba lagi.",
 
     theme_sepia: "Sepia (Disarankan)",
     theme_twilight: "Senja (Membaca Malam)",

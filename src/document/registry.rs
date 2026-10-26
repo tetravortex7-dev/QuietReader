@@ -12,6 +12,14 @@ pub trait DocumentFormat: Send + Sync {
     fn extensions(&self) -> &'static [&'static str];
     fn probe(&self, path: &Path) -> bool;
     fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError>;
+    fn open_with_password(
+        &self,
+        path: &Path,
+        password: Option<&str>,
+    ) -> Result<Box<dyn Document>, DocumentError> {
+        let _ = password;
+        self.open(path)
+    }
 }
 
 pub struct PdfFormat;
@@ -36,7 +44,14 @@ impl DocumentFormat for PdfFormat {
         false
     }
     fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
-        let doc = PdfDocument::from_file(path)?;
+        self.open_with_password(path, None)
+    }
+    fn open_with_password(
+        &self,
+        path: &Path,
+        password: Option<&str>,
+    ) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = PdfDocument::from_file_with_password(path, password)?;
         Ok(Box::new(doc))
     }
 }
@@ -430,9 +445,10 @@ pub fn is_supported_document_path(path: &Path) -> bool {
         .any(|format| format.extensions().contains(&ext.as_str()))
 }
 
-pub fn open_with_registry_and_encoding(
+pub fn open_with_registry_and_encoding_and_password(
     path: &Path,
     encoding: Option<&str>,
+    password: Option<&str>,
 ) -> Result<Box<dyn Document>, DocumentError> {
     if encoding.is_some()
         && matches!(
@@ -447,10 +463,25 @@ pub fn open_with_registry_and_encoding(
         let doc = HtmlDocument::from_file_with_encoding(path, encoding)?;
         return Ok(Box::new(doc));
     }
-    open_with_registry(path)
+    open_with_registry_and_password(path, password)
+}
+
+#[allow(dead_code)]
+pub fn open_with_registry_and_encoding(
+    path: &Path,
+    encoding: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
+    open_with_registry_and_encoding_and_password(path, encoding, None)
 }
 
 pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+    open_with_registry_and_password(path, None)
+}
+
+pub fn open_with_registry_and_password(
+    path: &Path,
+    password: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
     if path.is_dir() {
         return ComicFormat.open(path);
     }
@@ -461,9 +492,14 @@ pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentErro
     if !ext.is_empty() {
         for fmt in FORMAT_REGISTRY {
             if fmt.extensions().contains(&ext.as_str()) {
-                match fmt.open(path) {
+                match fmt.open_with_password(path, password) {
                     Ok(doc) => return Ok(doc),
-                    Err(e) => last_err = Some(e),
+                    Err(e) => {
+                        if matches!(e, DocumentError::PasswordRequired) {
+                            return Err(e);
+                        }
+                        last_err = Some(e);
+                    }
                 }
             }
         }
@@ -471,9 +507,14 @@ pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentErro
 
     for fmt in FORMAT_REGISTRY {
         if fmt.probe(path) {
-            match fmt.open(path) {
+            match fmt.open_with_password(path, password) {
                 Ok(doc) => return Ok(doc),
-                Err(e) => last_err = Some(e),
+                Err(e) => {
+                    if matches!(e, DocumentError::PasswordRequired) {
+                        return Err(e);
+                    }
+                    last_err = Some(e);
+                }
             }
         }
     }

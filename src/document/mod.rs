@@ -34,6 +34,7 @@ pub enum DocumentError {
     Unsupported(String),
     Corrupted(String),
     LimitExceeded(String),
+    PasswordRequired,
 }
 
 impl std::fmt::Display for DocumentError {
@@ -43,6 +44,7 @@ impl std::fmt::Display for DocumentError {
             | Self::Unsupported(msg)
             | Self::Corrupted(msg)
             | Self::LimitExceeded(msg) => write!(f, "{msg}"),
+            Self::PasswordRequired => write!(f, "Требуется пароль для открытия документа"),
         }
     }
 }
@@ -127,11 +129,28 @@ pub fn open_document<P: AsRef<Path>>(path: P) -> Result<Box<dyn Document>, Docum
     registry::open_with_registry(path.as_ref())
 }
 
+#[allow(dead_code)]
 pub fn open_document_with_encoding<P: AsRef<Path>>(
     path: P,
     encoding: Option<&str>,
 ) -> Result<Box<dyn Document>, DocumentError> {
     registry::open_with_registry_and_encoding(path.as_ref(), encoding)
+}
+
+pub fn open_document_with_encoding_and_password<P: AsRef<Path>>(
+    path: P,
+    encoding: Option<&str>,
+    password: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
+    registry::open_with_registry_and_encoding_and_password(path.as_ref(), encoding, password)
+}
+
+#[allow(dead_code)]
+pub fn open_document_with_password<P: AsRef<Path>>(
+    path: P,
+    password: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
+    registry::open_with_registry_and_password(path.as_ref(), password)
 }
 
 #[derive(Debug, Clone)]

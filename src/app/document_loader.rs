@@ -21,6 +21,7 @@ pub const ERR_PAGED_UNSUPPORTED: &str = "__paged_unsupported__";
 pub const ERR_COMIC_DECODE_CRASH: &str = "__comic_decode_crash__";
 pub const ERR_PAGE_DECODE_CRASH: &str = "__page_decode_crash__";
 pub const ERR_DECODE_STREAM_CRASH: &str = "__decode_stream_crash__";
+pub const ERR_PASSWORD_REQUIRED: &str = "__password_required__";
 
 pub fn format_page_error(err: &DocumentError, lang: crate::i18n::UiLanguage) -> String {
     let t = lang.t();
@@ -46,6 +47,7 @@ pub struct DocumentLoadRequest {
     pub path: PathBuf,
     pub lang: crate::i18n::UiLanguage,
     pub encoding: Option<String>,
+    pub password: Option<String>,
     pub ctx: Option<egui::Context>,
 }
 
@@ -82,12 +84,23 @@ fn spawn_loader_worker(
                 let path = req.path.clone();
                 let lang = req.lang;
                 let encoding = req.encoding.clone();
+                let password = req.password.clone();
                 let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    crate::document::open_document_with_encoding(&path, encoding.as_deref())
-                        .map(|doc| {
-                            super::localized_document::LocalizedDocument::wrap(Arc::from(doc), lang)
-                        })
-                        .map_err(|e| crate::i18n::format::format_document_error(&e, lang))
+                    crate::document::open_document_with_encoding_and_password(
+                        &path,
+                        encoding.as_deref(),
+                        password.as_deref(),
+                    )
+                    .map(|doc| {
+                        super::localized_document::LocalizedDocument::wrap(Arc::from(doc), lang)
+                    })
+                    .map_err(|e| {
+                        if matches!(e, DocumentError::PasswordRequired) {
+                            ERR_PASSWORD_REQUIRED.to_string()
+                        } else {
+                            crate::i18n::format::format_document_error(&e, lang)
+                        }
+                    })
                 }));
 
                 let result = match load_res {
@@ -136,6 +149,16 @@ impl DocumentLoader {
         lang: crate::i18n::UiLanguage,
         encoding: Option<String>,
     ) -> u64 {
+        self.request_load_with_password(path, lang, encoding, None)
+    }
+
+    pub fn request_load_with_password(
+        &mut self,
+        path: PathBuf,
+        lang: crate::i18n::UiLanguage,
+        encoding: Option<String>,
+        password: Option<String>,
+    ) -> u64 {
         self.request_counter = self.request_counter.wrapping_add(1);
         let request_id = self.request_counter;
         let _ = self.req_tx.send(DocumentLoadRequest {
@@ -143,6 +166,7 @@ impl DocumentLoader {
             path,
             lang,
             encoding,
+            password,
             ctx: self.ctx.clone(),
         });
         request_id

@@ -168,6 +168,7 @@ impl QuietReaderApp {
             library_unlocked,
             library_pin_draft: String::new(),
             library_pin_error: None,
+            password_prompt: None,
         }
     }
 
@@ -454,18 +455,44 @@ impl QuietReaderApp {
                         self.status_message = Some(loaded.status_message);
                         self.mark_settings_dirty();
                     }
+                    self.password_prompt = None;
                 }
                 Err(err) => {
-                    if let Some(tab) = self.tabs.get_mut(idx) {
-                        tab.is_loading = false;
-                        tab.load_error = Some(err.clone());
-                    }
-                    if self.active_tab == idx {
-                        self.document = None;
-                        self.status_message = Some(err);
+                    if err == crate::app::document_loader::ERR_PASSWORD_REQUIRED {
+                        if let Some(prompt) = self.password_prompt.as_mut() {
+                            if prompt.path == resp.path {
+                                prompt.has_error = true;
+                            }
+                        } else {
+                            self.password_prompt =
+                                Some(crate::app::dialogs::PasswordPromptState::new(resp.path));
+                        }
+                    } else {
+                        if let Some(tab) = self.tabs.get_mut(idx) {
+                            tab.is_loading = false;
+                            tab.load_error = Some(err.clone());
+                        }
+                        if self.active_tab == idx {
+                            self.document = None;
+                            self.status_message = Some(err);
+                        }
                     }
                 }
             }
+        }
+    }
+
+    pub fn reload_file_with_password(&mut self, path: PathBuf, password: Option<String>) {
+        let request_id = self.document_loader.request_load_with_password(
+            path.clone(),
+            self.settings.ui_language,
+            self.settings.text_encoding_override().map(str::to_string),
+            password,
+        );
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.file_path == path) {
+            tab.is_loading = true;
+            tab.request_id = request_id;
+            tab.load_error = None;
         }
     }
 

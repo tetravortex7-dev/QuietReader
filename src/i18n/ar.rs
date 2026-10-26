@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "المستند تالف",
     err_limit_exceeded: "تم تجاوز حدود الأمان",
     err_unknown: "خطأ غير معروف",
+    err_password_required: "المستند محمي بكلمة مرور",
+    pdf_password_title: "مستند محمي بكلمة مرور",
+    pdf_password_prompt: "أدخل كلمة المرور لفتح المستند:",
+    pdf_password_open: "فتح",
+    pdf_password_cancel: "إلغاء",
+    pdf_password_incorrect: "كلمة المرور غير صحيحة. يرجى المحاولة مرة أخرى.",
 
     theme_sepia: "بني داكن (موصى به)",
     theme_twilight: "شفق (قراءة مسائية)",

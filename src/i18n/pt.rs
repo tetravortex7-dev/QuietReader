@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "Documento corrompido",
     err_limit_exceeded: "Limite de segurança excedido",
     err_unknown: "Erro desconhecido",
+    err_password_required: "O documento está protegido por senha",
+    pdf_password_title: "Documento protegido por senha",
+    pdf_password_prompt: "Digite a senha para abrir o documento:",
+    pdf_password_open: "Abrir",
+    pdf_password_cancel: "Cancelar",
+    pdf_password_incorrect: "Senha incorreta. Tente novamente.",
 
     theme_sepia: "Sépia (Recomendado)",
     theme_twilight: "Crepúsculo (Leitura Noturna)",

@@ -311,3 +311,14 @@ fn test_pdf_permissions_extraction() {
     assert!(perms_no_copy.can_print);
     assert!(!perms_no_copy.can_copy);
 }
+
+#[test]
+fn test_pdf_from_bytes_with_password_api() {
+    let dummy_path = Path::new("dummy.pdf");
+    let result_none = PdfDocument::from_bytes_with_password(Vec::new(), dummy_path, None);
+    assert!(matches!(result_none, Err(DocumentError::Corrupted(_))));
+
+    let result_with_pass =
+        PdfDocument::from_bytes_with_password(Vec::new(), dummy_path, Some("secret"));
+    assert!(matches!(result_with_pass, Err(DocumentError::Corrupted(_))));
+}

@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "Documento danneggiato",
     err_limit_exceeded: "Limite di sicurezza superato",
     err_unknown: "Errore sconosciuto",
+    err_password_required: "Il documento è protetto da password",
+    pdf_password_title: "Documento protetto da password",
+    pdf_password_prompt: "Inserisci la password per aprire il documento:",
+    pdf_password_open: "Apri",
+    pdf_password_cancel: "Annulla",
+    pdf_password_incorrect: "Password non corretta. Riprova.",
 
     theme_sepia: "Seppia (Consigliato)",
     theme_twilight: "Crepuscolo (Lettura serale)",

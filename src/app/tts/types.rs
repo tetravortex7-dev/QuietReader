@@ -27,6 +27,7 @@ pub struct TtsStatus {
     pub error: Option<String>,
     pub playback_failed: bool,
     pub needs_next_chapter: bool,
+    pub current_word_range: Option<(usize, usize)>,
 }
 
 pub enum TtsCommand {

@@ -334,4 +334,88 @@ impl Dialogs {
             *on_open_file = Some(path);
         }
     }
+
+    pub fn show_password_dialog(
+        ctx: &egui::Context,
+        state: &mut PasswordPromptState,
+        theme: &ReaderTheme,
+        lang: crate::i18n::UiLanguage,
+    ) -> Option<Option<String>> {
+        let t = lang.t();
+        let window_frame = egui::Frame::window(&ctx.global_style())
+            .fill(theme.panel_bg_color())
+            .stroke(egui::Stroke::new(
+                1.5,
+                theme.accent_color().gamma_multiply(0.6),
+            ))
+            .inner_margin(egui::Margin::symmetric(16, 14));
+
+        let mut action = None;
+        let file_name = state
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("PDF");
+
+        egui::Window::new(t.pdf_password_title)
+            .collapsible(false)
+            .resizable(false)
+            .frame(window_frame)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.label(RichText::new(t.pdf_password_title).size(15.0).strong());
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(file_name)
+                        .size(13.0)
+                        .color(theme.secondary_text_color()),
+                );
+                ui.add_space(4.0);
+                ui.label(t.pdf_password_prompt);
+                ui.add_space(6.0);
+
+                let text_edit = egui::TextEdit::singleline(&mut state.password_input)
+                    .password(true)
+                    .desired_width(f32::INFINITY);
+                let response = ui.add(text_edit);
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    action = Some(Some(state.password_input.clone()));
+                }
+
+                if state.has_error {
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::from_rgb(220, 60, 60), t.pdf_password_incorrect);
+                }
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button(t.pdf_password_open).clicked() {
+                        action = Some(Some(state.password_input.clone()));
+                    }
+                    if ui.button(t.pdf_password_cancel).clicked() {
+                        action = Some(None);
+                    }
+                });
+            });
+
+        action
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PasswordPromptState {
+    pub path: PathBuf,
+    pub password_input: String,
+    pub has_error: bool,
+}
+
+impl PasswordPromptState {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            password_input: String::new(),
+            has_error: false,
+        }
+    }
 }

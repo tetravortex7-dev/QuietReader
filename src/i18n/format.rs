@@ -236,6 +236,7 @@ pub fn format_document_error(err: &DocumentError, lang: UiLanguage) -> String {
         DocumentError::Unsupported(msg) => format_error_detail(t.err_unsupported, msg, lang),
         DocumentError::Corrupted(msg) => format_error_detail(t.err_corrupted, msg, lang),
         DocumentError::LimitExceeded(msg) => format_error_detail(t.err_limit_exceeded, msg, lang),
+        DocumentError::PasswordRequired => t.err_password_required.to_string(),
     }
 }
 

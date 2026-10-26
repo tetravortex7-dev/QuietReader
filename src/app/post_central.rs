@@ -279,4 +279,39 @@ pub(super) fn render(
         &app.theme,
         &mut actions.save_settings_action,
     );
+
+    if let Some(mut prompt_state) = app.password_prompt.take() {
+        match Dialogs::show_password_dialog(
+            ctx,
+            &mut prompt_state,
+            &app.theme,
+            app.settings.ui_language,
+        ) {
+            Some(Some(password)) => {
+                let path = prompt_state.path.clone();
+                app.reload_file_with_password(path, Some(password));
+                prompt_state.has_error = true;
+                app.password_prompt = Some(prompt_state);
+            }
+            Some(None) => {
+                if let Some(tab) = app
+                    .tabs
+                    .iter_mut()
+                    .find(|t| t.file_path == prompt_state.path)
+                {
+                    tab.is_loading = false;
+                    tab.load_error = Some(
+                        app.settings
+                            .ui_language
+                            .t()
+                            .err_password_required
+                            .to_string(),
+                    );
+                }
+            }
+            None => {
+                app.password_prompt = Some(prompt_state);
+            }
+        }
+    }
 }

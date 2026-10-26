@@ -1,3 +1,4 @@
+use rodio::Source;
 use std::io::Cursor;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -135,6 +136,10 @@ impl TtsController {
         let mut is_paused = false;
         let mut rate = initial_rate;
         let mut utterance_started_at: Option<Instant> = None;
+        let mut utterance_resumed_at: Option<Instant> = None;
+        let mut utterance_elapsed = Duration::ZERO;
+        let mut current_para_intervals: Vec<(usize, usize, u32)> = Vec::new();
+        let mut current_para_duration: Option<Duration> = None;
         let mut edge_client: Option<msedge_tts::tts::client::MSEdgeTTSClient<std::net::TcpStream>> =
             None;
 
@@ -188,9 +193,13 @@ impl TtsController {
         >,
                           edge_voice_id: &Option<String>,
                           device: &Option<rodio::MixerDeviceSink>,
-                          player: &mut Option<rodio::Player>|
+                          player: &mut Option<rodio::Player>,
+                          current_para_duration: &mut Option<Duration>,
+                          current_para_intervals: &mut Vec<(usize, usize, u32)>|
          -> bool {
-            match engine {
+            *current_para_intervals = compute_word_intervals(text);
+            *current_para_duration = None;
+            let success = match engine {
                 TtsEngineKind::System => {
                     restart_player(device, player);
                     if let Some(t) = sys_tts.as_mut() {
@@ -228,6 +237,7 @@ impl TtsController {
                                     if let Ok(decoder) =
                                         rodio::Decoder::new(Cursor::new(audio.audio_bytes))
                                     {
+                                        *current_para_duration = decoder.total_duration();
                                         restart_player(device, player);
                                         if let Some(p) = player.as_ref() {
                                             p.append(decoder);
@@ -246,7 +256,12 @@ impl TtsController {
                     }
                     success
                 }
+            };
+            if !success {
+                current_para_intervals.clear();
+                *current_para_duration = None;
             }
+            success
         };
 
         loop {
@@ -280,15 +295,25 @@ impl TtsController {
                                 &current_edge_voice_id,
                                 &audio_device,
                                 &mut audio_player,
+                                &mut current_para_duration,
+                                &mut current_para_intervals,
                             );
                             if ok {
-                                utterance_started_at = Some(Instant::now());
+                                let now = Instant::now();
+                                utterance_started_at = Some(now);
+                                utterance_resumed_at = Some(now);
+                                utterance_elapsed = Duration::ZERO;
                                 if let Ok(mut st) = status.lock() {
                                     st.error = None;
                                     st.playback_failed = false;
                                 }
                             } else {
                                 is_playing = false;
+                                utterance_started_at = None;
+                                utterance_resumed_at = None;
+                                utterance_elapsed = Duration::ZERO;
+                                current_para_intervals.clear();
+                                current_para_duration = None;
                                 if let Ok(mut st) = status.lock() {
                                     st.error = None;
                                     st.playback_failed = true;
@@ -296,6 +321,11 @@ impl TtsController {
                             }
                         } else {
                             current_para = paragraphs.len();
+                            utterance_started_at = None;
+                            utterance_resumed_at = None;
+                            utterance_elapsed = Duration::ZERO;
+                            current_para_intervals.clear();
+                            current_para_duration = None;
                         }
                     }
                     TtsCommand::PlayNextChapter {
@@ -319,20 +349,37 @@ impl TtsController {
                                 &current_edge_voice_id,
                                 &audio_device,
                                 &mut audio_player,
+                                &mut current_para_duration,
+                                &mut current_para_intervals,
                             );
                             if ok {
-                                utterance_started_at = Some(Instant::now());
+                                let now = Instant::now();
+                                utterance_started_at = Some(now);
+                                utterance_resumed_at = Some(now);
+                                utterance_elapsed = Duration::ZERO;
                             } else {
                                 is_playing = false;
+                                utterance_started_at = None;
+                                utterance_resumed_at = None;
+                                utterance_elapsed = Duration::ZERO;
+                                current_para_intervals.clear();
+                                current_para_duration = None;
                             }
                         } else {
                             current_para = paragraphs.len();
+                            utterance_started_at = None;
+                            utterance_resumed_at = None;
+                            utterance_elapsed = Duration::ZERO;
+                            current_para_intervals.clear();
+                            current_para_duration = None;
                         }
                     }
                     TtsCommand::Pause => {
                         pause_all(&mut sys_tts, &audio_player);
                         is_paused = true;
-                        utterance_started_at = None;
+                        if let Some(t) = utterance_resumed_at.take() {
+                            utterance_elapsed += t.elapsed();
+                        }
                     }
                     TtsCommand::Resume => {
                         if is_paused && current_para < paragraphs.len() {
@@ -341,7 +388,7 @@ impl TtsController {
                                     if !s.empty() {
                                         s.play();
                                         is_paused = false;
-                                        utterance_started_at = Some(Instant::now());
+                                        utterance_resumed_at = Some(Instant::now());
                                     } else if let Some((idx, text)) =
                                         find_clean_para(&paragraphs, current_para)
                                     {
@@ -355,9 +402,14 @@ impl TtsController {
                                             &current_edge_voice_id,
                                             &audio_device,
                                             &mut audio_player,
+                                            &mut current_para_duration,
+                                            &mut current_para_intervals,
                                         ) {
                                             is_paused = false;
-                                            utterance_started_at = Some(Instant::now());
+                                            let now = Instant::now();
+                                            utterance_started_at = Some(now);
+                                            utterance_resumed_at = Some(now);
+                                            utterance_elapsed = Duration::ZERO;
                                         }
                                     }
                                 }
@@ -374,9 +426,14 @@ impl TtsController {
                                     &current_edge_voice_id,
                                     &audio_device,
                                     &mut audio_player,
+                                    &mut current_para_duration,
+                                    &mut current_para_intervals,
                                 ) {
                                     is_paused = false;
-                                    utterance_started_at = Some(Instant::now());
+                                    let now = Instant::now();
+                                    utterance_started_at = Some(now);
+                                    utterance_resumed_at = Some(now);
+                                    utterance_elapsed = Duration::ZERO;
                                 }
                             }
                         }
@@ -386,6 +443,10 @@ impl TtsController {
                         is_playing = false;
                         is_paused = false;
                         utterance_started_at = None;
+                        utterance_resumed_at = None;
+                        utterance_elapsed = Duration::ZERO;
+                        current_para_intervals.clear();
+                        current_para_duration = None;
                     }
                     TtsCommand::NextParagraph => {
                         stop_all(&mut sys_tts, &audio_device, &mut audio_player);
@@ -400,11 +461,27 @@ impl TtsController {
                                 &current_edge_voice_id,
                                 &audio_device,
                                 &mut audio_player,
+                                &mut current_para_duration,
+                                &mut current_para_intervals,
                             ) {
-                                utterance_started_at = Some(Instant::now());
+                                let now = Instant::now();
+                                utterance_started_at = Some(now);
+                                utterance_resumed_at = Some(now);
+                                utterance_elapsed = Duration::ZERO;
+                            } else {
+                                current_para_intervals.clear();
+                                current_para_duration = None;
+                                utterance_started_at = None;
+                                utterance_resumed_at = None;
+                                utterance_elapsed = Duration::ZERO;
                             }
                         } else {
                             current_para = paragraphs.len();
+                            current_para_intervals.clear();
+                            current_para_duration = None;
+                            utterance_started_at = None;
+                            utterance_resumed_at = None;
+                            utterance_elapsed = Duration::ZERO;
                         }
                     }
                     TtsCommand::PrevParagraph => {
@@ -430,8 +507,19 @@ impl TtsController {
                                 &current_edge_voice_id,
                                 &audio_device,
                                 &mut audio_player,
+                                &mut current_para_duration,
+                                &mut current_para_intervals,
                             ) {
-                                utterance_started_at = Some(Instant::now());
+                                let now = Instant::now();
+                                utterance_started_at = Some(now);
+                                utterance_resumed_at = Some(now);
+                                utterance_elapsed = Duration::ZERO;
+                            } else {
+                                current_para_intervals.clear();
+                                current_para_duration = None;
+                                utterance_started_at = None;
+                                utterance_resumed_at = None;
+                                utterance_elapsed = Duration::ZERO;
                             }
                         }
                     }
@@ -457,8 +545,13 @@ impl TtsController {
                                     &current_edge_voice_id,
                                     &audio_device,
                                     &mut audio_player,
+                                    &mut current_para_duration,
+                                    &mut current_para_intervals,
                                 ) {
-                                    utterance_started_at = Some(Instant::now());
+                                    let now = Instant::now();
+                                    utterance_started_at = Some(now);
+                                    utterance_resumed_at = Some(now);
+                                    utterance_elapsed = Duration::ZERO;
                                 }
                             }
                         }
@@ -501,8 +594,13 @@ impl TtsController {
                                     &current_edge_voice_id,
                                     &audio_device,
                                     &mut audio_player,
+                                    &mut current_para_duration,
+                                    &mut current_para_intervals,
                                 ) {
-                                    utterance_started_at = Some(Instant::now());
+                                    let now = Instant::now();
+                                    utterance_started_at = Some(now);
+                                    utterance_resumed_at = Some(now);
+                                    utterance_elapsed = Duration::ZERO;
                                     if let Ok(mut st) = status.lock() {
                                         st.error = None;
                                         st.playback_failed = false;
@@ -510,6 +608,10 @@ impl TtsController {
                                 } else {
                                     is_playing = false;
                                     utterance_started_at = None;
+                                    utterance_resumed_at = None;
+                                    utterance_elapsed = Duration::ZERO;
+                                    current_para_intervals.clear();
+                                    current_para_duration = None;
                                     if let Ok(mut st) = status.lock() {
                                         st.error = None;
                                         st.playback_failed = true;
@@ -554,11 +656,20 @@ impl TtsController {
                                         &current_edge_voice_id,
                                         &audio_device,
                                         &mut audio_player,
+                                        &mut current_para_duration,
+                                        &mut current_para_intervals,
                                     ) {
-                                        utterance_started_at = Some(Instant::now());
+                                        let now = Instant::now();
+                                        utterance_started_at = Some(now);
+                                        utterance_resumed_at = Some(now);
+                                        utterance_elapsed = Duration::ZERO;
                                     } else {
                                         is_playing = false;
                                         utterance_started_at = None;
+                                        utterance_resumed_at = None;
+                                        utterance_elapsed = Duration::ZERO;
+                                        current_para_intervals.clear();
+                                        current_para_duration = None;
                                     }
                                 }
                             }
@@ -567,8 +678,8 @@ impl TtsController {
                 }
             }
 
-            if is_playing && !is_paused {
-                let speaking = match current_engine {
+            let speaking = if is_playing && !is_paused {
+                match current_engine {
                     TtsEngineKind::System => sys_tts
                         .as_mut()
                         .and_then(|t| t.is_speaking().ok())
@@ -577,8 +688,12 @@ impl TtsController {
                         .as_ref()
                         .map(|s| !s.empty() && !s.is_paused())
                         .unwrap_or(false),
-                };
+                }
+            } else {
+                false
+            };
 
+            if is_playing && !is_paused {
                 let grace_passed = utterance_started_at
                     .map(|t| t.elapsed() > Duration::from_millis(300))
                     .unwrap_or(true);
@@ -595,18 +710,46 @@ impl TtsController {
                             &current_edge_voice_id,
                             &audio_device,
                             &mut audio_player,
+                            &mut current_para_duration,
+                            &mut current_para_intervals,
                         ) {
-                            utterance_started_at = Some(Instant::now());
+                            let now = Instant::now();
+                            utterance_started_at = Some(now);
+                            utterance_resumed_at = Some(now);
+                            utterance_elapsed = Duration::ZERO;
                         } else {
                             is_playing = false;
                             utterance_started_at = None;
+                            utterance_resumed_at = None;
+                            utterance_elapsed = Duration::ZERO;
+                            current_para_intervals.clear();
+                            current_para_duration = None;
                         }
                     } else {
                         is_playing = false;
                         utterance_started_at = None;
+                        utterance_resumed_at = None;
+                        utterance_elapsed = Duration::ZERO;
+                        current_para_intervals.clear();
+                        current_para_duration = None;
                     }
                 }
             }
+
+            let active_word_range = if is_playing && (speaking || is_paused) {
+                let elapsed = utterance_elapsed
+                    + utterance_resumed_at
+                        .map(|t| t.elapsed())
+                        .unwrap_or(Duration::ZERO);
+                compute_active_word_range(
+                    &current_para_intervals,
+                    elapsed,
+                    rate,
+                    current_para_duration,
+                )
+            } else {
+                None
+            };
 
             let needs_next =
                 is_playing && current_para >= paragraphs.len() && !paragraphs.is_empty();
@@ -625,7 +768,88 @@ impl TtsController {
                     current_sys_voice_id.clone()
                 };
                 st.needs_next_chapter = needs_next;
+                st.current_word_range = active_word_range;
             }
         }
     }
+}
+
+pub(crate) fn compute_word_intervals(text: &str) -> Vec<(usize, usize, u32)> {
+    let mut intervals = Vec::new();
+    let mut word_start = None;
+    for (idx, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                let end = idx;
+                let word = &text[start..end];
+                let weight = compute_word_weight(word);
+                intervals.push((start, end, weight));
+            }
+        } else if word_start.is_none() {
+            word_start = Some(idx);
+        }
+    }
+    if let Some(start) = word_start {
+        let end = text.len();
+        let word = &text[start..end];
+        let weight = compute_word_weight(word);
+        intervals.push((start, end, weight));
+    }
+    intervals
+}
+
+fn compute_word_weight(word: &str) -> u32 {
+    let char_count = word.chars().count() as u32;
+    let extra =
+        if word.ends_with('.') || word.ends_with('!') || word.ends_with('?') || word.ends_with(';')
+        {
+            6
+        } else if word.ends_with(',')
+            || word.ends_with(':')
+            || word.ends_with('—')
+            || word.ends_with('-')
+        {
+            3
+        } else {
+            1
+        };
+    (char_count.max(1) + extra).max(2)
+}
+
+pub(crate) fn compute_active_word_range(
+    intervals: &[(usize, usize, u32)],
+    elapsed: Duration,
+    rate: f32,
+    total_audio_duration: Option<Duration>,
+) -> Option<(usize, usize)> {
+    if intervals.is_empty() {
+        return None;
+    }
+    let total_weight: u32 = intervals.iter().map(|(_, _, w)| *w).sum();
+    if total_weight == 0 {
+        return None;
+    }
+
+    let elapsed_secs = elapsed.as_secs_f32();
+    let total_secs = match total_audio_duration {
+        Some(d) => (d.as_secs_f32() / rate.max(0.2)).max(0.1),
+        None => (total_weight as f32 * 0.055 / rate.max(0.2)).max(0.1),
+    };
+
+    if elapsed_secs >= total_secs {
+        return intervals.last().map(|&(s, e, _)| (s, e));
+    }
+
+    let progress = (elapsed_secs / total_secs).clamp(0.0, 1.0);
+    let target_weight = (progress * total_weight as f32) as u32;
+
+    let mut accumulated = 0;
+    for &(start, end, weight) in intervals {
+        accumulated += weight;
+        if target_weight <= accumulated {
+            return Some((start, end));
+        }
+    }
+
+    intervals.last().map(|&(s, e, _)| (s, e))
 }

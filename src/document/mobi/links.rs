@@ -52,6 +52,22 @@ fn note_reference(tag: &str, label: &str, html: &str) -> Option<(String, String)
         return Some((format!("mobi_pos_{offset}"), note));
     }
 
+    if let Some(ref href) = href {
+        if let Some((fid, offset, fragment)) = parse_kindle_pos_fid(href) {
+            if let Some(ref frag) = fragment {
+                if let Some(note) = extract_note_by_id(html, frag) {
+                    let decoded_frag = crate::document::epub::percent_decode_str(frag);
+                    return Some((format!("mobi_kf8_{fid}_{offset}_{decoded_frag}"), note));
+                }
+            }
+            if offset > 0 {
+                if let Some(note) = extract_note_at(html, offset) {
+                    return Some((format!("mobi_kf8_{fid}_{offset}"), note));
+                }
+            }
+        }
+    }
+
     if let Some(href) = href
         && let Some(fragment) = href.strip_prefix('#')
         && !fragment.is_empty()
@@ -69,6 +85,36 @@ fn note_reference(tag: &str, label: &str, html: &str) -> Option<(String, String)
     None
 }
 
+pub fn parse_kindle_pos_fid(href: &str) -> Option<(usize, usize, Option<String>)> {
+    let lower = href.to_ascii_lowercase();
+    let prefix = "kindle:pos:fid:";
+    let start = lower.find(prefix)? + prefix.len();
+    let rest = &href[start..];
+    let lower_rest = &lower[start..];
+
+    let off_pattern = ":off:";
+    let off_pos = lower_rest.find(off_pattern)?;
+    let fid_str = &rest[..off_pos];
+    let fid = usize::from_str_radix(fid_str.trim(), 16)
+        .or_else(|_| fid_str.trim().parse::<usize>())
+        .unwrap_or(0);
+
+    let after_off = &rest[off_pos + off_pattern.len()..];
+    let (offset_and_query, fragment) = match after_off.split_once('#') {
+        Some((left, right)) => (left, Some(right.to_string())),
+        None => (after_off, None),
+    };
+
+    let offset_str = offset_and_query
+        .split('?')
+        .next()
+        .unwrap_or(offset_and_query)
+        .trim();
+    let offset = offset_str.parse::<usize>().unwrap_or(0);
+
+    Some((fid, offset, fragment))
+}
+
 fn extract_note_at(html: &str, offset: usize) -> Option<String> {
     let offset = offset.min(html.len());
     let mut start = offset;
@@ -84,18 +130,22 @@ fn extract_note_at(html: &str, offset: usize) -> Option<String> {
 }
 
 fn extract_note_by_id(html: &str, id: &str) -> Option<String> {
+    extract_note_by_attr(html, "id=", id).or_else(|| extract_note_by_attr(html, "name=", id))
+}
+
+fn extract_note_by_attr(html: &str, attr: &str, id: &str) -> Option<String> {
     let lower = html.to_ascii_lowercase();
     let decoded = crate::document::epub::percent_decode_str(id);
     let mut search = 0;
-    while let Some(relative) = lower[search..].find("id=") {
+    while let Some(relative) = lower[search..].find(attr) {
         let index = search + relative;
-        let rest = &html[index + 3..];
+        let rest = &html[index + attr.len()..];
         let rest = rest.trim_start();
         let Some(quote) = rest.chars().next() else {
             break;
         };
         if quote != '"' && quote != '\'' {
-            search = index + 3;
+            search = index + attr.len();
             continue;
         }
         let Some(end) = rest[1..].find(quote) else {
@@ -109,7 +159,7 @@ fn extract_note_by_id(html: &str, id: &str) -> Option<String> {
             let text = strip_tags(&slice[..end]);
             return if text.is_empty() { None } else { Some(text) };
         }
-        search = index + 3 + end;
+        search = index + attr.len() + end;
     }
     None
 }
@@ -144,16 +194,13 @@ fn strip_tags(text: &str) -> String {
 fn looks_like_note_marker(text: &str) -> bool {
     let trimmed = text.trim();
     let inner = trimmed.trim_matches(|c: char| {
-        matches!(
-            c,
-            '[' | ']' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?' | '*'
-        )
+        matches!(c, '[' | ']' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?')
     });
     if inner.is_empty() || inner.chars().count() > 8 {
         return false;
     }
     inner.chars().all(|c| c.is_ascii_digit())
-        || matches!(inner, "*" | "**" | "†" | "‡" | "††" | "‡‡")
+        || matches!(inner, "*" | "**" | "***" | "†" | "‡" | "††" | "‡‡")
         || (inner.chars().count() <= 4 && inner.chars().all(|c| c.is_ascii_alphabetic()))
 }
 

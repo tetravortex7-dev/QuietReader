@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "Bozuk Belge",
     err_limit_exceeded: "Güvenlik Sınırı Aşıldı",
     err_unknown: "Bilinmeyen Hata",
+    err_password_required: "Belge parola ile korunuyor",
+    pdf_password_title: "Parola Korumalı Belge",
+    pdf_password_prompt: "Belgeyi açmak için parolayı girin:",
+    pdf_password_open: "Aç",
+    pdf_password_cancel: "İptal",
+    pdf_password_incorrect: "Yanlış parola. Lütfen tekrar deneyin.",
 
     theme_sepia: "Sepya (Önerilen)",
     theme_twilight: "Alacakaranlık (Akşam Okuması)",

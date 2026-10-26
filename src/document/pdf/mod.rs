@@ -42,7 +42,15 @@ pub struct PdfDocument {
 }
 
 impl PdfDocument {
+    #[allow(dead_code)]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
+        Self::from_file_with_password(path, None)
+    }
+
+    pub fn from_file_with_password<P: AsRef<Path>>(
+        path: P,
+        password: Option<&str>,
+    ) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
         let file = File::open(path_ref).map_err(|e| {
             DocumentError::Io(format!(
@@ -81,17 +89,27 @@ impl PdfDocument {
         }
 
         let data = hayro::hayro_syntax::PdfData::from(bytes);
-        Self::from_pdf_data(data, path_ref)
+        Self::from_pdf_data_with_password(data, path_ref, password)
     }
 
     #[allow(dead_code)]
     pub fn from_bytes(bytes: Vec<u8>, path: &Path) -> Result<Self, DocumentError> {
-        Self::from_pdf_data(bytes.into(), path)
+        Self::from_bytes_with_password(bytes, path, None)
     }
 
-    fn from_pdf_data(
+    #[allow(dead_code)]
+    pub fn from_bytes_with_password(
+        bytes: Vec<u8>,
+        path: &Path,
+        password: Option<&str>,
+    ) -> Result<Self, DocumentError> {
+        Self::from_pdf_data_with_password(bytes.into(), path, password)
+    }
+
+    fn from_pdf_data_with_password(
         data: hayro::hayro_syntax::PdfData,
         path: &Path,
+        password: Option<&str>,
     ) -> Result<Self, DocumentError> {
         let bytes = data.as_ref();
         if bytes.len() < 4 || !bytes.starts_with(b"%PDF") {
@@ -110,11 +128,19 @@ impl PdfDocument {
 
         let permissions = extract_pdf_permissions(bytes);
 
-        let pdf = match hayro::hayro_syntax::Pdf::new(data.clone()) {
+        let pass = password.unwrap_or("");
+        let pdf = match hayro::hayro_syntax::Pdf::new_with_password(data, pass) {
             Ok(pdf) => pdf,
-            Err(_) => hayro::hayro_syntax::Pdf::new_with_password(data, "").map_err(|e| {
-                DocumentError::Corrupted(format!("Ошибка парсинга PDF документа: {e:?}"))
-            })?,
+            Err(e) => match e {
+                hayro::hayro_syntax::LoadPdfError::Decryption(_) => {
+                    return Err(DocumentError::PasswordRequired);
+                }
+                hayro::hayro_syntax::LoadPdfError::Invalid => {
+                    return Err(DocumentError::Corrupted(
+                        "Ошибка парсинга PDF документа: поврежденный файл".to_string(),
+                    ));
+                }
+            },
         };
 
         let page_count = pdf.pages().len();

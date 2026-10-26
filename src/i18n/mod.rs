@@ -590,6 +590,12 @@ pub struct Translations {
     pub err_corrupted: &'static str,
     pub err_limit_exceeded: &'static str,
     pub err_unknown: &'static str,
+    pub err_password_required: &'static str,
+    pub pdf_password_title: &'static str,
+    pub pdf_password_prompt: &'static str,
+    pub pdf_password_open: &'static str,
+    pub pdf_password_cancel: &'static str,
+    pub pdf_password_incorrect: &'static str,
 
     pub theme_sepia: &'static str,
     pub theme_twilight: &'static str,

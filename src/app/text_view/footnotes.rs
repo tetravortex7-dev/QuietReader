@@ -24,6 +24,7 @@ pub(super) struct ParagraphStyle<'a> {
     pub quotes: &'a [(&'a str, Color32)],
     pub footnote_numbers: &'a HashMap<String, usize>,
     pub note_available: &'a HashSet<String>,
+    pub tts_word_range: Option<(usize, usize)>,
 }
 
 pub(super) fn append_text_with_footnotes(

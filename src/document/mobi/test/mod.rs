@@ -115,6 +115,40 @@ fn test_mobi_hash_footnote_is_extracted() {
 }
 
 #[test]
+fn test_mobi_kf8_kindle_pos_fid_with_fragment() {
+    let html = r#"<html><body><p>Text<a href="kindle:pos:fid:0001:off:0000000020#kf8_fn1">[1]</a>.</p><p id="kf8_fn1">KF8 Note Text</p></body></html>"#;
+    let (prepared, notes) = super::links::preprocess_links(html);
+    let key = "mobi_kf8_1_20_kf8_fn1";
+    assert_eq!(notes.get(key).map(String::as_str), Some("KF8 Note Text"));
+    assert!(prepared.contains(&crate::document::footnote_token(key)));
+}
+
+#[test]
+fn test_mobi_kf8_kindle_pos_fid_with_offset() {
+    let template = r#"<html><body><p>Text<a href="kindle:pos:fid:0002:off:0000000000">[*]</a>.</p><p>Target note at offset</p></body></html>"#;
+    let position = template.find("Target note at offset").unwrap();
+    let html = template.replace("0000000000", &format!("{position:010}"));
+    let (prepared, notes) = super::links::preprocess_links(&html);
+    let key = format!("mobi_kf8_2_{position}");
+    assert_eq!(
+        notes.get(&key).map(String::as_str),
+        Some("Target note at offset")
+    );
+    assert!(prepared.contains(&crate::document::footnote_token(&key)));
+}
+
+#[test]
+fn test_mobi_anchor_name_attribute_extracted() {
+    let html = r##"<html><body><p>Text<a href="#named_note">[3]</a>.</p><p><a name="named_note"></a>Content from anchor name.</p></body></html>"##;
+    let (prepared, notes) = super::links::preprocess_links(html);
+    assert_eq!(
+        notes.get("mobi_hash_named_note").map(String::as_str),
+        Some("Content from anchor name.")
+    );
+    assert!(prepared.contains("{{note:mobi_hash_named_note}}"));
+}
+
+#[test]
 fn test_mobi_image_recindex_token() {
     let html = r#"<html><body><p>Before</p><img recindex="00002"/><p>After</p></body></html>"#;
     let (_, paragraphs) = crate::document::epub::html::extract_html_lenient(html);

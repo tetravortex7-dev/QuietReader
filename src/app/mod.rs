@@ -51,7 +51,7 @@ use crate::document::{Document, DocumentViewKind};
 use crate::settings::AppSettings;
 use eframe::egui::{self, RichText};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub use self::ambient::AmbientController;
 pub use self::autoscroll::AutoscrollController;
@@ -154,6 +154,7 @@ pub struct QuietReaderApp {
     pub library_unlocked: bool,
     pub library_pin_draft: String,
     pub library_pin_error: Option<String>,
+    pub password_prompt: Option<dialogs::PasswordPromptState>,
 }
 
 impl eframe::App for QuietReaderApp {
@@ -663,6 +664,7 @@ impl eframe::App for QuietReaderApp {
                         DocumentViewKind::Text => {
                             let tts_st = self.tts.status();
                             if tts_st.is_playing && !tts_st.is_paused {
+                                ctx.request_repaint_after(Duration::from_millis(50));
                                 if self.current_chapter != tts_st.current_chapter {
                                     self.current_chapter = tts_st.current_chapter;
                                     self.last_rendered_chapter = tts_st.current_chapter;
@@ -710,12 +712,13 @@ impl eframe::App for QuietReaderApp {
                                     None
                                 };
 
-                            let tts_highlight = if (tts_st.is_playing || tts_st.is_paused)
+                            let (tts_highlight, tts_word_range) = if (tts_st.is_playing
+                                || tts_st.is_paused)
                                 && tts_st.current_chapter == self.current_chapter
                             {
-                                Some(tts_st.current_paragraph)
+                                (Some(tts_st.current_paragraph), tts_st.current_word_range)
                             } else {
-                                None
+                                (None, None)
                             };
                             let mut on_start_tts = None;
                             let mut on_open_opds = false;
@@ -744,6 +747,7 @@ impl eframe::App for QuietReaderApp {
                                         .as_ref()
                                         .map(|(query, paragraph)| (query.as_str(), *paragraph)),
                                     tts_highlight,
+                                    tts_word_range,
                                     &mut on_start_tts,
                                     &mut on_open_opds,
                                     &mut on_translate,

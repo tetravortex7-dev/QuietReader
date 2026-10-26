@@ -38,6 +38,7 @@ impl TextView {
         on_load_recent: &mut Option<PathBuf>,
         search_highlight: Option<(&str, Option<usize>)>,
         tts_highlight: Option<usize>,
+        tts_word_range: Option<(usize, usize)>,
         on_start_tts: &mut Option<usize>,
         on_open_opds: &mut bool,
         on_translate: &mut Option<String>,
@@ -387,6 +388,11 @@ impl TextView {
                                         } else {
                                             let is_active_para = active_para == Some(p_idx);
                                             let is_tts_speaking = tts_highlight == Some(p_idx);
+                                            let current_word_range = if is_tts_speaking {
+                                                tts_word_range
+                                            } else {
+                                                None
+                                            };
                                             let mut markers = Vec::new();
                                             let mut layout_job = create_paragraph_layout_job(
                                                 paragraph,
@@ -403,6 +409,7 @@ impl TextView {
                                                     quotes: &chapter_quotes,
                                                     footnote_numbers: &footnote_numbers,
                                                     note_available: &available_notes,
+                                                    tts_word_range: current_word_range,
                                                 },
                                                 &mut markers,
                                             );
@@ -871,6 +878,7 @@ pub(crate) fn create_focus_layout_job(
             quotes: &[],
             footnote_numbers: &footnote_numbers,
             note_available: &available_notes,
+            tts_word_range: None,
         },
         &mut markers,
     );

@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "破損した文書",
     err_limit_exceeded: "セキュリティ制限超過",
     err_unknown: "不明なエラー",
+    err_password_required: "ドキュメントはパスワードで保護されています",
+    pdf_password_title: "パスワード保護されたドキュメント",
+    pdf_password_prompt: "ドキュメントを開くためのパスワードを入力してください：",
+    pdf_password_open: "開く",
+    pdf_password_cancel: "キャンセル",
+    pdf_password_incorrect: "パスワードが正しくありません。もう一度お試しください。",
 
     theme_sepia: "セピア (推奨)",
     theme_twilight: "黄昏 (夜間読書)",

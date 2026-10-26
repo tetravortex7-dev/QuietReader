@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "Пошкоджений документ",
     err_limit_exceeded: "Перевищено ліміт безпеки",
     err_unknown: "Невідома помилка",
+    err_password_required: "Документ захищено паролем",
+    pdf_password_title: "Документ захищено паролем",
+    pdf_password_prompt: "Введіть пароль для відкриття файлу:",
+    pdf_password_open: "Відкрити",
+    pdf_password_cancel: "Скасувати",
+    pdf_password_incorrect: "Невірний пароль. Спробуйте ще раз.",
 
     theme_sepia: "Сепія (рекомендовано)",
     theme_twilight: "Сутінки (вечірнє читання)",

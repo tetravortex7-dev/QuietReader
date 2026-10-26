@@ -157,3 +157,45 @@ fn test_language_detection_and_voice_matching() {
     assert!(!voice_matches_lang("en-US", "ru"));
     assert!(!voice_matches_lang("de-DE", "ru"));
 }
+
+#[test]
+fn test_tts_word_intervals_and_active_word_range() {
+    use crate::app::tts::{compute_active_word_range, compute_word_intervals};
+    use std::time::Duration;
+
+    let text = "Hello world, this is a test.";
+    let intervals = compute_word_intervals(text);
+    assert_eq!(intervals.len(), 6);
+
+    let words: Vec<&str> = intervals.iter().map(|&(s, e, _)| &text[s..e]).collect();
+    assert_eq!(words, vec!["Hello", "world,", "this", "is", "a", "test."]);
+
+    let first_word = compute_active_word_range(
+        &intervals,
+        Duration::ZERO,
+        1.0,
+        Some(Duration::from_secs(6)),
+    );
+    assert_eq!(first_word, Some((0, 5)));
+
+    let middle_word = compute_active_word_range(
+        &intervals,
+        Duration::from_secs(3),
+        1.0,
+        Some(Duration::from_secs(6)),
+    );
+    assert!(middle_word.is_some());
+    let (s, e) = middle_word.unwrap();
+    assert!(&text[s..e] == "this" || &text[s..e] == "is");
+
+    let last_word = compute_active_word_range(
+        &intervals,
+        Duration::from_secs(10),
+        1.0,
+        Some(Duration::from_secs(6)),
+    );
+    assert_eq!(last_word, Some((23, 28)));
+
+    let empty = compute_active_word_range(&[], Duration::from_secs(1), 1.0, None);
+    assert_eq!(empty, None);
+}

@@ -287,6 +287,12 @@ pub const TRANSLATIONS: Translations = Translations {
     err_corrupted: "文件已损坏",
     err_limit_exceeded: "超出安全限制",
     err_unknown: "未知错误",
+    err_password_required: "文档受密码保护",
+    pdf_password_title: "受密码保护的文档",
+    pdf_password_prompt: "请输入密码以打开文档：",
+    pdf_password_open: "打开",
+    pdf_password_cancel: "取消",
+    pdf_password_incorrect: "密码错误，请重试。",
 
     theme_sepia: "复古羊皮纸 (推荐)",
     theme_twilight: "暮光 (夜间阅读)",

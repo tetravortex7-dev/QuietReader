@@ -17,6 +17,7 @@ pub(super) fn append_with_highlight(
 
     let lower_text = crate::core::normalize_search_text(text);
     let mut intervals: Vec<(usize, usize, Color32)> = Vec::new();
+
     for (quote_text, marker_color) in quotes {
         let q_clean = quote_text.trim();
         if q_clean.is_empty() {
@@ -192,7 +193,71 @@ pub(super) fn create_paragraph_layout_job(
             &mut job, &text, &format, style, false, false, markers,
         );
     }
+    if let Some((w_start, w_end)) = style.tts_word_range {
+        let indent = if style.is_rtl { 0 } else { 4 };
+        let target_start = (w_start + indent).min(job.text.len());
+        let target_end = (w_end + indent).min(job.text.len());
+        let safe_start = job.text.floor_char_boundary(target_start);
+        let safe_end = job.text.ceil_char_boundary(target_end);
+        if safe_start < safe_end {
+            highlight_range_in_job(
+                &mut job,
+                safe_start..safe_end,
+                style.accent_color.gamma_multiply(0.28),
+            );
+        }
+    }
     job
+}
+
+fn highlight_range_in_job(
+    job: &mut egui::text::LayoutJob,
+    range: std::ops::Range<usize>,
+    bg: Color32,
+) {
+    if range.start >= range.end || range.end > job.text.len() {
+        return;
+    }
+    let mut new_sections = Vec::with_capacity(job.sections.len() + 2);
+    for sec in std::mem::take(&mut job.sections) {
+        let s_start = sec.byte_range.start.0;
+        let s_end = sec.byte_range.end.0;
+        if s_end <= range.start || s_start >= range.end {
+            new_sections.push(sec);
+        } else {
+            let overlap_start = s_start.max(range.start);
+            let overlap_end = s_end.min(range.end);
+
+            if s_start < overlap_start {
+                new_sections.push(egui::text::LayoutSection {
+                    leading_space: sec.leading_space,
+                    byte_range: egui::text::ByteIndex(s_start)
+                        ..egui::text::ByteIndex(overlap_start),
+                    format: sec.format.clone(),
+                });
+            }
+            let mut hl_fmt = sec.format.clone();
+            hl_fmt.background = bg;
+            new_sections.push(egui::text::LayoutSection {
+                leading_space: if s_start < overlap_start {
+                    0.0
+                } else {
+                    sec.leading_space
+                },
+                byte_range: egui::text::ByteIndex(overlap_start)
+                    ..egui::text::ByteIndex(overlap_end),
+                format: hl_fmt,
+            });
+            if overlap_end < s_end {
+                new_sections.push(egui::text::LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: egui::text::ByteIndex(overlap_end)..egui::text::ByteIndex(s_end),
+                    format: sec.format,
+                });
+            }
+        }
+    }
+    job.sections = new_sections;
 }
 
 pub fn create_sample_preview_job(
@@ -217,6 +282,7 @@ pub fn create_sample_preview_job(
         quotes: &[],
         footnote_numbers: &footnote_numbers,
         note_available: &note_available,
+        tts_word_range: None,
     };
     let mut markers = Vec::new();
     create_paragraph_layout_job(sample_text, &style, &mut markers)
