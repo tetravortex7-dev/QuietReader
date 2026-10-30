@@ -91,6 +91,9 @@ impl QuietReaderApp {
         if !library_existed && onboarding::ensure_welcome_book(&library_path, &mut library) {
             library_dirty = library.save_to_path(&library_path).is_err();
         }
+        if onboarding::ensure_cozy_showcase_library(&mut library) {
+            library_dirty = library.save_to_path(&library_path).is_err();
+        }
         let show_library = library.mode != LibraryMode::ReaderOnly;
         let last_applied_design = library.design;
         let cover_cache_dir = library_path
@@ -205,17 +208,26 @@ impl QuietReaderApp {
             app.load_file(last_path);
         }
 
+        if app.tabs.is_empty() {
+            let books_dir = onboarding::resolve_books_dir();
+            for name in ["Lavender_Room.epub", "Solaris.fb2", "Neuromancer.pdf"] {
+                let p = books_dir.join(name);
+                if p.exists() {
+                    app.load_file(p);
+                }
+            }
+            if !app.tabs.is_empty() {
+                app.activate_tab(0);
+            }
+        }
+
         for path in initial_files {
             if path.exists() {
                 app.load_file(path);
             }
         }
 
-        app.show_library = if has_initial_file {
-            false
-        } else {
-            app.library.mode != LibraryMode::ReaderOnly
-        };
+        app.show_library = if has_initial_file { false } else { true };
         app
     }
 

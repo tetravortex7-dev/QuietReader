@@ -27,7 +27,7 @@ impl ReaderTheme {
             ReaderTheme::Light => Color32::from_rgb(248, 249, 250),
             ReaderTheme::Sepia => Color32::from_rgb(244, 237, 222),
             ReaderTheme::Oled => Color32::from_rgb(0, 0, 0),
-            ReaderTheme::Warm => Color32::from_rgb(250, 240, 220),
+            ReaderTheme::Warm => Color32::from_rgb(255, 248, 246),
             ReaderTheme::Mint => Color32::from_rgb(238, 245, 238),
             ReaderTheme::Twilight => Color32::from_rgb(54, 47, 43),
         }
@@ -39,14 +39,17 @@ impl ReaderTheme {
             ReaderTheme::Light => Color32::from_rgb(33, 37, 41),
             ReaderTheme::Sepia => Color32::from_rgb(60, 48, 36),
             ReaderTheme::Oled => Color32::from_rgb(205, 205, 205),
-            ReaderTheme::Warm => Color32::from_rgb(70, 50, 30),
+            ReaderTheme::Warm => Color32::from_rgb(35, 25, 21),
             ReaderTheme::Mint => Color32::from_rgb(38, 55, 42),
             ReaderTheme::Twilight => Color32::from_rgb(222, 210, 192),
         }
     }
 
     pub fn secondary_text_color(&self) -> Color32 {
-        self.text_color().gamma_multiply(0.65)
+        match self {
+            ReaderTheme::Warm => Color32::from_rgb(85, 67, 62),
+            _ => self.text_color().gamma_multiply(0.65),
+        }
     }
 
     pub fn panel_bg_color(&self) -> Color32 {
@@ -55,7 +58,7 @@ impl ReaderTheme {
             ReaderTheme::Light => Color32::from_rgb(238, 240, 244),
             ReaderTheme::Sepia => Color32::from_rgb(235, 227, 210),
             ReaderTheme::Oled => Color32::from_rgb(10, 10, 12),
-            ReaderTheme::Warm => Color32::from_rgb(242, 230, 208),
+            ReaderTheme::Warm => Color32::from_rgb(255, 241, 236),
             ReaderTheme::Mint => Color32::from_rgb(226, 236, 226),
             ReaderTheme::Twilight => Color32::from_rgb(66, 58, 53),
         }
@@ -67,7 +70,7 @@ impl ReaderTheme {
             ReaderTheme::Light => Color32::from_rgb(0, 102, 204),
             ReaderTheme::Sepia => Color32::from_rgb(140, 90, 40),
             ReaderTheme::Oled => Color32::from_rgb(85, 145, 255),
-            ReaderTheme::Warm => Color32::from_rgb(180, 95, 25),
+            ReaderTheme::Warm => Color32::from_rgb(148, 69, 44),
             ReaderTheme::Mint => Color32::from_rgb(45, 125, 80),
             ReaderTheme::Twilight => Color32::from_rgb(224, 150, 68),
         }
@@ -212,4 +215,26 @@ pub fn bookmark_highlight_color(color: BookmarkColor, is_dark: bool) -> Color32 
             BookmarkColor::Red => Color32::from_rgba_unmultiplied(255, 205, 205, 95),
         }
     }
+}
+
+pub struct CozyPalette;
+
+#[allow(dead_code)]
+impl CozyPalette {
+    pub const CANVAS: Color32 = Color32::from_rgb(255, 248, 246);
+    pub const SURFACE_LOW: Color32 = Color32::from_rgb(255, 241, 236);
+    pub const SURFACE_CONTAINER: Color32 = Color32::from_rgb(253, 234, 227);
+    pub const SURFACE_HIGH: Color32 = Color32::from_rgb(247, 228, 221);
+    pub const SURFACE_HIGHEST: Color32 = Color32::from_rgb(242, 223, 215);
+    pub const CARD_BG: Color32 = Color32::from_rgb(255, 255, 255);
+    pub const ON_SURFACE: Color32 = Color32::from_rgb(35, 25, 21);
+    pub const ON_SURFACE_VARIANT: Color32 = Color32::from_rgb(85, 67, 62);
+    pub const PRIMARY: Color32 = Color32::from_rgb(148, 69, 44);
+    pub const PRIMARY_CONTAINER: Color32 = Color32::from_rgb(179, 92, 65);
+    pub const ON_PRIMARY: Color32 = Color32::from_rgb(255, 255, 255);
+    pub const SECONDARY: Color32 = Color32::from_rgb(126, 87, 0);
+    pub const SECONDARY_CONTAINER: Color32 = Color32::from_rgb(253, 190, 80);
+    pub const TERTIARY: Color32 = Color32::from_rgb(80, 96, 81);
+    pub const TERTIARY_CONTAINER: Color32 = Color32::from_rgb(104, 121, 105);
+    pub const OUTLINE: Color32 = Color32::from_rgb(219, 193, 186);
 }

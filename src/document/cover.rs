@@ -163,6 +163,10 @@ fn sibling_cover_paths(book_path: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(directory) else {
         return Vec::new();
     };
+    let stem = book_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
     let mut covers = Vec::new();
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else {
@@ -172,11 +176,20 @@ fn sibling_cover_paths(book_path: &Path) -> Vec<PathBuf> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-        let rank = match name.as_str() {
-            "cover.jpg" => 0,
-            "cover.jpeg" => 1,
-            "cover.png" => 2,
-            _ => continue,
+        let rank = if !stem.is_empty()
+            && (name == format!("{stem}.jpg")
+                || name == format!("{stem}.jpeg")
+                || name == format!("{stem}.png")
+                || name == format!("{stem}.cover.jpg"))
+        {
+            0
+        } else {
+            match name.as_str() {
+                "cover.jpg" => 1,
+                "cover.jpeg" => 2,
+                "cover.png" => 3,
+                _ => continue,
+            }
         };
         covers.push((rank, entry.path()));
     }

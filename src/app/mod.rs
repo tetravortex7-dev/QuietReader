@@ -420,7 +420,8 @@ impl eframe::App for QuietReaderApp {
             (None, 0.0)
         };
 
-        if !self.show_library || status_text.is_some() {
+        let hide_bottom_bar = self.show_library && self.library.design == UiDesignMode::Cozy;
+        if !hide_bottom_bar && (!self.show_library || status_text.is_some()) {
             let text_pages_override = if self.settings.text_paged_scroll
                 && view_kind == DocumentViewKind::Text
                 && self.viewport_height > 1.0
@@ -499,11 +500,23 @@ impl eframe::App for QuietReaderApp {
             .get(self.active_tab)
             .map(|t| (t.is_loading, t.title.clone(), t.load_error.clone()));
 
+        let is_cozy_lib = self.show_library && self.library.design == UiDesignMode::Cozy;
+        let panel_fill = if is_cozy_lib && !self.theme.is_dark() {
+            crate::app::theme::CozyPalette::CANVAS
+        } else {
+            self.theme.bg_color()
+        };
+        let panel_margin = if is_cozy_lib {
+            egui::Margin::ZERO
+        } else {
+            egui::Margin::same(16)
+        };
+
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
-                    .fill(self.theme.bg_color())
-                    .inner_margin(16.0),
+                    .fill(panel_fill)
+                    .inner_margin(panel_margin),
             )
             .show(ui, |ui| {
                 if self.show_library && !self.library_unlocked {

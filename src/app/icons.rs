@@ -50,6 +50,11 @@ pub enum Icon {
     Studio,
     Pro,
     Info,
+    Flame,
+    Shield,
+    Soundwave,
+    Grid,
+    Sort,
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
@@ -590,6 +595,74 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
             painter.circle_stroke(rect.center(), size * 0.36, stroke);
             painter.circle_filled(p(0.50, 0.33), size * 0.055, color);
             painter.line_segment([p(0.50, 0.45), p(0.50, 0.70)], bold_stroke);
+        }
+        Icon::Flame => {
+            let flame = vec![
+                p(0.50, 0.14),
+                p(0.64, 0.30),
+                p(0.78, 0.54),
+                p(0.74, 0.76),
+                p(0.58, 0.88),
+                p(0.42, 0.88),
+                p(0.26, 0.76),
+                p(0.22, 0.54),
+                p(0.36, 0.38),
+                p(0.40, 0.48),
+                p(0.48, 0.38),
+            ];
+            painter.add(egui::Shape::closed_line(flame, bold_stroke));
+            painter.line_segment([p(0.50, 0.60), p(0.50, 0.78)], thin_stroke);
+        }
+        Icon::Shield => {
+            let shield = vec![
+                p(0.50, 0.16),
+                p(0.82, 0.24),
+                p(0.82, 0.54),
+                p(0.50, 0.86),
+                p(0.18, 0.54),
+                p(0.18, 0.24),
+            ];
+            painter.add(egui::Shape::closed_line(shield, bold_stroke));
+            let check = vec![p(0.36, 0.50), p(0.46, 0.60), p(0.66, 0.38)];
+            painter.add(egui::Shape::line(check, stroke));
+        }
+        Icon::Soundwave => {
+            painter.line_segment([p(0.16, 0.42), p(0.16, 0.58)], stroke);
+            painter.line_segment([p(0.33, 0.28), p(0.33, 0.72)], bold_stroke);
+            painter.line_segment([p(0.50, 0.16), p(0.50, 0.84)], bold_stroke);
+            painter.line_segment([p(0.67, 0.32), p(0.67, 0.68)], bold_stroke);
+            painter.line_segment([p(0.84, 0.42), p(0.84, 0.58)], stroke);
+        }
+        Icon::Grid => {
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.16, 0.16), p(0.44, 0.44)),
+                1.5,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.56, 0.16), p(0.84, 0.44)),
+                1.5,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.16, 0.56), p(0.44, 0.84)),
+                1.5,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.56, 0.56), p(0.84, 0.84)),
+                1.5,
+                stroke,
+                StrokeKind::Inside,
+            );
+        }
+        Icon::Sort => {
+            painter.line_segment([p(0.16, 0.26), p(0.84, 0.26)], bold_stroke);
+            painter.line_segment([p(0.28, 0.50), p(0.72, 0.50)], stroke);
+            painter.line_segment([p(0.40, 0.74), p(0.60, 0.74)], thin_stroke);
         }
     }
 }

@@ -165,3 +165,12 @@ Every new feature or capability introduced into the project must be documented i
 - Network requests that send a `User-Agent` header must always reflect the current application version dynamically using `env!("CARGO_PKG_VERSION")`, `crate::net::APP_USER_AGENT`, or `crate::net::user_agent(...)`.
 - Hardcoding static, legacy, or outdated version strings in `User-Agent` headers is strictly prohibited. When adding or modifying network integrations, ensure the user agent format follows `QuietReader/<version>` or `QuietReader/<version> (<component>)`.
 
+23. Multi-Monitor Responsive Design Policy
+
+- Every UI view, layout, and component must be fully responsive and adapt seamlessly across all monitor types, screen resolutions, and aspect ratios:
+  - Standard displays and laptops (16:9, 16:10, from 1366x768 up to 1080p): no horizontal clipping, awkward wrapping, or truncated controls.
+  - Ultrawide and large displays (21:9, 32:9, 1440p, 4K+): layouts must maintain balanced proportions, using adaptive column grids, responsive card metrics, or max-width containers to prevent uncontrolled stretching.
+  - Compact and low-height viewports (un-maximized windows, small screens): multi-column headers and dashboard widgets must gracefully fold or stack at responsive breakpoints; headers must not push primary document/shelf content beyond the viewport fold; vertical scrolling must always remain functional and smooth.
+  - High-DPI and fractional OS scaling (100%, 125%, 150%, 175%, 200%): elements must honor OS DPI metrics, preventing blurry textures, clipped text galleys, or pixel-overlap artifacts.
+  - Hardcoded, non-responsive fixed widths that cause overflow on smaller screens or severe disproportion on larger screens are strictly prohibited.
+

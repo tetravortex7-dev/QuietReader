@@ -1,20 +1,25 @@
-use super::icons::{Icon, IconButton, IconLabel, icon_button};
+use super::icons::{Icon, IconButton, IconLabel};
 use super::theme::ReaderTheme;
 use crate::core::library::{
     FolderBook, FolderScan, FolderScanError, LibraryEntry, LibraryMode, LibraryReadingStatus,
     LibraryStore, MAX_FOLDER_SCAN_DEPTH, MAX_FOLDER_SCAN_ENTRIES, UiDesignMode, scan_folder,
-    unix_day_index,
 };
 use crate::document::DecodedImage;
 use crate::i18n::{Translations, UiLanguage};
 use crate::settings::AppSettings;
-use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, StrokeKind, TextureHandle, Vec2};
+use eframe::egui::{self, Color32, RichText, ScrollArea, TextureHandle};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
+mod dashboard;
+mod filter_bar;
+mod greeting;
+pub(crate) mod rhythm;
 mod shelf;
+pub(crate) mod shelf_cover;
+pub(crate) mod wood_shelf;
 
 const MAX_COVER_WORKERS: usize = 3;
 const MAX_COVER_TEXTURES: usize = 256;
@@ -334,121 +339,53 @@ impl LibraryViewState {
         }
 
         let t = lang.t();
-        egui::Frame::new()
-            .fill(theme.bg_color())
-            .inner_margin(egui::Margin::symmetric(18, 14))
-            .show(ui, |ui| {
-                self.render_header(ui, library, theme, t, actions);
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
+        let bg_fill = if !theme.is_dark() {
+            super::theme::CozyPalette::CANVAS
+        } else {
+            theme.bg_color()
+        };
 
-                match library.mode {
-                    LibraryMode::Shelf => self.render_shelf(ui, library, theme, t, actions),
-                    LibraryMode::Folder => {
-                        self.render_folder(ui, settings, library, theme, t, actions)
-                    }
-                    LibraryMode::ReaderOnly => self.render_reader_only(ui, theme, t, actions),
-                }
+        egui::Frame::new()
+            .fill(bg_fill)
+            .inner_margin(egui::Margin::symmetric(24, 16))
+            .show(ui, |ui| {
+                ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        greeting::render_greeting(ui, library, theme, t, actions);
+
+                        if library.design == UiDesignMode::Cozy
+                            || library.mode == LibraryMode::Shelf
+                        {
+                            dashboard::render_dashboard(
+                                ui,
+                                library,
+                                theme,
+                                t,
+                                &mut self.cover_loader,
+                                &mut actions.open_path,
+                            );
+                            ui.add_space(10.0);
+                            let save = filter_bar::render_filter_bar(ui, self, library, theme, t);
+                            if save {
+                                actions.save_library = true;
+                            }
+                            ui.add_space(10.0);
+                            if library.mode == LibraryMode::Folder {
+                                self.render_folder(ui, settings, library, theme, t, actions);
+                            } else {
+                                self.render_shelf(ui, library, theme, t, actions);
+                            }
+                        } else if library.mode == LibraryMode::Folder {
+                            self.render_folder(ui, settings, library, theme, t, actions);
+                        } else {
+                            self.render_reader_only(ui, theme, t, actions);
+                        }
+                    });
             });
         if self.cover_loader.has_pending() {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
-    }
-
-    fn render_header(
-        &mut self,
-        ui: &mut egui::Ui,
-        library: &mut LibraryStore,
-        theme: &ReaderTheme,
-        t: &Translations,
-        actions: &mut LibraryActions,
-    ) {
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                IconLabel::new(Icon::Library, t.library_title)
-                    .size(22.0)
-                    .strong()
-                    .color(theme.accent_color()),
-            );
-            ui.add_space(8.0);
-            ui.separator();
-
-            for mode in LibraryMode::ALL {
-                let (icon, label) = mode_button(mode, t);
-                let response = ui
-                    .add(
-                        IconButton::new(icon, label)
-                            .selected(library.mode == mode)
-                            .font_size(13.0),
-                    )
-                    .on_hover_text(t.library_mode_tooltip);
-                if response.clicked() && library.mode != mode {
-                    library.mode = mode;
-                    actions.save_library = true;
-                    if mode == LibraryMode::Folder {
-                        self.last_scanned_folder = None;
-                    }
-                }
-            }
-
-            ui.separator();
-            for design in UiDesignMode::ALL {
-                let (icon, label) = design_button(design, t);
-                let response = ui
-                    .add(
-                        IconButton::new(icon, label)
-                            .selected(library.design == design)
-                            .font_size(13.0),
-                    )
-                    .on_hover_text(t.library_design_tooltip);
-                if response.clicked() && library.design != design {
-                    library.design = design;
-                    actions.save_library = true;
-                }
-            }
-
-            ui.separator();
-            if ui
-                .add(IconButton::new(Icon::Download, t.library_export_all).font_size(13.0))
-                .on_hover_text(t.library_export_all_hint)
-                .clicked()
-            {
-                actions.export_all = true;
-            }
-            if ui
-                .add(IconButton::new(Icon::Refresh, t.library_restore_snapshot).font_size(13.0))
-                .on_hover_text(t.library_restore_snapshot_hint)
-                .clicked()
-            {
-                actions.restore_snapshot = true;
-            }
-
-            if library.mode == LibraryMode::Shelf && library.design == UiDesignMode::Cozy {
-                ui.separator();
-                let today = unix_day_index(crate::core::license::unix_now());
-                let streak = library.current_streak_days(today);
-                let total_minutes = library.total_reading_minutes();
-                let hours = total_minutes / 60;
-                let minutes = total_minutes % 60;
-                let time_value = t
-                    .library_stats_time_value
-                    .replace("{hours}", &hours.to_string())
-                    .replace("{minutes}", &minutes.to_string());
-                let completed = library.completed_books_count();
-                for (label, value) in [
-                    (t.library_stats_streak, streak.to_string()),
-                    (t.library_stats_reading_time, time_value),
-                    (t.library_stats_completed, completed.to_string()),
-                ] {
-                    ui.label(
-                        RichText::new(format!("{label}: {value}"))
-                            .size(11.0)
-                            .color(theme.secondary_text_color()),
-                    );
-                }
-            }
-        });
     }
 
     fn render_folder(
@@ -678,6 +615,7 @@ impl LibraryViewState {
     }
 }
 
+#[allow(dead_code)]
 fn mode_button(mode: LibraryMode, t: &Translations) -> (Icon, &'static str) {
     match mode {
         LibraryMode::Shelf => (Icon::Library, t.library_mode_shelf),
@@ -686,6 +624,7 @@ fn mode_button(mode: LibraryMode, t: &Translations) -> (Icon, &'static str) {
     }
 }
 
+#[allow(dead_code)]
 fn design_button(design: UiDesignMode, t: &Translations) -> (Icon, &'static str) {
     match design {
         UiDesignMode::Cozy => (Icon::Cozy, t.library_design_cozy),
