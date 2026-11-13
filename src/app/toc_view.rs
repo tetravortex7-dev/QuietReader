@@ -39,14 +39,14 @@ impl TocView {
         bookmark_state: &mut BookmarkViewState,
         toc_state: &mut TocViewState,
         on_add_bookmark: &mut bool,
-    ) {
+    ) -> bool {
         if !*show_toc {
-            return;
+            return false;
         }
 
         let doc = match document {
             Some(d) => d,
-            None => return,
+            None => return false,
         };
 
         let lang = settings.ui_language;
@@ -54,6 +54,7 @@ impl TocView {
         let available_w = ui.available_width();
         let max_toc_w = (available_w * 0.45).clamp(240.0, 520.0);
         let mut close_toc = false;
+        let mut bookmarks_changed = false;
 
         Panel::left("toc_panel")
             .resizable(true)
@@ -125,7 +126,7 @@ impl TocView {
 
                 if *sidebar_tab == SidebarTab::Bookmarks {
                     let meta = doc.metadata();
-                    BookmarksView::render(
+                    bookmarks_changed = BookmarksView::render(
                         ui,
                         settings,
                         current_file_path,
@@ -139,6 +140,7 @@ impl TocView {
                         status_message,
                         &meta.title,
                         &meta.author,
+                        doc.can_copy(),
                         return_location,
                         bookmark_state,
                         on_add_bookmark,
@@ -151,114 +153,133 @@ impl TocView {
                 let toc = doc.toc();
                 let has_matching_toc =
                     !has_filter || toc.iter().any(|item| toc_matches(item, &filter_query));
+                let toc_root_id = egui::Id::unique(("toc_tree", current_file_path));
 
-                ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width());
-                        if let Some(page_content) = doc.page_content() {
-                            let page_count = page_content.page_count();
+                if let Some(page_content) = doc.page_content() {
+                    let page_count = page_content.page_count();
+                    let has_custom_toc = doc.has_custom_toc();
 
-                            let has_custom_toc = doc.has_custom_toc();
-
-                            if has_custom_toc {
-                                for item in toc {
-                                    render_toc_item(
-                                        ui,
-                                        item,
-                                        *current_page,
-                                        current_page,
-                                        theme.accent_color(),
-                                        &filter_query,
+                    if has_custom_toc {
+                        let toc_max_h = (ui.available_height() * 0.45).clamp(120.0, 320.0);
+                        ScrollArea::vertical()
+                            .id_salt("toc_custom_tree_scroll")
+                            .max_height(toc_max_h)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.set_max_width(ui.available_width());
+                                if !has_matching_toc {
+                                    ui.label(
+                                        RichText::new(t.search_nothing_found)
+                                            .italics()
+                                            .color(Color32::from_gray(140)),
                                     );
+                                } else {
+                                    for (idx, item) in toc.iter().enumerate() {
+                                        render_toc_item_with_parent(
+                                            ui,
+                                            item,
+                                            *current_page,
+                                            current_page,
+                                            theme.accent_color(),
+                                            toc_root_id,
+                                            idx,
+                                            0,
+                                            &filter_query,
+                                        );
+                                    }
                                 }
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.add_space(4.0);
-                            }
+                            });
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                    }
 
-                            let is_double = settings.comic.page_layout == "Double"
-                                && settings.comic.reading_mode != "Webtoon";
-                            let step = if is_double { 2 } else { 1 };
-                            let total_rows = page_count.div_ceil(step);
-                            let row_height = ui.text_style_height(&egui::TextStyle::Button) + 6.0;
+                    let is_double = settings.comic.page_layout == "Double"
+                        && settings.comic.reading_mode != "Webtoon";
+                    let step = if is_double { 2 } else { 1 };
+                    let total_rows = page_count.div_ceil(step);
+                    let row_height = ui.text_style_height(&egui::TextStyle::Button) + 6.0;
 
-                            let mut render_pages_virtual = |ui: &mut egui::Ui| {
-                                let mut new_page = None;
-                                ScrollArea::vertical()
-                                    .id_salt("pages_virtual_scroll")
-                                    .auto_shrink([false, false])
-                                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                        for row_idx in row_range {
-                                            let p = row_idx * step;
-                                            if p >= page_count {
-                                                break;
-                                            }
-                                            let is_current = if is_double {
-                                                *current_page == p
-                                                    || (p + 1 < page_count
-                                                        && *current_page == p + 1)
-                                            } else {
-                                                *current_page == p
-                                            };
+                    let mut render_pages_virtual = |ui: &mut egui::Ui| {
+                        let mut new_page = None;
+                        ScrollArea::vertical()
+                            .id_salt("pages_virtual_scroll")
+                            .auto_shrink([false, false])
+                            .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                ui.set_max_width(ui.available_width());
+                                for row_idx in row_range {
+                                    let p = row_idx * step;
+                                    if p >= page_count {
+                                        break;
+                                    }
+                                    let is_current = if is_double {
+                                        *current_page == p
+                                            || (p + 1 < page_count && *current_page == p + 1)
+                                    } else {
+                                        *current_page == p
+                                    };
 
-                                            let page_name = page_content.page_name(p);
-                                            let label = if is_double && p + 1 < page_count {
-                                                if page_name.is_empty() {
-                                                    format!("{} {}-{}", t.page_prefix, p + 1, p + 2)
-                                                } else {
-                                                    format!(
-                                                        "{} {}-{} ({page_name})",
-                                                        t.page_prefix,
-                                                        p + 1,
-                                                        p + 2
-                                                    )
-                                                }
-                                            } else if page_name.is_empty() {
-                                                format!("{} {}", t.page_prefix, p + 1)
-                                            } else {
-                                                format!("{} {} ({page_name})", t.page_prefix, p + 1)
-                                            };
-
-                                            let mut rich = RichText::new(label);
-                                            if is_current {
-                                                rich = rich.strong().color(theme.accent_color());
-                                            }
-
-                                            let btn =
-                                                egui::Button::selectable(is_current, rich).wrap();
-                                            if ui.add(btn).clicked() {
-                                                new_page = Some(p);
-                                            }
+                                    let page_name = page_content.page_name(p);
+                                    let label = if is_double && p + 1 < page_count {
+                                        if page_name.is_empty() {
+                                            format!("{} {}-{}", t.page_prefix, p + 1, p + 2)
+                                        } else {
+                                            format!(
+                                                "{} {}-{} ({page_name})",
+                                                t.page_prefix,
+                                                p + 1,
+                                                p + 2
+                                            )
                                         }
-                                    });
+                                    } else if page_name.is_empty() {
+                                        format!("{} {}", t.page_prefix, p + 1)
+                                    } else {
+                                        format!("{} {} ({page_name})", t.page_prefix, p + 1)
+                                    };
 
-                                if let Some(p) = new_page {
-                                    *current_page = p;
+                                    let mut rich = RichText::new(label);
+                                    if is_current {
+                                        rich = rich.strong().color(theme.accent_color());
+                                    }
+
+                                    let btn = egui::Button::selectable(is_current, rich).wrap();
+                                    if ui.add(btn).clicked() {
+                                        new_page = Some(p);
+                                    }
                                 }
-                            };
+                            });
 
-                            if has_custom_toc {
-                                egui::CollapsingHeader::new(crate::i18n::fill(
-                                    t.extra.toc_all_pages,
-                                    &[("{count}", &page_count.to_string())],
-                                ))
-                                .default_open(false)
-                                .show(ui, |ui| {
-                                    render_pages_virtual(ui);
-                                });
-                            } else {
-                                ui.label(
-                                    RichText::new(crate::i18n::fill(
-                                        t.extra.toc_pages,
-                                        &[("{count}", &page_count.to_string())],
-                                    ))
-                                    .strong(),
-                                );
-                                ui.add_space(4.0);
-                                render_pages_virtual(ui);
-                            }
-                        } else {
+                        if let Some(p) = new_page {
+                            *current_page = p;
+                        }
+                    };
+
+                    if has_custom_toc {
+                        egui::CollapsingHeader::new(crate::i18n::fill(
+                            t.extra.toc_all_pages,
+                            &[("{count}", &page_count.to_string())],
+                        ))
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            render_pages_virtual(ui);
+                        });
+                    } else {
+                        ui.label(
+                            RichText::new(crate::i18n::fill(
+                                t.extra.toc_pages,
+                                &[("{count}", &page_count.to_string())],
+                            ))
+                            .strong(),
+                        );
+                        ui.add_space(4.0);
+                        render_pages_virtual(ui);
+                    }
+                } else {
+                    ScrollArea::vertical()
+                        .id_salt("toc_tree_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.set_max_width(ui.available_width());
                             if toc.is_empty() {
                                 ui.add_space(8.0);
                                 ui.label(
@@ -274,44 +295,38 @@ impl TocView {
                                         .color(Color32::from_gray(140)),
                                 );
                             } else {
-                                for item in toc {
-                                    render_toc_item(
+                                for (idx, item) in toc.iter().enumerate() {
+                                    render_toc_item_with_parent(
                                         ui,
                                         item,
                                         *current_chapter,
                                         current_chapter,
                                         theme.accent_color(),
+                                        toc_root_id,
+                                        idx,
+                                        0,
                                         &filter_query,
                                     );
                                 }
                             }
-                        }
-                    });
+                        });
+                }
             });
 
         if close_toc {
             *show_toc = false;
         }
+        bookmarks_changed
     }
 }
 
-pub fn render_toc_item(
-    ui: &mut egui::Ui,
-    item: &TocItem,
-    current_chapter: usize,
-    selected_chapter: &mut usize,
-    accent_color: Color32,
-    filter: &str,
-) {
-    render_toc_item_bounded(
-        ui,
-        item,
-        current_chapter,
-        selected_chapter,
-        accent_color,
-        0,
-        filter,
-    );
+pub(crate) fn toc_node_id(
+    parent_id: egui::Id,
+    sibling_index: usize,
+    chapter_index: usize,
+    title: &str,
+) -> egui::Id {
+    parent_id.with((sibling_index, chapter_index, title))
 }
 
 pub(crate) fn toc_matches(item: &TocItem, filter: &str) -> bool {
@@ -322,12 +337,15 @@ pub(crate) fn toc_matches(item: &TocItem, filter: &str) -> bool {
     title.contains(filter) || item.children.iter().any(|child| toc_matches(child, filter))
 }
 
-fn render_toc_item_bounded(
+#[allow(clippy::too_many_arguments)]
+fn render_toc_item_with_parent(
     ui: &mut egui::Ui,
     item: &TocItem,
     current_chapter: usize,
     selected_chapter: &mut usize,
     accent_color: Color32,
+    parent_id: egui::Id,
+    sibling_index: usize,
     depth: usize,
     filter: &str,
 ) {
@@ -353,10 +371,7 @@ fn render_toc_item_bounded(
             *selected_chapter = item.chapter_index;
         }
     } else {
-        let header_id = ui.make_persistent_id(format!(
-            "toc_{}_{}_{}",
-            depth, item.chapter_index, item.title
-        ));
+        let header_id = toc_node_id(parent_id, sibling_index, item.chapter_index, &item.title);
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), header_id, true)
             .show_header(ui, |ui| {
                 let mut rich = RichText::new(title);
@@ -371,13 +386,15 @@ fn render_toc_item_bounded(
             .body(|ui| {
                 ui.indent(header_id.with("indent"), |ui| {
                     let child_filter = if parent_matches { "" } else { filter };
-                    for child in &item.children {
-                        render_toc_item_bounded(
+                    for (child_idx, child) in item.children.iter().enumerate() {
+                        render_toc_item_with_parent(
                             ui,
                             child,
                             current_chapter,
                             selected_chapter,
                             accent_color,
+                            header_id,
+                            child_idx,
                             depth + 1,
                             child_filter,
                         );

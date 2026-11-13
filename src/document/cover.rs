@@ -43,42 +43,27 @@ pub fn load_cover_thumbnail(book_path: &Path) -> Option<DecodedImage> {
         return comic_folder_cover(book_path);
     }
 
-    let name = book_path
-        .file_name()?
-        .to_string_lossy()
-        .to_ascii_lowercase();
-    if name.ends_with(".epub") {
-        return epub_cover(book_path);
-    }
-    if name.ends_with(".fb2") || name.ends_with(".fb2.zip") || name.ends_with(".xml") {
-        return fb2_cover(book_path);
-    }
-    if name.ends_with(".cbz") {
-        return cbz_cover(book_path);
-    }
-    if name.ends_with(".zip") {
+    let ext = crate::document::registry::extension_lower(book_path);
+    let spec = crate::document::registry::find_extension_spec(&ext)?;
+    if spec.extension == "zip" {
         if crate::document::fb2::zip_contains_fb2(book_path) {
             return fb2_cover(book_path);
         }
         return cbz_cover(book_path);
     }
-    if name.ends_with(".cbr")
-        || name.ends_with(".rar")
-        || name.ends_with(".cb7")
-        || name.ends_with(".7z")
-        || name.ends_with(".cbt")
-        || name.ends_with(".tar")
-    {
-        return comic_archive_cover(book_path);
+    if spec.extension == "cbz" {
+        return cbz_cover(book_path);
     }
-    if name.ends_with(".mobi")
-        || name.ends_with(".azw")
-        || name.ends_with(".azw3")
-        || name.ends_with(".prc")
-    {
-        return mobi_cover(book_path);
+    match spec.backends.first().copied() {
+        Some(crate::document::registry::FormatBackend::Epub) => epub_cover(book_path),
+        Some(
+            crate::document::registry::FormatBackend::Fb2
+            | crate::document::registry::FormatBackend::Fb2Zip,
+        ) => fb2_cover(book_path),
+        Some(crate::document::registry::FormatBackend::Comic) => comic_archive_cover(book_path),
+        Some(crate::document::registry::FormatBackend::Mobi) => mobi_cover(book_path),
+        _ => None,
     }
-    None
 }
 
 fn thumbnail_from_decoded(image: DecodedImage) -> Option<DecodedImage> {
@@ -423,12 +408,47 @@ fn parse_opf_cover_href(opf: &str) -> Option<String> {
         .map(|item| item.href)
 }
 
+struct LimitedReader<R> {
+    inner: R,
+    read: u64,
+    limit: u64,
+}
+
+impl<R: Read> LimitedReader<R> {
+    fn new(inner: R, limit: u64) -> Self {
+        Self {
+            inner,
+            read: 0,
+            limit,
+        }
+    }
+}
+
+impl<R: Read> Read for LimitedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = self.limit.saturating_sub(self.read);
+        let max_chunk = (remaining.min(usize::MAX as u64) as usize)
+            .saturating_add(1)
+            .min(buf.len());
+        let n = self.inner.read(&mut buf[..max_chunk])?;
+        self.read = self.read.saturating_add(n as u64);
+        if self.read > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "cover input exceeds size limit",
+            ));
+        }
+        Ok(n)
+    }
+}
+
 fn fb2_cover(book_path: &Path) -> Option<DecodedImage> {
-    let name = book_path
-        .file_name()?
-        .to_string_lossy()
-        .to_ascii_lowercase();
-    let bytes = if name.ends_with(".fb2.zip") || name.ends_with(".zip") {
+    fb2_cover_with_limit(book_path, MAX_FB2_XML_BYTES)
+}
+
+pub(crate) fn fb2_cover_with_limit(book_path: &Path, max_xml_bytes: u64) -> Option<DecodedImage> {
+    let ext = crate::document::registry::extension_lower(book_path);
+    let bytes = if matches!(ext.as_str(), "fb2.zip" | "zip") {
         let file = File::open(book_path).ok()?;
         let mut archive = ZipArchive::new(file).ok()?;
         if archive.len() > MAX_ARCHIVE_ENTRIES {
@@ -436,17 +456,17 @@ fn fb2_cover(book_path: &Path) -> Option<DecodedImage> {
         }
         let index = find_fb2_entry(&mut archive)?;
         let entry = archive.by_index(index).ok()?;
-        if entry.size() > MAX_FB2_XML_BYTES {
+        if entry.size() > max_xml_bytes {
             return None;
         }
-        parse_fb2_cover(BufReader::new(entry))?
+        parse_fb2_cover(BufReader::new(LimitedReader::new(entry, max_xml_bytes)))?
     } else {
         let metadata = fs::metadata(book_path).ok()?;
-        if metadata.len() > MAX_FB2_XML_BYTES {
+        if metadata.len() > max_xml_bytes {
             return None;
         }
         let file = File::open(book_path).ok()?;
-        parse_fb2_cover(BufReader::new(file))?
+        parse_fb2_cover(BufReader::new(LimitedReader::new(file, max_xml_bytes)))?
     };
     decode_thumbnail(&bytes)
 }

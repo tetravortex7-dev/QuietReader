@@ -18,10 +18,18 @@ impl Default for TtsController {
     }
 }
 
+pub(crate) fn clamp_tts_rate(rate: f32) -> f32 {
+    if rate.is_finite() {
+        rate.clamp(0.5, 3.0)
+    } else {
+        1.0
+    }
+}
+
 impl TtsController {
     pub fn new(initial: TtsSettings) -> Self {
         let mut initial = initial;
-        initial.rate = initial.rate.clamp(0.5, 3.0);
+        initial.rate = clamp_tts_rate(initial.rate);
         let status = Arc::new(Mutex::new(TtsStatus {
             rate: initial.rate,
             ..Default::default()
@@ -113,12 +121,13 @@ impl TtsController {
     }
 
     pub fn set_rate(&mut self, rate: f32) {
-        self.preferred.rate = rate.clamp(0.5, 3.0);
+        let clamped = clamp_tts_rate(rate);
+        self.preferred.rate = clamped;
         if let Ok(mut st) = self.status.lock() {
-            st.rate = rate;
+            st.rate = clamped;
         }
         if let Some(tx) = &self.command_tx {
-            let _ = tx.send(TtsCommand::SetRate(rate));
+            let _ = tx.send(TtsCommand::SetRate(clamped));
         }
     }
 

@@ -71,19 +71,19 @@ impl DocxDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path = path.as_ref();
         let meta = std::fs::metadata(path)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать файл DOCX: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_metadata("DOCX", &e)))?;
         if meta.len() > crate::document::MAX_TOTAL_UNPACK_BYTES {
             return Err(DocumentError::LimitExceeded(
-                "Размер файла DOCX превышает допустимый лимит".to_string(),
+                crate::document::errors::file_too_large("DOCX"),
             ));
         }
 
         let file = File::open(path)
-            .map_err(|e| DocumentError::Io(format!("Не удалось открыть файл DOCX: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_open("DOCX", &e)))?;
         let default_title = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Документ Word");
+            .unwrap_or(crate::document::errors::tokens::TITLE_WORD);
 
         Self::from_reader(file, default_title)
     }
@@ -92,7 +92,7 @@ impl DocxDocument {
     pub fn from_bytes(bytes: &[u8], default_title: &str) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > crate::document::MAX_TOTAL_UNPACK_BYTES {
             return Err(DocumentError::LimitExceeded(
-                "Размер данных DOCX превышает лимит".to_string(),
+                crate::document::errors::data_too_large("DOCX"),
             ));
         }
         let cursor = std::io::Cursor::new(bytes);
@@ -103,12 +103,16 @@ impl DocxDocument {
         reader: R,
         default_title: &str,
     ) -> Result<Self, DocumentError> {
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| DocumentError::Corrupted(format!("Поврежденный архив DOCX: {e}")))?;
+        let mut archive = zip::ZipArchive::new(reader).map_err(|e| {
+            DocumentError::Corrupted(crate::document::errors::archive_parse("DOCX", &e))
+        })?;
 
         if archive.len() > crate::document::MAX_ARCHIVE_ENTRIES {
             return Err(DocumentError::LimitExceeded(
-                "Слишком много файлов в архиве DOCX".to_string(),
+                crate::document::errors::archive_too_many_files(
+                    "DOCX",
+                    crate::document::MAX_ARCHIVE_ENTRIES,
+                ),
             ));
         }
 
@@ -123,17 +127,19 @@ impl DocxDocument {
         let mut footer_parts: Vec<String> = Vec::new();
 
         for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| DocumentError::Corrupted(format!("Ошибка архива DOCX: {e}")))?;
+            let mut file = archive.by_index(i).map_err(|e| {
+                DocumentError::Corrupted(crate::document::errors::archive_read("DOCX", &e))
+            })?;
             let name = file
                 .name()
-                .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?
+                .map_err(|e| {
+                    DocumentError::Corrupted(crate::document::errors::archive_read("ZIP", &e))
+                })?
                 .to_string();
             if !crate::document::is_safe_archive_path(&name) {
-                return Err(DocumentError::Corrupted(format!(
-                    "Небезопасный путь в архиве DOCX: {name}"
-                )));
+                return Err(DocumentError::Corrupted(
+                    crate::document::errors::archive_unsafe_path("DOCX", &name),
+                ));
             }
 
             if name == "word/document.xml" {
@@ -211,7 +217,10 @@ impl DocxDocument {
         }
 
         let doc_xml = doc_xml_bytes.ok_or_else(|| {
-            DocumentError::Corrupted("В архиве DOCX отсутствует word/document.xml".to_string())
+            DocumentError::Corrupted(crate::document::errors::archive_entry_not_found(
+                "DOCX",
+                "word/document.xml",
+            ))
         })?;
 
         let doc_xml_str = String::from_utf8_lossy(&doc_xml);
@@ -220,7 +229,7 @@ impl DocxDocument {
             .map(Self::parse_core_properties)
             .unwrap_or_else(|| BookMetadata {
                 title: default_title.to_string(),
-                author: "Неизвестный автор".to_string(),
+                author: crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string(),
             });
 
         let images = build_docx_images(rels_xml_bytes.as_deref(), &media);
@@ -291,12 +300,12 @@ impl DocxDocument {
 
         BookMetadata {
             title: if title.is_empty() {
-                "Документ Word".to_string()
+                crate::document::errors::tokens::TITLE_WORD.to_string()
             } else {
                 title
             },
             author: if author.is_empty() {
-                "Неизвестный автор".to_string()
+                crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string()
             } else {
                 author
             },
@@ -488,7 +497,9 @@ impl DocxDocument {
                                         if chapters.is_empty() {
                                             default_title.to_string()
                                         } else {
-                                            format!("Раздел {}", chapters.len() + 1)
+                                            crate::document::errors::tokens::section(
+                                                chapters.len() + 1,
+                                            )
                                         }
                                     } else {
                                         std::mem::take(&mut current_chapter_title)
@@ -518,7 +529,7 @@ impl DocxDocument {
                 if chapters.is_empty() {
                     default_title.to_string()
                 } else {
-                    format!("Раздел {}", chapters.len() + 1)
+                    crate::document::errors::tokens::section(chapters.len() + 1)
                 }
             } else {
                 current_chapter_title
@@ -534,7 +545,7 @@ impl DocxDocument {
             chapters.push(BookChapter {
                 id: Some("chap_0".to_string()),
                 title: default_title.to_string(),
-                paragraphs: vec!["Документ не содержит текста.".to_string()],
+                paragraphs: vec![crate::document::errors::tokens::NO_TEXT.to_string()],
             });
         }
 

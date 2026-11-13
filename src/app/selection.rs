@@ -3,6 +3,7 @@ use eframe::egui;
 const SELECTION_ID: &str = "latest_text_selection";
 const INTERNAL_FLAG: &str = "internal_selection_copy_flag";
 const SAVED_STATE_ID: &str = "saved_label_selection_state";
+const COPY_RESTRICTED_FLAG: &str = "document_copy_restricted_flag";
 
 pub struct SelectionCapturePlugin;
 
@@ -50,6 +51,10 @@ impl egui::plugin::Plugin for SelectionCapturePlugin {
             d.remove_temp(egui::Id::unique(INTERNAL_FLAG))
                 .unwrap_or(false)
         });
+        let copy_restricted: bool = ctx.data_mut(|d| {
+            d.remove_temp(egui::Id::unique(COPY_RESTRICTED_FLAG))
+                .unwrap_or(false)
+        });
 
         for cmd in &output.platform_output.commands {
             match cmd {
@@ -64,13 +69,23 @@ impl egui::plugin::Plugin for SelectionCapturePlugin {
             }
         }
 
-        if is_internal {
+        if is_internal || (copy_restricted && !ctx.egui_wants_keyboard_input()) {
             output
                 .platform_output
                 .commands
                 .retain(|cmd| !matches!(cmd, egui::OutputCommand::CopyText(_)));
         }
     }
+}
+
+pub fn set_copy_restricted(ctx: &egui::Context, restricted: bool) {
+    ctx.data_mut(|d| {
+        if restricted {
+            d.insert_temp(egui::Id::unique(COPY_RESTRICTED_FLAG), true);
+        } else {
+            d.remove_temp::<bool>(egui::Id::unique(COPY_RESTRICTED_FLAG));
+        }
+    });
 }
 
 pub fn get_selected_text(ctx: &egui::Context) -> Option<String> {

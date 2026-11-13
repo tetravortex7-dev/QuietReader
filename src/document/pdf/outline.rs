@@ -1,6 +1,8 @@
 use crate::document::TocItem;
 use hayro::hayro_syntax::Pdf;
-use hayro::hayro_syntax::object::{Array, Dict, Object, ObjectIdentifier, String as PdfString};
+use hayro::hayro_syntax::object::{
+    Array, Dict, Name, Object, ObjectIdentifier, String as PdfString,
+};
 use std::collections::{HashMap, HashSet};
 
 pub fn extract_pdf_toc(pdf: &Pdf, page_count: usize) -> Vec<TocItem> {
@@ -26,23 +28,7 @@ pub fn extract_pdf_toc(pdf: &Pdf, page_count: usize) -> Vec<TocItem> {
         }
     }
 
-    let mut named_dests: HashMap<String, usize> = HashMap::new();
-    if let Some(dests) = root.get::<Dict<'_>>("Dests") {
-        for (name, _) in dests.entries() {
-            let key = decode_pdf_string(name.as_ref());
-            if let Some(arr) = dests.get::<Array<'_>>(name.as_ref()) {
-                if let Some(page) = resolve_dest_array(&arr, &page_id_to_index, page_count) {
-                    named_dests.insert(key, page);
-                }
-            } else if let Some(dict) = dests.get::<Dict<'_>>(name.as_ref()) {
-                if let Some(arr) = dict.get::<Array<'_>>("D") {
-                    if let Some(page) = resolve_dest_array(&arr, &page_id_to_index, page_count) {
-                        named_dests.insert(key, page);
-                    }
-                }
-            }
-        }
-    }
+    let named_dests = collect_named_dests(&root, &page_id_to_index, page_count);
 
     let mut items = Vec::new();
     let mut cur = outlines.get::<Dict<'_>>("First");
@@ -130,37 +116,151 @@ fn parse_outline_item(
     })
 }
 
+pub(crate) fn collect_named_dests(
+    root: &Dict<'_>,
+    page_id_to_index: &HashMap<ObjectIdentifier, usize>,
+    page_count: usize,
+) -> HashMap<String, usize> {
+    let mut named_dests = HashMap::new();
+    if let Some(dests) = root.get::<Dict<'_>>("Dests") {
+        for (name, _) in dests.entries() {
+            let key = decode_pdf_string(name.as_ref());
+            let page = dests
+                .get::<Array<'_>>(name.as_ref())
+                .and_then(|arr| resolve_dest_array(&arr, page_id_to_index, page_count))
+                .or_else(|| {
+                    dests
+                        .get::<Dict<'_>>(name.as_ref())
+                        .and_then(|dict| dict.get::<Array<'_>>("D"))
+                        .and_then(|arr| resolve_dest_array(&arr, page_id_to_index, page_count))
+                });
+            if let Some(page) = page {
+                named_dests.insert(key, page);
+            }
+        }
+    }
+    if let Some(names) = root.get::<Dict<'_>>("Names")
+        && let Some(dests_tree) = names.get::<Dict<'_>>("Dests")
+    {
+        let mut visited = HashSet::new();
+        collect_dests_name_tree(
+            &dests_tree,
+            page_id_to_index,
+            page_count,
+            &mut named_dests,
+            &mut visited,
+            0,
+        );
+    }
+    named_dests
+}
+
+fn resolve_dest_object(
+    obj: Object<'_>,
+    page_id_to_index: &HashMap<ObjectIdentifier, usize>,
+    page_count: usize,
+) -> Option<usize> {
+    match obj {
+        Object::Array(arr) => resolve_dest_array(&arr, page_id_to_index, page_count),
+        Object::Dict(dict) => dict
+            .get::<Array<'_>>("D")
+            .and_then(|arr| resolve_dest_array(&arr, page_id_to_index, page_count)),
+        _ => None,
+    }
+}
+
+fn collect_dests_name_tree(
+    node: &Dict<'_>,
+    page_id_to_index: &HashMap<ObjectIdentifier, usize>,
+    page_count: usize,
+    named_dests: &mut HashMap<String, usize>,
+    visited: &mut HashSet<ObjectIdentifier>,
+    depth: usize,
+) {
+    if depth > 32 {
+        return;
+    }
+    if let Some(id) = node.obj_id()
+        && !visited.insert(id)
+    {
+        return;
+    }
+    if let Some(names) = node.get::<Array<'_>>("Names") {
+        let mut iter = names.iter::<Object<'_>>();
+        while let Some(key_obj) = iter.next() {
+            let Some(val_obj) = iter.next() else {
+                break;
+            };
+            let key = match key_obj {
+                Object::String(s) => decode_pdf_string(s.as_bytes()),
+                Object::Name(n) => decode_pdf_string(n.as_ref()),
+                _ => continue,
+            };
+            if let Some(page) = resolve_dest_object(val_obj, page_id_to_index, page_count) {
+                named_dests.insert(key, page);
+            }
+        }
+    }
+    if let Some(kids) = node.get::<Array<'_>>("Kids") {
+        for kid in kids.iter::<Dict<'_>>() {
+            collect_dests_name_tree(
+                &kid,
+                page_id_to_index,
+                page_count,
+                named_dests,
+                visited,
+                depth + 1,
+            );
+        }
+    }
+}
+
+fn resolve_dest_entry(
+    dict: &Dict<'_>,
+    key: &str,
+    page_id_to_index: &HashMap<ObjectIdentifier, usize>,
+    named_dests: &HashMap<String, usize>,
+    page_count: usize,
+) -> Option<usize> {
+    if let Some(dest_arr) = dict.get::<Array<'_>>(key)
+        && let Some(page) = resolve_dest_array(&dest_arr, page_id_to_index, page_count)
+    {
+        return Some(page);
+    }
+    if let Some(dest_str) = dict.get::<PdfString<'_>>(key) {
+        let name_key = decode_pdf_string(dest_str.as_bytes());
+        if let Some(&page) = named_dests.get(&name_key) {
+            return Some(page);
+        }
+    }
+    if let Some(dest_name) = dict.get::<Name<'_>>(key) {
+        let name_key = decode_pdf_string(dest_name.as_ref());
+        if let Some(&page) = named_dests.get(&name_key) {
+            return Some(page);
+        }
+    }
+    None
+}
+
 pub(crate) fn resolve_destination(
     item_dict: &Dict<'_>,
     page_id_to_index: &HashMap<ObjectIdentifier, usize>,
     named_dests: &HashMap<String, usize>,
     page_count: usize,
 ) -> Option<usize> {
-    if let Some(dest_arr) = item_dict.get::<Array<'_>>("Dest")
-        && let Some(page) = resolve_dest_array(&dest_arr, page_id_to_index, page_count)
+    if let Some(page) =
+        resolve_dest_entry(item_dict, "Dest", page_id_to_index, named_dests, page_count)
     {
         return Some(page);
     }
 
-    if let Some(dest_str) = item_dict.get::<PdfString<'_>>("Dest") {
-        let key = decode_pdf_string(dest_str.as_bytes());
-        if let Some(&page) = named_dests.get(&key) {
-            return Some(page);
-        }
-    }
-
     if let Some(a_dict) = item_dict.get::<Dict<'_>>("A") {
-        if let Some(d_arr) = a_dict.get::<Array<'_>>("D")
-            && let Some(page) = resolve_dest_array(&d_arr, page_id_to_index, page_count)
+        if let Some(action) = a_dict.get::<Name<'_>>("S")
+            && action.as_str() != "GoTo"
         {
-            return Some(page);
+            return None;
         }
-        if let Some(d_str) = a_dict.get::<PdfString<'_>>("D") {
-            let key = decode_pdf_string(d_str.as_bytes());
-            if let Some(&page) = named_dests.get(&key) {
-                return Some(page);
-            }
-        }
+        return resolve_dest_entry(&a_dict, "D", page_id_to_index, named_dests, page_count);
     }
 
     None
@@ -195,7 +295,7 @@ pub fn build_fallback_toc(page_count: usize) -> Vec<TocItem> {
     (0..page_count)
         .map(|i| TocItem {
             id: Some(format!("page_{}", i + 1)),
-            title: format!("Страница {}", i + 1),
+            title: crate::document::errors::tokens::page(i + 1),
             chapter_index: i,
             children: Vec::new(),
         })

@@ -1,5 +1,5 @@
 use super::auth::OpdsAuth;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
@@ -9,6 +9,8 @@ const MAX_COVER_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_COVER_DIMENSION: u32 = 2048;
 const MAX_COVER_ALLOC: u64 = 32 * 1024 * 1024;
 const MAX_CONCURRENT_COVER_FETCHES: usize = 4;
+pub(crate) const DEFAULT_MAX_COVER_CACHE_ENTRIES: usize = 128;
+pub(crate) const DEFAULT_MAX_COVER_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct CoverImage {
@@ -17,11 +19,95 @@ pub struct CoverImage {
     pub rgba: Vec<u8>,
 }
 
+pub(crate) struct BoundedLruMap<V> {
+    entries: HashMap<String, (V, usize)>,
+    order: VecDeque<String>,
+    total_bytes: usize,
+    max_entries: usize,
+    max_bytes: usize,
+}
+
+impl<V> BoundedLruMap<V> {
+    pub(crate) fn new(max_entries: usize, max_bytes: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            total_bytes: 0,
+            max_entries,
+            max_bytes,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+        self.total_bytes = 0;
+    }
+
+    fn touch(&mut self, key: &str) {
+        self.order.retain(|k| k != key);
+        self.order.push_back(key.to_string());
+    }
+
+    pub(crate) fn get_cloned(&mut self, key: &str) -> Option<V>
+    where
+        V: Clone,
+    {
+        let value = self.entries.get(key).map(|(v, _)| v.clone())?;
+        self.touch(key);
+        Some(value)
+    }
+
+    pub(crate) fn insert(&mut self, key: String, value: V, byte_size: usize) -> bool {
+        if let Some((_, old_bytes)) = self.entries.remove(&key) {
+            self.total_bytes = self.total_bytes.saturating_sub(old_bytes);
+            self.order.retain(|k| k != &key);
+        }
+
+        if self.max_entries == 0 || (self.max_bytes > 0 && byte_size > self.max_bytes) {
+            return false;
+        }
+
+        while self.entries.len() >= self.max_entries
+            || (self.max_bytes > 0
+                && self.total_bytes.saturating_add(byte_size) > self.max_bytes
+                && !self.entries.is_empty())
+        {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, evicted_bytes)) = self.entries.remove(&oldest) {
+                self.total_bytes = self.total_bytes.saturating_sub(evicted_bytes);
+            }
+        }
+
+        if self.entries.len() >= self.max_entries
+            || (self.max_bytes > 0 && self.total_bytes.saturating_add(byte_size) > self.max_bytes)
+        {
+            return false;
+        }
+
+        self.total_bytes = self.total_bytes.saturating_add(byte_size);
+        self.order.push_back(key.clone());
+        self.entries.insert(key, (value, byte_size));
+        true
+    }
+}
+
 pub struct OpdsCoverManager {
-    cache: HashMap<String, Option<CoverImage>>,
+    cache: BoundedLruMap<Option<CoverImage>>,
     in_flight: HashSet<String>,
-    tx_image: Sender<(String, Option<CoverImage>)>,
-    rx_image: Receiver<(String, Option<CoverImage>)>,
+    generation: u64,
+    tx_image: Sender<(u64, String, Option<CoverImage>)>,
+    rx_image: Receiver<(u64, String, Option<CoverImage>)>,
 }
 
 impl Default for OpdsCoverManager {
@@ -32,31 +118,61 @@ impl Default for OpdsCoverManager {
 
 impl OpdsCoverManager {
     pub fn new() -> Self {
+        Self::with_limits(
+            DEFAULT_MAX_COVER_CACHE_ENTRIES,
+            DEFAULT_MAX_COVER_CACHE_BYTES,
+        )
+    }
+
+    pub fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
         let (tx_image, rx_image) = channel();
         Self {
-            cache: HashMap::new(),
+            cache: BoundedLruMap::new(max_entries, max_bytes),
             in_flight: HashSet::new(),
+            generation: 0,
             tx_image,
             rx_image,
         }
     }
 
+    pub fn cache_len(&self) -> usize {
+        self.cache.len()
+    }
+
+    pub fn cache_bytes(&self) -> usize {
+        self.cache.total_bytes()
+    }
+
+    pub fn clear(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.cache.clear();
+        self.in_flight.clear();
+    }
+
+    pub(crate) fn insert_cached(&mut self, url: String, img: Option<CoverImage>) {
+        let bytes = img.as_ref().map(|c| c.rgba.len()).unwrap_or(0);
+        self.cache.insert(url, img, bytes);
+    }
+
     pub fn poll(&mut self) -> bool {
         let mut got_new = false;
-        while let Ok((url, opt_img)) = self.rx_image.try_recv() {
+        while let Ok((req_gen, url, opt_img)) = self.rx_image.try_recv() {
+            if req_gen != self.generation {
+                continue;
+            }
             self.in_flight.remove(&url);
             if opt_img.is_some() {
                 got_new = true;
             }
-            self.cache.insert(url, opt_img);
+            self.insert_cached(url, opt_img);
         }
         got_new
     }
 
     pub fn get_cover(&mut self, url: &str, auth: Option<OpdsAuth>) -> Option<CoverImage> {
         self.poll();
-        if let Some(cached) = self.cache.get(url) {
-            return cached.clone();
+        if let Some(cached) = self.cache.get_cloned(url) {
+            return cached;
         }
 
         if self.in_flight.len() >= MAX_CONCURRENT_COVER_FETCHES {
@@ -67,6 +183,7 @@ impl OpdsCoverManager {
             self.in_flight.insert(url.to_string());
             let tx = self.tx_image.clone();
             let cover_url = url.to_string();
+            let req_gen = self.generation;
             let spawn_result = thread::Builder::new()
                 .name("opds-cover-fetch".to_string())
                 .spawn(move || {
@@ -123,7 +240,7 @@ impl OpdsCoverManager {
                         })
                     });
 
-                    let _ = tx.send((cover_url, res));
+                    let _ = tx.send((req_gen, cover_url, res));
                 });
 
             if spawn_result.is_err() {

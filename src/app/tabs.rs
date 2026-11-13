@@ -112,41 +112,7 @@ impl BookTab {
     }
 
     pub fn detect_format_badge(path: &Path) -> String {
-        if path.is_dir() {
-            return "DIR".to_string();
-        }
-        let name_lower = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        if name_lower.ends_with(".fb2.zip") {
-            return "FB2".to_string();
-        }
-        match path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .as_deref()
-        {
-            Some("pdf") => "PDF".to_string(),
-            Some("djvu") | Some("djv") => "DJVU".to_string(),
-            Some("fb2") | Some("xml") => "FB2".to_string(),
-            Some("epub") => "EPUB".to_string(),
-            Some("mobi") => "MOBI".to_string(),
-            Some("prc") => "PRC".to_string(),
-            Some("azw3") => "AZW3".to_string(),
-            Some("azw") => "AZW".to_string(),
-            Some("txt") => "TXT".to_string(),
-            Some("md") | Some("markdown") => "MD".to_string(),
-            Some("log") => "LOG".to_string(),
-            Some("html") | Some("htm") | Some("xhtml") => "HTML".to_string(),
-            Some("cbz") | Some("zip") => "CBZ".to_string(),
-            Some("cbr") | Some("rar") => "CBR".to_string(),
-            Some("cb7") | Some("7z") => "CB7".to_string(),
-            Some("cbt") | Some("tar") => "CBT".to_string(),
-            Some(ext) => ext.to_uppercase(),
-            None => "DOC".to_string(),
-        }
+        crate::document::registry::format_badge_for_path(path)
     }
 
     pub fn short_title(&self, max_chars: usize) -> String {
@@ -341,7 +307,8 @@ impl super::QuietReaderApp {
     pub fn save_active_to_tab(&mut self) {
         let cur_page = match self.view_kind() {
             DocumentViewKind::Pdf => self.pdf_view.current_page,
-            _ => self.comic_view.current_page,
+            DocumentViewKind::Comic => self.comic_view.current_page,
+            DocumentViewKind::Text => 0,
         };
         if let Some(tab) = self.tabs.get_mut(self.active_tab)
             && self.document.is_some()
@@ -400,6 +367,15 @@ impl super::QuietReaderApp {
         if idx >= self.tabs.len() {
             return;
         }
+        let target_tab = &self.tabs[idx];
+        let already_applied = idx == self.active_tab
+            && self.document.is_some() == target_tab.document.is_some()
+            && self.current_file_path.as_ref() == Some(&target_tab.file_path);
+        if already_applied {
+            self.show_library = false;
+            return;
+        }
+        self.save_active_to_tab();
         self.flush_settings_now();
         self.autoscroll.stop();
         self.apply_tab_state(idx);
@@ -423,17 +399,40 @@ impl super::QuietReaderApp {
             self.last_rendered_chapter = tab.current_chapter;
             self.pending_scroll_y = Some(tab.current_scroll_y);
             self.current_scroll_y = tab.current_scroll_y;
+            self.last_saved_scroll_y = tab.current_scroll_y;
             self.viewport_height = tab.viewport_height;
             self.max_scroll_y = tab.max_scroll_y;
             self.comic_view.clear_cache();
-            self.comic_view.current_page = tab.comic_page;
+            self.comic_view.page_input.clear();
             self.pdf_view.clear_cache();
+            self.pdf_view.page_input.clear();
             self.text_images.clear();
-            self.pdf_view.current_page = tab.comic_page;
+            self.comic_view.current_page = 0;
+            self.pdf_view.current_page = 0;
+            match self.document.as_ref().map(|d| d.view_kind()) {
+                Some(DocumentViewKind::Pdf) => {
+                    if tab.current_scroll_y <= 0.0 && tab.comic_page > 0 {
+                        self.pdf_view.go_to_page(tab.comic_page);
+                    } else {
+                        self.pdf_view.current_page = tab.comic_page;
+                    }
+                }
+                Some(DocumentViewKind::Comic) => {
+                    if tab.current_scroll_y <= 0.0 && tab.comic_page > 0 {
+                        self.comic_view.go_to_page(tab.comic_page);
+                    } else {
+                        self.comic_view.current_page = tab.comic_page;
+                    }
+                }
+                Some(DocumentViewKind::Text) | None => {}
+            }
             self.search.reset_for_document();
             self.toc_view.filter.clear();
             self.tts.stop();
             self.last_tts_paragraph = None;
+            self.focus_read.rsvp.active = false;
+            self.focus_read.rsvp.playing = false;
+            self.focus_read.paragraph_initialized = false;
             self.settings.last_opened_book = Some(tab.file_path);
             self.settings.active_tab_index = idx;
             let t = self.settings.ui_language.t();
@@ -460,9 +459,21 @@ impl super::QuietReaderApp {
         if idx >= self.tabs.len() {
             return;
         }
-        self.tts.stop();
-        self.last_tts_paragraph = None;
-        self.save_active_to_tab();
+        let closing_active = idx == self.active_tab;
+        let closed_path = self.tabs[idx].file_path.clone();
+        if self
+            .password_prompt
+            .as_ref()
+            .is_some_and(|p| p.path == closed_path)
+        {
+            self.password_prompt = None;
+        }
+        if closing_active {
+            self.tts.stop();
+            self.last_tts_paragraph = None;
+            self.autoscroll.stop();
+            self.save_active_to_tab();
+        }
         self.tabs.remove(idx);
 
         if self.tabs.is_empty() {
@@ -474,11 +485,20 @@ impl super::QuietReaderApp {
             self.last_rendered_chapter = 0;
             self.pending_scroll_y = None;
             self.current_scroll_y = 0.0;
+            self.last_saved_scroll_y = 0.0;
             self.max_scroll_y = 0.0;
             self.comic_view.clear_cache();
+            self.comic_view.current_page = 0;
+            self.comic_view.page_input.clear();
             self.pdf_view.clear_cache();
+            self.pdf_view.current_page = 0;
+            self.pdf_view.page_input.clear();
             self.text_images.clear();
             self.autoscroll.stop();
+            self.tts.show_panel = false;
+            self.focus_read.rsvp.active = false;
+            self.focus_read.rsvp.playing = false;
+            self.focus_read.paragraph_initialized = false;
             self.status_message = Some(
                 self.settings
                     .ui_language
@@ -487,13 +507,14 @@ impl super::QuietReaderApp {
                     .status_all_tabs_closed
                     .to_string(),
             );
-        } else {
-            let next_idx = if idx < self.active_tab {
-                self.active_tab - 1
-            } else {
-                self.active_tab.min(self.tabs.len() - 1)
-            };
+        } else if closing_active {
+            let next_idx = self.active_tab.min(self.tabs.len() - 1);
             self.apply_tab_state(next_idx);
+        } else {
+            if idx < self.active_tab {
+                self.active_tab -= 1;
+                self.settings.active_tab_index = self.active_tab;
+            }
         }
         self.flush_settings_now();
     }

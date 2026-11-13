@@ -213,10 +213,19 @@ impl SettingsView {
                         select_font(settings, ctx, font_info.id, on_save_settings, pro);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(font_info.badge_for_lang(settings.ui_language))
-                                .size(11.5)
-                                .color(theme.accent_color()),
+                        let (badge, tag) = font_info.badge_parts_for_lang(settings.ui_language);
+                        let segments: &[&str] = if tag.is_empty() {
+                            &[badge]
+                        } else {
+                            &[badge, tag]
+                        };
+                        let accent = theme.accent_color();
+                        super::icons::dotted_strip(
+                            ui,
+                            segments,
+                            11.5,
+                            accent,
+                            accent.gamma_multiply(0.7),
                         );
                     });
                 });

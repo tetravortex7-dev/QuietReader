@@ -24,10 +24,10 @@ impl MobiDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
         let meta = std::fs::metadata(path_ref)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать MOBI/AZW файл: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_metadata("MOBI/AZW", &e)))?;
         if meta.len() > MAX_MOBI_FILE_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер файла MOBI/AZW превышает допустимый лимит (150 МБ)".to_string(),
+                crate::document::errors::file_too_large_mb("MOBI/AZW", 150),
             ));
         }
         let ext = path_ref
@@ -36,8 +36,9 @@ impl MobiDocument {
             .unwrap_or("")
             .to_lowercase();
 
-        let m = Mobi::from_path(path_ref)
-            .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения MOBI/AZW файла: {e}")))?;
+        let m = Mobi::from_path(path_ref).map_err(|e| {
+            DocumentError::Corrupted(crate::document::errors::parse_failed("MOBI/AZW", &e))
+        })?;
 
         let (raw_bytes, is_kf8) = extract_raw_mobi_bytes(&m)?;
 
@@ -61,60 +62,18 @@ impl MobiDocument {
             mobi::headers::TextEncoding::Unknown(cp) => cp,
         };
         let content = decode_mobi_content(&raw_bytes, header_codepage);
-        let detected_enc = resolve_mobi_encoding(&raw_bytes, header_codepage);
+        let default_book_title = path_ref
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| crate::document::errors::tokens::TITLE_MOBI.to_string());
+        let metadata = resolve_mobi_metadata(&m, &raw_bytes, header_codepage, &default_book_title);
 
-        let title_bytes = m
-            .metadata
-            .exth_record(mobi::headers::ExthRecord::Title)
-            .and_then(|v| v.first())
-            .map(|v| v.as_slice())
-            .unwrap_or(&m.metadata.name);
-
-        let mut title = decode_metadata_string(title_bytes, Some(detected_enc), header_codepage);
-        if title.is_empty() {
-            let m_title = m.title();
-            if !m_title.is_empty() && !m_title.contains('\u{FFFD}') {
-                if is_cp1252_mojibake(&m_title) {
-                    title = repair_cp1252_mojibake(&m_title);
-                } else {
-                    title = m_title.trim().to_string();
-                }
-            }
-        }
-        if title.is_empty() {
-            title = path_ref
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Документ MOBI".to_string());
-        }
-
-        let author_bytes = m
-            .metadata
-            .exth_record(mobi::headers::ExthRecord::Author)
-            .and_then(|v| v.first())
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
-
-        let mut author = decode_metadata_string(author_bytes, Some(detected_enc), header_codepage);
-        if author.is_empty() {
-            if let Some(m_author) = m.author() {
-                if !m_author.contains('\u{FFFD}') {
-                    if is_cp1252_mojibake(&m_author) {
-                        author = repair_cp1252_mojibake(&m_author);
-                    } else {
-                        author = m_author.trim().to_string();
-                    }
-                }
-            }
-        }
-
-        let metadata = BookMetadata { title, author };
-
-        let (chapters, toc, footnotes) = parse_mobi_html_with_notes(&content, &metadata.title);
+        let (chapters, toc, footnotes) =
+            parse_mobi_html_with_notes(&content, &raw_bytes, header_codepage, &metadata.title);
         let note_locations = crate::document::locate_notes_in_chapters(&chapters, &footnotes);
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
-                "Не удалось извлечь главы из книги".to_string(),
+                crate::document::errors::extract_chapters_failed(),
             ));
         }
 
@@ -133,11 +92,12 @@ impl MobiDocument {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > MAX_MOBI_FILE_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер данных MOBI/AZW превышает допустимый лимит (150 МБ)".to_string(),
+                crate::document::errors::data_too_large_mb("MOBI/AZW", 150),
             ));
         }
-        let m = Mobi::new(bytes.to_vec())
-            .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения MOBI/AZW данных: {e}")))?;
+        let m = Mobi::new(bytes.to_vec()).map_err(|e| {
+            DocumentError::Corrupted(crate::document::errors::parse_failed("MOBI/AZW", &e))
+        })?;
 
         let (raw_bytes, is_kf8) = extract_raw_mobi_bytes(&m)?;
         let format_name = if is_kf8 { "AZW3" } else { "MOBI" };
@@ -148,57 +108,19 @@ impl MobiDocument {
             mobi::headers::TextEncoding::Unknown(cp) => cp,
         };
         let content = decode_mobi_content(&raw_bytes, header_codepage);
-        let detected_enc = resolve_mobi_encoding(&raw_bytes, header_codepage);
+        let metadata = resolve_mobi_metadata(
+            &m,
+            &raw_bytes,
+            header_codepage,
+            crate::document::errors::tokens::TITLE_MOBI,
+        );
 
-        let title_bytes = m
-            .metadata
-            .exth_record(mobi::headers::ExthRecord::Title)
-            .and_then(|v| v.first())
-            .map(|v| v.as_slice())
-            .unwrap_or(&m.metadata.name);
-
-        let mut title = decode_metadata_string(title_bytes, Some(detected_enc), header_codepage);
-        if title.is_empty() {
-            let m_title = m.title();
-            if !m_title.is_empty() && !m_title.contains('\u{FFFD}') {
-                if is_cp1252_mojibake(&m_title) {
-                    title = repair_cp1252_mojibake(&m_title);
-                } else {
-                    title = m_title.trim().to_string();
-                }
-            }
-        }
-        if title.is_empty() {
-            title = "Документ MOBI".to_string();
-        }
-
-        let author_bytes = m
-            .metadata
-            .exth_record(mobi::headers::ExthRecord::Author)
-            .and_then(|v| v.first())
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
-
-        let mut author = decode_metadata_string(author_bytes, Some(detected_enc), header_codepage);
-        if author.is_empty() {
-            if let Some(m_author) = m.author() {
-                if !m_author.contains('\u{FFFD}') {
-                    if is_cp1252_mojibake(&m_author) {
-                        author = repair_cp1252_mojibake(&m_author);
-                    } else {
-                        author = m_author.trim().to_string();
-                    }
-                }
-            }
-        }
-
-        let metadata = BookMetadata { title, author };
-
-        let (chapters, toc, footnotes) = parse_mobi_html_with_notes(&content, &metadata.title);
+        let (chapters, toc, footnotes) =
+            parse_mobi_html_with_notes(&content, &raw_bytes, header_codepage, &metadata.title);
         let note_locations = crate::document::locate_notes_in_chapters(&chapters, &footnotes);
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
-                "Не удалось извлечь главы из книги".to_string(),
+                crate::document::errors::extract_chapters_failed(),
             ));
         }
 
@@ -212,6 +134,120 @@ impl MobiDocument {
             format_name,
         })
     }
+}
+
+fn repair_fallback_metadata_text(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if is_cp1251_mojibake(trimmed)
+        && let Some(repaired) = repair_cp1251_mojibake(trimmed)
+    {
+        return repaired;
+    }
+    if is_cp1252_mojibake(trimmed) {
+        repair_cp1252_mojibake(trimmed)
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn resolve_mobi_metadata(
+    m: &Mobi,
+    raw_bytes: &[u8],
+    header_codepage: u32,
+    fallback_title: &str,
+) -> BookMetadata {
+    let detected_enc = resolve_mobi_encoding(raw_bytes, header_codepage);
+    let title_bytes = m
+        .metadata
+        .exth_record(mobi::headers::ExthRecord::Title)
+        .and_then(|v| v.first())
+        .map(|v| v.as_slice())
+        .unwrap_or(&m.metadata.name);
+
+    let mut title = decode_metadata_string(title_bytes, Some(detected_enc), header_codepage);
+    if title.is_empty() {
+        let m_title = m.title();
+        if !m_title.is_empty() && !m_title.contains('\u{FFFD}') {
+            title = repair_fallback_metadata_text(&m_title);
+        }
+    }
+    if title.is_empty() {
+        title = fallback_title.to_string();
+    }
+
+    let author_bytes = m
+        .metadata
+        .exth_record(mobi::headers::ExthRecord::Author)
+        .and_then(|v| v.first())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+
+    let mut author = decode_metadata_string(author_bytes, Some(detected_enc), header_codepage);
+    if author.is_empty()
+        && let Some(m_author) = m.author()
+        && !m_author.contains('\u{FFFD}')
+    {
+        author = repair_fallback_metadata_text(&m_author);
+    }
+
+    BookMetadata { title, author }
+}
+
+fn extract_leading_html_heading(raw_html: &str) -> Option<String> {
+    let bytes = raw_html.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] != b'<' {
+            return None;
+        }
+        let close_gt = raw_html[i..].find('>')?;
+        let tag_raw = raw_html[i + 1..i + close_gt].trim();
+        let tag_name = tag_raw
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('/')
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        let is_closing = tag_raw.starts_with('/');
+        if !is_closing && matches!(tag_name.as_str(), "h1" | "h2" | "h3") && !tag_raw.ends_with('/')
+        {
+            let content_start = i + close_gt + 1;
+            let close_tag = format!("</{tag_name}>");
+            let lower_tail = raw_html[content_start..].to_ascii_lowercase();
+            let close_offset = lower_tail.find(&close_tag)?;
+            let heading =
+                clean_chapter_title(&raw_html[content_start..content_start + close_offset]);
+            return if heading.is_empty() {
+                None
+            } else {
+                Some(heading)
+            };
+        }
+        if is_closing
+            || tag_raw.ends_with('/')
+            || matches!(
+                tag_name.as_str(),
+                "html"
+                    | "body"
+                    | "div"
+                    | "span"
+                    | "center"
+                    | "section"
+                    | "article"
+                    | "header"
+                    | "a"
+            )
+        {
+            i += close_gt + 1;
+            continue;
+        }
+        return None;
+    }
+    None
 }
 
 pub fn clean_chapter_title(raw: &str) -> String {
@@ -383,11 +419,13 @@ pub fn is_likely_chapter_heading(text: &str) -> bool {
     keywords.iter().any(|&k| lower.starts_with(k))
 }
 
-pub fn parse_mobi_html_with_notes(
-    raw_html: &str,
+fn parse_mobi_html_with_notes(
+    html_content: &str,
+    raw_bytes: &[u8],
+    header_codepage: u32,
     default_title: &str,
 ) -> (Vec<BookChapter>, Vec<TocItem>, HashMap<String, String>) {
-    let (html, notes) = links::preprocess_links(raw_html);
+    let (html, notes) = links::preprocess_links_with_raw(html_content, raw_bytes, header_codepage);
     let (chapters, toc) = parse_mobi_html(&html, default_title);
     (chapters, toc, notes)
 }
@@ -413,8 +451,16 @@ pub fn parse_mobi_html(raw_html: &str, default_title: &str) -> (Vec<BookChapter>
     let mut parsed_sections: Vec<(String, Vec<String>)> = Vec::new();
     for raw_sec in raw_sections {
         let sanitized = crate::document::epub::html::sanitize_xml_entities(raw_sec);
-        let (extracted_title, paragraphs) =
+        let (mut extracted_title, mut paragraphs) =
             crate::document::epub::html::extract_html_lenient(&sanitized);
+        if extracted_title.trim().is_empty()
+            && paragraphs.len() > 1
+            && let Some(heading) = extract_leading_html_heading(&sanitized)
+            && clean_chapter_title(&paragraphs[0]) == heading
+        {
+            paragraphs.remove(0);
+            extracted_title = heading;
+        }
         if !paragraphs.is_empty() || !extracted_title.trim().is_empty() {
             parsed_sections.push((extracted_title, paragraphs));
         }
@@ -461,25 +507,19 @@ pub fn parse_mobi_html(raw_html: &str, default_title: &str) -> (Vec<BookChapter>
             extracted_title.trim().to_string()
         } else if paragraphs.len() > 1 && is_likely_chapter_heading(&paragraphs[0]) {
             paragraphs.remove(0).trim().to_string()
-        } else if paragraphs.len() > 1
-            && clean_chapter_title(&paragraphs[0]).chars().count() <= 50
-            && !paragraphs[0].ends_with('.')
-            && !paragraphs[0].ends_with(';')
-        {
-            paragraphs.remove(0).trim().to_string()
         } else if let Some(first) = paragraphs.first() {
             if is_likely_chapter_heading(first) {
                 first.clone()
             } else {
-                format!("Глава {}", chapters.len() + 1)
+                crate::document::errors::tokens::chapter(chapters.len() + 1)
             }
         } else {
-            format!("Глава {}", chapters.len() + 1)
+            crate::document::errors::tokens::chapter(chapters.len() + 1)
         };
 
         let mut chapter_title = clean_chapter_title(&raw_title);
         if chapter_title.is_empty() {
-            chapter_title = format!("Глава {}", chapters.len() + 1);
+            chapter_title = crate::document::errors::tokens::chapter(chapters.len() + 1);
         }
 
         if paragraphs.is_empty() {
@@ -492,7 +532,7 @@ pub fn parse_mobi_html(raw_html: &str, default_title: &str) -> (Vec<BookChapter>
                 let sub_title = if sub_idx == 0 {
                     chapter_title.clone()
                 } else {
-                    format!("{chapter_title} (часть {})", sub_idx + 1)
+                    crate::document::errors::tokens::chapter_part(&chapter_title, sub_idx + 1)
                 };
                 let ch_idx = chapters.len();
                 chapters.push(BookChapter {

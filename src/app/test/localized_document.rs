@@ -11,6 +11,7 @@ struct MockDocument {
     toc: Vec<TocItem>,
     view_kind: DocumentViewKind,
     custom_toc: bool,
+    can_copy: bool,
 }
 
 impl Document for MockDocument {
@@ -28,6 +29,10 @@ impl Document for MockDocument {
 
     fn view_kind(&self) -> DocumentViewKind {
         self.view_kind
+    }
+
+    fn can_copy(&self) -> bool {
+        self.can_copy
     }
 
     fn has_custom_toc(&self) -> bool {
@@ -74,6 +79,7 @@ fn mock_doc(view_kind: DocumentViewKind, paragraph: &str) -> Arc<dyn Document> {
         }],
         view_kind,
         custom_toc: true,
+        can_copy: true,
     })
 }
 
@@ -135,6 +141,7 @@ fn localizes_mobi_and_txt_generated_titles() {
         toc: Vec::new(),
         view_kind: DocumentViewKind::Text,
         custom_toc: false,
+        can_copy: true,
     });
     let doc = LocalizedDocument::wrap(inner, UiLanguage::En);
     assert_eq!(doc.metadata().title, "MOBI document");
@@ -158,6 +165,7 @@ fn localizes_part_suffix_for_authored_titles() {
         toc: Vec::new(),
         view_kind: DocumentViewKind::Text,
         custom_toc: false,
+        can_copy: true,
     });
     let doc = LocalizedDocument::wrap(inner, UiLanguage::En);
     assert_eq!(doc.metadata().title, "RTF Document");
@@ -201,9 +209,67 @@ fn localizes_notes_chapter_and_toc_title() {
         }],
         view_kind: DocumentViewKind::Text,
         custom_toc: true,
+        can_copy: true,
     });
     let doc = LocalizedDocument::wrap(inner, UiLanguage::En);
     assert_eq!(doc.chapters()[1].title, "Notes");
     assert_eq!(doc.toc()[0].title, "Notes");
     assert_eq!(doc.chapters()[1].paragraphs[0], "[1] Note body");
+}
+
+#[test]
+fn forwards_can_copy_to_the_wrapped_document() {
+    let restricted_inner: Arc<dyn Document> = Arc::new(MockDocument {
+        metadata: BookMetadata {
+            title: "Protected".to_string(),
+            author: "Author".to_string(),
+        },
+        chapters: Vec::new(),
+        toc: Vec::new(),
+        view_kind: DocumentViewKind::Pdf,
+        custom_toc: false,
+        can_copy: false,
+    });
+    let restricted = LocalizedDocument::wrap(restricted_inner, UiLanguage::En);
+    assert!(!restricted.can_copy());
+
+    let allowed =
+        LocalizedDocument::wrap(mock_doc(DocumentViewKind::Pdf, "Sample"), UiLanguage::En);
+    assert!(allowed.can_copy());
+}
+
+#[test]
+fn forwards_supports_search_highlight_to_wrapped_document() {
+    struct HighlightMock {
+        meta: BookMetadata,
+        highlight: bool,
+    }
+
+    impl Document for HighlightMock {
+        fn metadata(&self) -> &BookMetadata {
+            &self.meta
+        }
+        fn chapters(&self) -> &[BookChapter] {
+            &[]
+        }
+        fn supports_search_highlight(&self) -> bool {
+            self.highlight
+        }
+    }
+
+    let enabled = LocalizedDocument::wrap(
+        Arc::new(HighlightMock {
+            meta: BookMetadata {
+                title: "Scan".to_string(),
+                author: String::new(),
+            },
+            highlight: true,
+        }),
+        UiLanguage::En,
+    );
+    assert!(enabled.supports_search_highlight());
+
+    let disabled =
+        LocalizedDocument::wrap(mock_doc(DocumentViewKind::Pdf, "Sample"), UiLanguage::En);
+    assert!(!disabled.supports_search_highlight());
 }

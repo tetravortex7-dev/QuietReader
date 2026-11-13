@@ -36,22 +36,18 @@ pub fn export_library(
         match std::fs::copy(&entry.path, &target) {
             Ok(_) => {
                 exported += 1;
-                let progress = if entry.total_units == 0 {
-                    0.0
-                } else {
-                    (entry.current_unit as f32 / entry.total_units as f32) * 100.0
-                };
+                let progress = entry.progress_percent();
                 let file_label = target
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or(file_name);
                 rows.push_str(&format!(
                     "{},{},{},{:.1}%,{}\n",
-                    csv_field(&entry.title),
-                    csv_field(&entry.author),
+                    crate::core::csv_field(&entry.title),
+                    crate::core::csv_field(&entry.author),
                     status_label(entry.status),
                     progress,
-                    csv_field(file_label)
+                    crate::core::csv_field(file_label)
                 ));
             }
             Err(_) => skipped += 1,
@@ -94,14 +90,6 @@ fn unique_target(directory: &Path, file_name: &str) -> PathBuf {
         index += 1;
     }
     candidate
-}
-
-fn csv_field(value: &str) -> String {
-    if value.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
 }
 
 #[cfg(all(test, feature = "enable_tests"))]

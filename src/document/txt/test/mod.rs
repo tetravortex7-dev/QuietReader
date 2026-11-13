@@ -155,3 +155,65 @@ fn test_utf16_txt_decoding_and_pageup_prev_chapter() {
     assert_eq!(ch, 0);
     assert_eq!(pending_scroll, Some(999_999.0));
 }
+
+#[test]
+fn test_txt_bomless_utf16_and_long_binary_nul_detection() {
+    use crate::document::Document;
+
+    let sample = "Привет, мир!\n\nHello UTF-16 without BOM.";
+    let bomless_le: Vec<u8> = sample.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let doc_le = document::TxtDocument::from_bytes(&bomless_le, "BomlessLE", "txt")
+        .expect("Должен распознать UTF-16LE без BOM");
+    assert_eq!(doc_le.chapters()[0].paragraphs[0], "Привет, мир!");
+    assert_eq!(
+        doc_le.chapters()[0].paragraphs[1],
+        "Hello UTF-16 without BOM."
+    );
+
+    let bomless_be: Vec<u8> = sample.encode_utf16().flat_map(u16::to_be_bytes).collect();
+    let doc_be = document::TxtDocument::from_bytes(&bomless_be, "BomlessBE", "txt")
+        .expect("Должен распознать UTF-16BE без BOM");
+    assert_eq!(doc_be.chapters()[0].paragraphs[0], "Привет, мир!");
+
+    let mut long_binary = vec![b'A'; 5000];
+    long_binary.extend_from_slice(b"\0\0\x01\x02BINARY");
+    let err = document::TxtDocument::from_bytes(&long_binary, "LongBin", "txt")
+        .err()
+        .unwrap();
+    assert!(matches!(err, crate::document::DocumentError::Corrupted(_)));
+
+    let mut long_utf16_with_tail_nuls: Vec<u8> = "Valid UTF-16 text line.\n"
+        .repeat(120)
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    long_utf16_with_tail_nuls.extend_from_slice(&[0, 0, 0x90, 0, 0, 0]);
+    let err_tail =
+        document::TxtDocument::from_bytes(&long_utf16_with_tail_nuls, "LongBinU16", "txt")
+            .err()
+            .unwrap();
+    assert!(matches!(
+        err_tail,
+        crate::document::DocumentError::Corrupted(_)
+    ));
+}
+
+#[test]
+fn test_markdown_code_block_preserves_indentation_and_blank_lines() {
+    use crate::document::Document;
+
+    let md = "# Code Demo\n\nIntro\n\n```rust\nfn main() {\n    let x = 1;\n\n    println!(\"{}\", x);\n}\n```\n\n```python\n# not a chapter heading\n    return 42\n```";
+    let doc = document::TxtDocument::from_bytes(md.as_bytes(), "CodeMd", "md").unwrap();
+    assert_eq!(doc.chapters().len(), 1);
+    let paragraphs = &doc.chapters()[0].paragraphs;
+    assert!(
+        paragraphs
+            .iter()
+            .any(|p| p == "fn main() {\n    let x = 1;\n\n    println!(\"{}\", x);\n}")
+    );
+    assert!(
+        paragraphs
+            .iter()
+            .any(|p| p == "# not a chapter heading\n    return 42")
+    );
+}

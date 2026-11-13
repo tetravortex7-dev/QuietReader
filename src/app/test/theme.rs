@@ -25,6 +25,7 @@ fn test_twilight_evening_theme() {
 #[test]
 fn test_light_themes_button_borders() {
     use crate::app::theme::ReaderTheme;
+    use crate::core::library::UiDesignMode;
 
     let light_themes = [
         ReaderTheme::Light,
@@ -35,9 +36,8 @@ fn test_light_themes_button_borders() {
 
     for theme in light_themes {
         assert!(!theme.is_dark());
-        assert!(theme.button_stroke_color().is_none());
 
-        let visuals = theme.create_visuals();
+        let visuals = theme.create_visuals_for(UiDesignMode::Cozy);
         assert_eq!(visuals.widgets.inactive.bg_stroke.width, 0.0);
         assert_eq!(visuals.widgets.inactive.fg_stroke.color, theme.text_color());
         assert_eq!(visuals.widgets.hovered.fg_stroke.color, theme.text_color());
@@ -49,7 +49,8 @@ fn test_light_themes_button_borders() {
 
     for theme in dark_themes {
         assert!(theme.is_dark());
-        assert!(theme.button_stroke_color().is_none());
+        let visuals = theme.create_visuals_for(UiDesignMode::Studio);
+        assert_eq!(visuals.override_text_color, Some(theme.text_color()));
     }
 }
 

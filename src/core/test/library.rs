@@ -348,3 +348,45 @@ fn create_file_symlink(source: &Path, target: &Path) -> bool {
         false
     }
 }
+
+#[test]
+fn test_library_entry_progress_percent_and_locale_labels() {
+    use crate::core::library::LibraryEntry;
+    use crate::i18n::UiLanguage;
+
+    let unread = LibraryEntry {
+        status: LibraryReadingStatus::Unread,
+        current_unit: 0,
+        total_units: 0,
+        ..Default::default()
+    };
+    assert_eq!(unread.progress_percent(), 0.0);
+
+    let half = LibraryEntry {
+        status: LibraryReadingStatus::Reading,
+        current_unit: 1,
+        total_units: 2,
+        ..Default::default()
+    };
+    assert!((half.progress_percent() - 50.0).abs() < f32::EPSILON);
+
+    let overflow = LibraryEntry {
+        status: LibraryReadingStatus::Reading,
+        current_unit: 9,
+        total_units: 4,
+        ..Default::default()
+    };
+    assert_eq!(overflow.progress_percent(), 100.0);
+
+    let finished = LibraryEntry {
+        status: LibraryReadingStatus::Finished,
+        current_unit: 0,
+        total_units: 10,
+        ..Default::default()
+    };
+    assert_eq!(finished.progress_percent(), 100.0);
+
+    for lang in UiLanguage::ALL {
+        assert!(!lang.t().library_progress_label.trim().is_empty());
+    }
+}

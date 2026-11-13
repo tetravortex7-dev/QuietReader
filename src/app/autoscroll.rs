@@ -9,6 +9,7 @@ pub struct AutoscrollController {
     pub step_start_scroll_y: f32,
     pub target_step_scroll_y: f32,
     pub is_middle_dragging: bool,
+    pub chapter_dwell_pending: bool,
 }
 
 impl AutoscrollController {
@@ -16,6 +17,7 @@ impl AutoscrollController {
         self.is_active = !self.is_active;
         self.phase_elapsed = 0.0;
         self.in_pause = false;
+        self.chapter_dwell_pending = self.is_active && current_scroll_y + 4.0 >= max_scroll_y;
         self.step_start_scroll_y = current_scroll_y;
         self.target_step_scroll_y = (current_scroll_y + step_distance).min(max_scroll_y);
     }
@@ -26,11 +28,45 @@ impl AutoscrollController {
 
     pub fn stop(&mut self) {
         self.is_active = false;
+        self.chapter_dwell_pending = false;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         ctx: &egui::Context,
+        settings: &AutoScrollSettings,
+        current_scroll_y: f32,
+        max_scroll_y: f32,
+        total_chapters: usize,
+        current_chapter: &mut usize,
+        pending_scroll_y: &mut Option<f32>,
+        last_rendered_chapter: &mut usize,
+        next_non_empty_chapter: Option<usize>,
+    ) {
+        if !self.is_active {
+            return;
+        }
+
+        let dt = ctx.input(|i| i.stable_dt).clamp(0.001, 0.1);
+        ctx.request_repaint();
+        self.update_with_dt(
+            dt,
+            settings,
+            current_scroll_y,
+            max_scroll_y,
+            total_chapters,
+            current_chapter,
+            pending_scroll_y,
+            last_rendered_chapter,
+            next_non_empty_chapter,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_with_dt(
+        &mut self,
+        dt: f32,
         settings: &AutoScrollSettings,
         current_scroll_y: f32,
         max_scroll_y: f32,
@@ -44,49 +80,63 @@ impl AutoscrollController {
             return;
         }
 
-        let dt = ctx.input(|i| i.stable_dt).clamp(0.001, 0.1);
-        ctx.request_repaint();
-
+        let dt = dt.clamp(0.001, 0.1);
         let at_bottom = current_scroll_y + 4.0 >= max_scroll_y;
 
         if at_bottom {
+            if self.chapter_dwell_pending || *pending_scroll_y == Some(0.0) {
+                let dwell_dur = if settings.pause_mode {
+                    settings.pause_duration.max(1.0)
+                } else {
+                    (60.0 / (settings.continuous_speed.max(10.0) / 10.0)).clamp(1.0, 15.0)
+                };
+                self.phase_elapsed += dt;
+                self.in_pause = true;
+                if self.phase_elapsed < dwell_dur {
+                    return;
+                }
+            }
             if let Some(next_idx) = next_non_empty_chapter {
                 *current_chapter = next_idx;
                 *pending_scroll_y = Some(0.0);
                 *last_rendered_chapter = *current_chapter;
                 self.phase_elapsed = 0.0;
                 self.in_pause = true;
+                self.chapter_dwell_pending = true;
             } else {
-                self.is_active = false;
+                self.stop();
             }
-        } else if !settings.pause_mode {
-            let speed = settings.continuous_speed.clamp(5.0, 400.0);
-            let next_y = (current_scroll_y + speed * dt).min(max_scroll_y);
-            *pending_scroll_y = Some(next_y);
         } else {
-            let pause_dur = settings.pause_duration.max(0.2);
-            let move_dur = settings.step_duration.max(0.1);
-
-            self.phase_elapsed += dt;
-
-            if self.in_pause {
-                if self.phase_elapsed >= pause_dur {
-                    self.in_pause = false;
-                    self.phase_elapsed = 0.0;
-                    self.step_start_scroll_y = current_scroll_y;
-                    self.target_step_scroll_y =
-                        (current_scroll_y + settings.step_distance).min(max_scroll_y);
-                }
+            self.chapter_dwell_pending = false;
+            if !settings.pause_mode {
+                let speed = settings.continuous_speed.clamp(5.0, 400.0);
+                let next_y = (current_scroll_y + speed * dt).min(max_scroll_y);
+                *pending_scroll_y = Some(next_y);
             } else {
-                let progress = (self.phase_elapsed / move_dur).clamp(0.0, 1.0);
-                let smooth_t = progress * progress * (3.0 - 2.0 * progress);
-                let current_target = self.step_start_scroll_y
-                    + (self.target_step_scroll_y - self.step_start_scroll_y) * smooth_t;
-                *pending_scroll_y = Some(current_target);
+                let pause_dur = settings.pause_duration.max(0.2);
+                let move_dur = settings.step_duration.max(0.1);
 
-                if self.phase_elapsed >= move_dur {
-                    self.in_pause = true;
-                    self.phase_elapsed = 0.0;
+                self.phase_elapsed += dt;
+
+                if self.in_pause {
+                    if self.phase_elapsed >= pause_dur {
+                        self.in_pause = false;
+                        self.phase_elapsed = 0.0;
+                        self.step_start_scroll_y = current_scroll_y;
+                        self.target_step_scroll_y =
+                            (current_scroll_y + settings.step_distance).min(max_scroll_y);
+                    }
+                } else {
+                    let progress = (self.phase_elapsed / move_dur).clamp(0.0, 1.0);
+                    let smooth_t = progress * progress * (3.0 - 2.0 * progress);
+                    let current_target = self.step_start_scroll_y
+                        + (self.target_step_scroll_y - self.step_start_scroll_y) * smooth_t;
+                    *pending_scroll_y = Some(current_target);
+
+                    if self.phase_elapsed >= move_dur {
+                        self.in_pause = true;
+                        self.phase_elapsed = 0.0;
+                    }
                 }
             }
         }

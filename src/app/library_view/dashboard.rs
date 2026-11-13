@@ -3,7 +3,7 @@ use super::rhythm::render_reading_rhythm_panel;
 use crate::app::icons::{Icon, paint_icon};
 use crate::app::theme::{CozyPalette, ReaderTheme};
 use crate::core::library::{LibraryEntry, LibraryReadingStatus, LibraryStore};
-use crate::i18n::Translations;
+use crate::i18n::{Translations, UiLanguage};
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke, Vec2};
 use std::path::PathBuf;
 
@@ -12,6 +12,7 @@ pub fn render_dashboard(
     library: &LibraryStore,
     theme: &ReaderTheme,
     t: &Translations,
+    lang: UiLanguage,
     cover_loader: &mut CoverLoader,
     open_path: &mut Option<PathBuf>,
 ) {
@@ -52,6 +53,7 @@ pub fn render_dashboard(
             library,
             theme,
             t,
+            lang,
             container_fill,
             border_stroke,
             is_cozy,
@@ -94,6 +96,7 @@ pub fn render_dashboard(
                 library,
                 theme,
                 t,
+                lang,
                 container_fill,
                 border_stroke,
                 is_cozy,
@@ -121,6 +124,7 @@ fn render_continue_reading_panel(
     library: &LibraryStore,
     theme: &ReaderTheme,
     t: &Translations,
+    lang: UiLanguage,
     container_fill: Color32,
     border_stroke: Stroke,
     is_cozy: bool,
@@ -343,6 +347,7 @@ fn render_continue_reading_panel(
                                 idx == 0,
                                 theme,
                                 t,
+                                lang,
                                 is_cozy,
                                 cover_loader,
                                 open_path,
@@ -362,6 +367,7 @@ fn render_in_progress_card(
     is_primary: bool,
     theme: &ReaderTheme,
     t: &Translations,
+    lang: UiLanguage,
     is_cozy: bool,
     cover_loader: &mut CoverLoader,
     open_path: &mut Option<PathBuf>,
@@ -431,15 +437,11 @@ fn render_in_progress_card(
                         &entry.author,
                         &entry.path,
                         4.0,
+                        t.extra.default_book_title,
                     );
                 }
 
-                let format_ext = entry
-                    .path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("DOC")
-                    .to_uppercase();
+                let format_ext = crate::document::registry::format_badge_for_path(&entry.path);
                 let badge_bg = match format_ext.as_str() {
                     "PDF" => CozyPalette::SECONDARY,
                     "FB2" | "CBZ" | "CBR" => CozyPalette::TERTIARY,
@@ -469,13 +471,17 @@ fn render_in_progress_card(
                             .file_stem()
                             .and_then(|s| s.to_str())
                             .unwrap_or("");
-                        let (display_title, display_author) = if entry.title == "Лавандовая комната"
-                            || stem == "Lavender_Room"
+                        let ru_showcase = lang.resolve() == UiLanguage::Ru;
+                        let (display_title, display_author) = if ru_showcase
+                            && (entry.title == "Лавандовая комната" || stem == "Lavender_Room")
                         {
                             ("Лавандовая комната", "Нина Георге")
-                        } else if entry.title == "Солярис" || stem == "Solaris" {
+                        } else if ru_showcase && (entry.title == "Солярис" || stem == "Solaris")
+                        {
                             ("Солярис", "Станислав Лем")
-                        } else if entry.title == "Нейромант" || stem == "Neuromancer" {
+                        } else if ru_showcase
+                            && (entry.title == "Нейромант" || stem == "Neuromancer")
+                        {
                             ("Нейромант", "Уильям Гибсон")
                         } else {
                             (
@@ -484,7 +490,7 @@ fn render_in_progress_card(
                                         .path
                                         .file_name()
                                         .and_then(|n| n.to_str())
-                                        .unwrap_or("Book")
+                                        .unwrap_or(t.extra.default_document_title)
                                 } else {
                                     &entry.title
                                 },
@@ -522,32 +528,26 @@ fn render_in_progress_card(
                             );
                         }
 
-                        let chapter_str = if display_title == "Нейромант" {
-                            "Разд. 2".to_string()
-                        } else if display_title == "Лавандовая комната" {
-                            "Гл. 14".to_string()
-                        } else if display_title == "Солярис" {
-                            "Гл. 8".to_string()
-                        } else if entry.current_unit > 0 {
-                            format!("Гл. {}", entry.current_unit + 1)
+                        let unit_num = (entry.current_unit + 1).to_string();
+                        let chapter_tpl = if stem == "Neuromancer" || entry.title == "Нейромант"
+                        {
+                            t.extra.section_short
                         } else {
-                            "Гл. 1".to_string()
+                            t.extra.chapter_short
                         };
+                        let chapter_str = crate::i18n::fill(chapter_tpl, &[("{n}", &unit_num)]);
                         ui.label(RichText::new(chapter_str).size(10.0).color(if is_cozy {
                             CozyPalette::PRIMARY
                         } else {
                             theme.accent_color()
                         }));
 
-                        let time_str = if display_title == "Лавандовая комната" {
-                            "22 мин назад".to_string()
-                        } else if display_title == "Солярис" {
-                            "3 ч назад".to_string()
-                        } else if display_title == "Нейромант" {
-                            "Вчера".to_string()
-                        } else {
-                            format_relative_time(entry.last_opened_unix)
-                        };
+                        let now = crate::core::license::unix_now();
+                        let time_str = crate::i18n::format::format_relative_time(
+                            entry.last_opened_unix,
+                            now,
+                            lang,
+                        );
                         ui.label(RichText::new(time_str).size(9.5).color(if is_cozy {
                             CozyPalette::ON_SURFACE_VARIANT.gamma_multiply(0.7)
                         } else {
@@ -573,23 +573,7 @@ fn render_in_progress_card(
 
             ui.add_space(4.0);
 
-            let percent: u32 = if entry.title == "Лавандовая комната"
-                || entry.path.file_stem().and_then(|s| s.to_str()) == Some("Lavender_Room")
-            {
-                68
-            } else if entry.title == "Солярис"
-                || entry.path.file_stem().and_then(|s| s.to_str()) == Some("Solaris")
-            {
-                41
-            } else if entry.title == "Нейромант"
-                || entry.path.file_stem().and_then(|s| s.to_str()) == Some("Neuromancer")
-            {
-                19
-            } else if entry.total_units > 0 {
-                ((entry.current_unit + 1) as f32 / entry.total_units as f32 * 100.0).round() as u32
-            } else {
-                0
-            };
+            let percent = entry.progress_percent().round() as u32;
             let fraction = percent as f32 / 100.0;
 
             let (prog_text_rect, _) =
@@ -597,7 +581,7 @@ fn render_in_progress_card(
             ui.painter().text(
                 prog_text_rect.left_center(),
                 egui::Align2::LEFT_CENTER,
-                "Прогресс",
+                t.library_progress_label,
                 egui::FontId::proportional(10.0),
                 if is_cozy {
                     CozyPalette::ON_SURFACE_VARIANT
@@ -709,23 +693,4 @@ fn render_in_progress_card(
                 *open_path = Some(entry.path.clone());
             }
         });
-}
-
-fn format_relative_time(last_opened_unix: u64) -> String {
-    let now = crate::core::license::unix_now();
-    if last_opened_unix == 0 || last_opened_unix > now {
-        return "Недавно".to_string();
-    }
-    let diff = now - last_opened_unix;
-    if diff < 120 {
-        "Только что".to_string()
-    } else if diff < 3600 {
-        format!("{} мин назад", diff / 60)
-    } else if diff < 86400 {
-        format!("{} ч назад", diff / 3600)
-    } else if diff < 172800 {
-        "Вчера".to_string()
-    } else {
-        format!("{} дн. назад", diff / 86400)
-    }
 }

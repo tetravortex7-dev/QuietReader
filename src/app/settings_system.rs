@@ -126,7 +126,7 @@ pub fn render_system_tab(
                                 .strong(),
                         );
                         if ui.button(t.update_download).clicked() {
-                            ui.ctx().open_url(egui::OpenUrl::new_tab(&info.release_url));
+                            crate::platform::open_url(&info.release_url);
                         }
                     }
                     crate::updater::UpdateStatus::Error(ref err) => {
@@ -153,55 +153,20 @@ pub fn render_system_tab(
                 ui.label(t.assoc_hint);
                 ui.add_space(6.0);
 
-                ui.horizontal(|ui| {
-                    if ui.small_button(t.select_all).clicked() {
-                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS
-                            .iter()
-                            .map(|ext| ext.to_string())
-                            .collect();
-                        *on_save_settings = true;
-                    }
-                    if ui.small_button(t.deselect_all).clicked() {
-                        settings.associated_extensions.clear();
-                        *on_save_settings = true;
-                    }
-                    if ui.small_button(t.only_books).clicked() {
-                        settings.associated_extensions =
-                            vec!["fb2".to_string(), "epub".to_string()];
-                        *on_save_settings = true;
-                    }
-                });
+                super::dialogs::render_association_presets(ui, settings, on_save_settings);
                 ui.add_space(6.0);
 
                 egui::Grid::new("settings_associations_grid")
                     .num_columns(2)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
-                        for &ext in crate::platform::SUPPORTED_EXTENSIONS {
-                            let label = crate::i18n::format::format_extension_description(
+                        for &ext in crate::platform::supported_extensions() {
+                            super::dialogs::render_extension_association_checkbox(
+                                ui,
                                 ext,
-                                settings.ui_language,
+                                settings,
+                                on_save_settings,
                             );
-                            let mut is_checked = settings
-                                .associated_extensions
-                                .iter()
-                                .any(|e| e.eq_ignore_ascii_case(ext));
-                            if ui.checkbox(&mut is_checked, label).changed() {
-                                if is_checked {
-                                    if !settings
-                                        .associated_extensions
-                                        .iter()
-                                        .any(|e| e.eq_ignore_ascii_case(ext))
-                                    {
-                                        settings.associated_extensions.push(ext.to_string());
-                                    }
-                                } else {
-                                    settings
-                                        .associated_extensions
-                                        .retain(|e| !e.eq_ignore_ascii_case(ext));
-                                }
-                                *on_save_settings = true;
-                            }
 
                             match crate::platform::check_extension_association_status(ext) {
                                 crate::platform::AssociationStatus::Default => {
@@ -347,9 +312,11 @@ fn render_library_pin_section(
     on_save_settings: &mut bool,
     t: &crate::i18n::Translations,
 ) {
+    let current_id = egui::Id::unique("library_pin_current");
     let draft_id = egui::Id::unique("library_pin_draft");
     let confirm_id = egui::Id::unique("library_pin_confirm");
     let error_id = egui::Id::unique("library_pin_error");
+    let mut current_pin: String = ui.data(|data| data.get_temp(current_id).unwrap_or_default());
     let mut draft: String = ui.data(|data| data.get_temp(draft_id).unwrap_or_default());
     let mut confirm: String = ui.data(|data| data.get_temp(confirm_id).unwrap_or_default());
     let mut error: Option<String> = ui.data(|data| data.get_temp(error_id));
@@ -378,12 +345,35 @@ fn render_library_pin_section(
             ui.add_space(6.0);
 
             if settings.has_library_pin() {
-                if ui.button(t.library_pin_remove).clicked() {
-                    settings.clear_library_pin();
-                    *on_save_settings = true;
-                    draft.clear();
-                    confirm.clear();
-                    error = None;
+                let mut submit_remove = false;
+                ui.horizontal(|ui| {
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut current_pin)
+                            .password(true)
+                            .hint_text(t.library_pin_enter)
+                            .desired_width(130.0),
+                    );
+                    if resp.changed() || resp.gained_focus() {
+                        error = None;
+                    }
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        submit_remove = true;
+                    }
+                    if ui.button(t.library_pin_remove).clicked() {
+                        submit_remove = true;
+                    }
+                });
+                if submit_remove {
+                    if settings.clear_library_pin(&current_pin) {
+                        *on_save_settings = true;
+                        current_pin.clear();
+                        draft.clear();
+                        confirm.clear();
+                        error = None;
+                    } else {
+                        error = Some(t.library_pin_wrong.to_string());
+                        current_pin.clear();
+                    }
                 }
             } else {
                 ui.horizontal(|ui| {
@@ -413,6 +403,7 @@ fn render_library_pin_section(
                     } else {
                         settings.set_library_pin(&draft);
                         *on_save_settings = true;
+                        current_pin.clear();
                         draft.clear();
                         confirm.clear();
                         error = None;
@@ -427,6 +418,7 @@ fn render_library_pin_section(
         });
 
     ui.data_mut(|data| {
+        data.insert_temp(current_id, current_pin);
         data.insert_temp(draft_id, draft);
         data.insert_temp(confirm_id, confirm);
         data.insert_temp(error_id, error);

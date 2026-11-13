@@ -67,4 +67,70 @@ fn test_rtf_corrupted_resilience() {
     let empty = b"";
     let doc2 = crate::document::RtfDocument::from_bytes(empty, "Empty");
     assert!(doc2.is_err());
+
+    let plain = b"Just plain text without RTF header";
+    assert!(crate::document::RtfDocument::from_bytes(plain, "Plain").is_err());
+
+    let xml = b"<?xml version=\"1.0\"?><book/>";
+    assert!(crate::document::RtfDocument::from_bytes(xml, "Xml").is_err());
+
+    let bom_ws = b"\xEF\xBB\xBF  {\\rtf1\\ansi Hello after BOM\\par}";
+    let doc3 = crate::document::RtfDocument::from_bytes(bom_ws, "Bom").unwrap();
+    assert_eq!(doc3.chapters[0].paragraphs, vec!["Hello after BOM"]);
+}
+
+#[test]
+fn test_rtf_codepage_raw_bytes_and_group_control_words() {
+    use crate::document::Document;
+
+    let mut data: Vec<u8> = Vec::new();
+    data.extend_from_slice(b"{\\rtf1\\ansi\\ansicpg1251\\headery720\\footery720{\\info{\\title ");
+    let (tit, _, _) = encoding_rs::WINDOWS_1251.encode("Книга");
+    data.extend_from_slice(&tit);
+    data.extend_from_slice(b"}{\\author ");
+    let (aut, _, _) = encoding_rs::WINDOWS_1251.encode("Автор");
+    data.extend_from_slice(&aut);
+    data.extend_from_slice(b"}}{\\header \\uc1\\ul ");
+    let (hdr, _, _) = encoding_rs::WINDOWS_1251.encode("Колонтитул");
+    data.extend_from_slice(&hdr);
+    data.extend_from_slice(b"\\ulnone\\par}");
+    data.extend_from_slice(b"{\\footer \\up8 ");
+    data.extend_from_slice(b"\\'cf\\'ee\\'e4\\'e2\\'e0\\'eb\\par}");
+    data.extend_from_slice(b"{\\pict BINARY_GARBAGE}");
+    data.extend_from_slice(b"\\uc1\\pard ");
+    let (body, _, _) = encoding_rs::WINDOWS_1251.encode("Привет мир");
+    data.extend_from_slice(&body);
+    data.extend_from_slice(b"\\'21{\\footnote\\uc1\\ul \\u1055?\\'f0\\'e8\\'ec.}");
+    data.extend_from_slice(b"\\par}");
+
+    let doc = crate::document::RtfDocument::from_bytes(&data, "Fallback").unwrap();
+    assert_eq!(doc.metadata().title, "Книга");
+    assert_eq!(doc.metadata().author, "Автор");
+    assert_eq!(doc.header_text(), Some("Колонтитул"));
+    assert_eq!(doc.footer_text(), Some("Подвал"));
+    assert_eq!(doc.footnote("rtf_fn_0"), Some("Прим."));
+
+    let main_paras = &doc.chapters()[0].paragraphs;
+    assert_eq!(main_paras.len(), 1);
+    assert!(main_paras[0].starts_with("Привет мир!"));
+    assert!(main_paras[0].contains("{{note:rtf_fn_0}}"));
+    assert!(!main_paras[0].contains("BINARY_GARBAGE"));
+}
+
+#[test]
+fn test_rtf_utf8_codepage_and_surrogate_pair() {
+    use crate::document::Document;
+
+    let mut data: Vec<u8> = Vec::new();
+    data.extend_from_slice(b"{\\rtf1\\ansi\\ansicpg65001 ");
+    data.extend_from_slice("Сырой UTF-8 текст ".as_bytes());
+    data.extend_from_slice(b"\\u-10179?\\u-9152?{\\footnote\\uc1\\ul ");
+    data.extend_from_slice("Сноска UTF-8".as_bytes());
+    data.extend_from_slice(b"}\\par}");
+
+    let doc = crate::document::RtfDocument::from_bytes(&data, "Utf8").unwrap();
+    let para = &doc.chapters()[0].paragraphs[0];
+    assert!(para.contains("Сырой UTF-8 текст"));
+    assert!(para.contains("\u{1F440}"));
+    assert_eq!(doc.footnote("rtf_fn_0"), Some("Сноска UTF-8"));
 }

@@ -1,4 +1,5 @@
-use crate::cli::{CliAction, MAX_FILES, parse_args};
+use crate::cli::{CliAction, MAX_FILES, parse_args, parse_args_with_lang};
+use crate::i18n::UiLanguage;
 use std::ffi::OsString;
 
 fn args(items: &[&str]) -> impl Iterator<Item = OsString> {
@@ -48,8 +49,19 @@ fn collects_existing_files_and_rejects_missing() {
         other => panic!("expected run, got {other:?}"),
     }
 
-    match parse_args(args(&[dir.join("missing.epub").to_str().unwrap()])) {
+    match parse_args_with_lang(
+        args(&[dir.join("missing.epub").to_str().unwrap()]),
+        UiLanguage::En,
+    ) {
         CliAction::Error(message) => assert!(message.contains("file not found")),
+        other => panic!("expected error, got {other:?}"),
+    }
+
+    match parse_args_with_lang(
+        args(&[dir.join("missing.epub").to_str().unwrap()]),
+        UiLanguage::Ru,
+    ) {
+        CliAction::Error(message) => assert!(message.contains("файл не найден")),
         other => panic!("expected error, got {other:?}"),
     }
 
@@ -67,8 +79,12 @@ fn limits_number_of_files() {
         })
         .collect();
     let refs: Vec<&str> = files.iter().map(String::as_str).collect();
-    match parse_args(args(&refs)) {
+    match parse_args_with_lang(args(&refs), UiLanguage::En) {
         CliAction::Error(message) => assert!(message.contains("too many files")),
+        other => panic!("expected error, got {other:?}"),
+    }
+    match parse_args_with_lang(args(&refs), UiLanguage::Ru) {
+        CliAction::Error(message) => assert!(message.contains("слишком много файлов")),
         other => panic!("expected error, got {other:?}"),
     }
     let _ = std::fs::remove_dir_all(&dir);

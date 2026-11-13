@@ -1,5 +1,5 @@
 use ed25519_dalek::{Signature, VerifyingKey};
-#[cfg(feature = "enable_tests")]
+#[cfg(all(test, feature = "enable_tests"))]
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,6 +90,7 @@ impl LicenseStatus {
         matches!(self, Self::ProActivated { .. })
     }
 
+    #[cfg(all(test, feature = "enable_tests"))]
     pub fn is_trial_active(&self) -> bool {
         matches!(self, Self::TrialActive { .. })
     }
@@ -118,7 +119,7 @@ pub enum TrialError {
     AlreadyStarted,
 }
 
-#[cfg(feature = "enable_tests")]
+#[cfg(all(test, feature = "enable_tests"))]
 pub fn sign_license_key(claims: &LicenseClaims, signing_key_bytes: &[u8; 32]) -> String {
     let payload = serde_json::to_vec(claims).expect("license claims serialize");
     let signing_key = SigningKey::from_bytes(signing_key_bytes);
@@ -197,7 +198,7 @@ fn decode_component(value: &str) -> Option<Vec<u8>> {
     decode_base64(value)
 }
 
-#[allow(dead_code)]
+#[cfg(all(test, feature = "enable_tests"))]
 fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);

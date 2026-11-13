@@ -42,6 +42,8 @@ pub struct ComicViewState {
     #[allow(dead_code)]
     pub is_middle_dragging: bool,
     pub page_input: String,
+    pub pending_target_page: Option<usize>,
+    pub webtoon_scroll_lock: Option<(usize, f32)>,
     pub last_smart_dark: bool,
     pub last_theme_bg: egui::Color32,
     pub last_crop_tolerance: u8,
@@ -148,6 +150,8 @@ impl Default for ComicViewState {
             pan_offset: Vec2::ZERO,
             is_middle_dragging: false,
             page_input: String::new(),
+            pending_target_page: None,
+            webtoon_scroll_lock: None,
             last_smart_dark: false,
             last_theme_bg: egui::Color32::TRANSPARENT,
             last_crop_tolerance: 24,
@@ -165,6 +169,8 @@ impl ComicViewState {
         self.pending_pages.clear();
         self.failed_pages.clear();
         self.pan_offset = Vec2::ZERO;
+        self.pending_target_page = None;
+        self.webtoon_scroll_lock = None;
         self.doc_generation = self.doc_generation.wrapping_add(1);
     }
 
@@ -195,6 +201,52 @@ impl ComicViewState {
         }
     }
 
+    pub fn go_to_page(&mut self, page: usize) {
+        self.current_page = page;
+        self.pending_target_page = Some(page);
+        self.webtoon_scroll_lock = None;
+        self.pan_offset = Vec2::ZERO;
+        self.page_input = (page + 1).to_string();
+    }
+
+    pub(crate) fn webtoon_target_scroll_y(
+        target_page: usize,
+        page_count: usize,
+        est_row_h: f32,
+    ) -> f32 {
+        let clamped = target_page.min(page_count.saturating_sub(1));
+        clamped as f32 * (est_row_h + 8.0)
+    }
+
+    pub(crate) fn resolve_webtoon_visible_page(
+        current_page: usize,
+        first_visible: Option<usize>,
+        page_count: usize,
+        just_jumped: bool,
+        scroll_lock: Option<(usize, f32)>,
+        actual_scroll_y: f32,
+    ) -> (usize, Option<(usize, f32)>) {
+        if page_count == 0 {
+            return (0, None);
+        }
+        if just_jumped {
+            let clamped = current_page.min(page_count.saturating_sub(1));
+            return (clamped, Some((clamped, actual_scroll_y)));
+        }
+        if let Some((locked_page, locked_y)) = scroll_lock
+            && (actual_scroll_y - locked_y).abs() <= 2.0
+        {
+            return (
+                locked_page.min(page_count.saturating_sub(1)),
+                Some((locked_page, locked_y)),
+            );
+        }
+        let next = first_visible
+            .unwrap_or(current_page)
+            .min(page_count.saturating_sub(1));
+        (next, None)
+    }
+
     pub fn next_page(&mut self, total_pages: usize, settings: &ComicSettings) {
         if total_pages == 0 {
             return;
@@ -209,13 +261,18 @@ impl ComicViewState {
         } else {
             self.current_page.saturating_add(1)
         };
-        self.current_page = next.min(total_pages.saturating_sub(1));
-        self.pan_offset = Vec2::ZERO;
+        let target = next.min(total_pages.saturating_sub(1));
+        if settings.reading_mode == "Webtoon" {
+            self.go_to_page(target);
+        } else {
+            self.current_page = target;
+            self.pan_offset = Vec2::ZERO;
+        }
     }
 
     pub fn prev_page(&mut self, settings: &ComicSettings) {
         let is_double = settings.page_layout == "Double" && settings.reading_mode != "Webtoon";
-        self.current_page = if is_double {
+        let target = if is_double {
             if self.current_page <= 1 {
                 0
             } else {
@@ -224,7 +281,12 @@ impl ComicViewState {
         } else {
             self.current_page.saturating_sub(1)
         };
-        self.pan_offset = Vec2::ZERO;
+        if settings.reading_mode == "Webtoon" {
+            self.go_to_page(target);
+        } else {
+            self.current_page = target;
+            self.pan_offset = Vec2::ZERO;
+        }
     }
 
     fn poll_responses(
@@ -398,8 +460,7 @@ impl ComicViewState {
                 if let Some(target) =
                     super::paged_common::parse_page_input(&self.page_input, page_count)
                 {
-                    self.current_page = target;
-                    self.pan_offset = Vec2::ZERO;
+                    self.go_to_page(target);
                 }
                 self.page_input = (self.current_page + 1).to_string();
             } else if !text_edit.has_focus() {
@@ -469,7 +530,7 @@ impl ComicViewState {
             let is_webtoon = settings.reading_mode == "Webtoon";
             if ui.selectable_label(is_webtoon, t.scroll_btn).clicked() {
                 settings.reading_mode = "Webtoon".to_string();
-                self.pan_offset = Vec2::ZERO;
+                self.go_to_page(self.current_page);
             }
 
             ui.separator();
@@ -589,6 +650,47 @@ impl ComicViewState {
         });
     }
 
+    fn page_uv_rect(&self, page: usize, auto_crop: bool) -> egui::Rect {
+        let full = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0));
+        if auto_crop {
+            self.page_bboxes.get(&page).copied().unwrap_or(full)
+        } else {
+            full
+        }
+    }
+
+    fn render_webtoon_placeholder(
+        &self,
+        ui: &mut egui::Ui,
+        page: usize,
+        size: Vec2,
+        theme: &ReaderTheme,
+        t: &crate::i18n::Translations,
+    ) {
+        let (icon, label, font_size, color) = if let Some(err) = self.failed_pages.get(&page) {
+            (
+                Icon::Warning,
+                format!("{} {}: {err}", t.page_load_error, page + 1),
+                13.0,
+                theme.accent_color(),
+            )
+        } else {
+            (
+                Icon::Hourglass,
+                format!("{} {}...", t.page_loading, page + 1),
+                14.0,
+                theme.text_color(),
+            )
+        };
+        ui.allocate_ui_with_layout(
+            size,
+            egui::Layout::centered_and_justified(egui::Direction::TopDown),
+            |ui| {
+                ui.add(IconLabel::new(icon, &label).size(font_size).color(color));
+            },
+        );
+    }
+
     pub fn render(
         &mut self,
         ui: &mut egui::Ui,
@@ -646,6 +748,30 @@ impl ComicViewState {
         ui.separator();
 
         let is_webtoon = settings.reading_mode == "Webtoon";
+        let avail_w = ui.available_width().max(200.0);
+        let zoom_factor = (settings.zoom_percent / 100.0).clamp(0.3, 4.0);
+        let target_w = match settings.fit_mode.as_str() {
+            "FitWidth" => (avail_w - 32.0).clamp(200.0, 4000.0),
+            "Custom" => (avail_w * 0.85 * zoom_factor).clamp(200.0, 6000.0),
+            _ => (avail_w * 0.85).clamp(320.0, 1200.0),
+        };
+        let est_row_h = target_w * 1.4;
+
+        let just_jumped = self.pending_target_page.is_some();
+        if let Some(target_p) = self.pending_target_page.take() {
+            self.current_page = target_p.min(page_count.saturating_sub(1));
+            self.pan_offset = Vec2::ZERO;
+            self.webtoon_scroll_lock = None;
+            if is_webtoon {
+                *pending_scroll_y = Some(Self::webtoon_target_scroll_y(
+                    self.current_page,
+                    page_count,
+                    est_row_h,
+                ));
+            }
+        } else if is_webtoon && pending_scroll_y.is_some() {
+            self.webtoon_scroll_lock = None;
+        }
 
         if is_webtoon {
             let mut scroll_area = ScrollArea::vertical()
@@ -655,78 +781,61 @@ impl ComicViewState {
                 scroll_area = scroll_area.vertical_scroll_offset(offset);
             }
 
-            let avail_w = ui.available_width().max(200.0);
-            let zoom_factor = (settings.zoom_percent / 100.0).clamp(0.3, 4.0);
-            let target_w = match settings.fit_mode.as_str() {
-                "FitWidth" => (avail_w - 32.0).clamp(200.0, 4000.0),
-                "Custom" => (avail_w * 0.85 * zoom_factor).clamp(200.0, 6000.0),
-                _ => (avail_w * 0.85).clamp(320.0, 1200.0),
-            };
-            let est_row_h = target_w * 1.4;
-
-            let scroll_output =
-                scroll_area.show_rows(ui, est_row_h, page_count, |ui, row_range| {
-                    ui.vertical_centered(|ui| {
-                        if let Some(first_visible) = row_range.clone().next() {
-                            self.current_page = first_visible.min(page_count.saturating_sub(1));
-                        }
-                        for p in row_range {
-                            if let Some(tex) = self.request_page_texture(
-                                ctx,
-                                document,
-                                p,
-                                settings,
-                                theme,
-                                smart_scan_allowed,
-                            ) {
-                                let uv_rect = if auto_crop {
-                                    self.page_bboxes.get(&p).copied().unwrap_or(
-                                        egui::Rect::from_min_max(
-                                            egui::Pos2::ZERO,
-                                            egui::Pos2::new(1.0, 1.0),
-                                        ),
-                                    )
+            let mut first_visible = None;
+            let scroll_output = ui
+                .scope(|ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    scroll_area.show_rows(ui, est_row_h, page_count, |ui, row_range| {
+                        ui.vertical_centered(|ui| {
+                            first_visible = row_range.clone().next();
+                            for p in row_range {
+                                if let Some(tex) = self.request_page_texture(
+                                    ctx,
+                                    document,
+                                    p,
+                                    settings,
+                                    theme,
+                                    smart_scan_allowed,
+                                ) {
+                                    let uv_rect = self.page_uv_rect(p, auto_crop);
+                                    let tex_size = tex.size_vec2();
+                                    let content_size = Vec2::new(
+                                        tex_size.x * uv_rect.width(),
+                                        tex_size.y * uv_rect.height(),
+                                    );
+                                    let h = target_w * (content_size.y / content_size.x);
+                                    let img_widget = egui::Image::from_texture(&tex)
+                                        .uv(uv_rect)
+                                        .fit_to_exact_size(Vec2::new(target_w, h));
+                                    ui.add(img_widget);
                                 } else {
-                                    egui::Rect::from_min_max(
-                                        egui::Pos2::ZERO,
-                                        egui::Pos2::new(1.0, 1.0),
-                                    )
-                                };
-                                let tex_size = tex.size_vec2();
-                                let content_size = Vec2::new(
-                                    tex_size.x * uv_rect.width(),
-                                    tex_size.y * uv_rect.height(),
-                                );
-                                let h = target_w * (content_size.y / content_size.x);
-                                let img_widget = egui::Image::from_texture(&tex)
-                                    .uv(uv_rect)
-                                    .fit_to_exact_size(Vec2::new(target_w, h));
-                                ui.add(img_widget);
-                                ui.add_space(8.0);
-                            } else if let Some(err) = self.failed_pages.get(&p) {
-                                let label = format!("{} {}: {err}", t.page_load_error, p + 1);
-                                ui.add(
-                                    IconLabel::new(Icon::Warning, &label)
-                                        .size(13.0)
-                                        .color(theme.accent_color()),
-                                );
-                            } else {
-                                ui.add_space(24.0);
-                                let label = format!("{} {}...", t.page_loading, p + 1);
-                                ui.add(
-                                    IconLabel::new(Icon::Hourglass, &label)
-                                        .size(14.0)
-                                        .color(theme.text_color()),
-                                );
-                                ui.add_space(24.0);
+                                    self.render_webtoon_placeholder(
+                                        ui,
+                                        p,
+                                        Vec2::new(target_w, est_row_h),
+                                        theme,
+                                        t,
+                                    );
+                                }
                             }
-                        }
-                    });
-                });
+                        });
+                    })
+                })
+                .inner;
 
             *current_scroll_y = scroll_output.state.clamped_offset().y;
             *viewport_height = scroll_output.inner_rect.height();
             *max_scroll_y = (scroll_output.content_size.y - *viewport_height).max(0.0);
+            let (resolved_page, next_lock) = Self::resolve_webtoon_visible_page(
+                self.current_page,
+                first_visible,
+                page_count,
+                just_jumped,
+                self.webtoon_scroll_lock,
+                *current_scroll_y,
+            );
+            self.current_page = resolved_page;
+            self.webtoon_scroll_lock = next_lock;
 
             super::paged_common::handle_middle_mouse_scroll(
                 ctx,
@@ -806,17 +915,7 @@ impl ComicViewState {
                     let display_size = geom.page_sizes[idx];
                     if let Some(entry) = self.textures.get(&p) {
                         let tex = entry.0.clone();
-                        let uv_rect = if auto_crop {
-                            self.page_bboxes
-                                .get(&p)
-                                .copied()
-                                .unwrap_or(egui::Rect::from_min_max(
-                                    egui::Pos2::ZERO,
-                                    egui::Pos2::new(1.0, 1.0),
-                                ))
-                        } else {
-                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0))
-                        };
+                        let uv_rect = self.page_uv_rect(p, auto_crop);
                         let img_widget = egui::Image::from_texture(&tex)
                             .uv(uv_rect)
                             .fit_to_exact_size(display_size)
@@ -863,21 +962,15 @@ impl ComicViewState {
             });
 
             for offset in [1usize, 2] {
-                if let Some(page) = self.current_page.checked_add(offset)
-                    && page < page_count
+                for page in [
+                    self.current_page
+                        .checked_add(offset)
+                        .filter(|&p| p < page_count),
+                    self.current_page.checked_sub(offset),
+                ]
+                .into_iter()
+                .flatten()
                 {
-                    let _ = self.request_page_texture(
-                        ctx,
-                        document,
-                        page,
-                        settings,
-                        theme,
-                        smart_scan_allowed,
-                    );
-                }
-            }
-            for offset in [1usize, 2] {
-                if let Some(page) = self.current_page.checked_sub(offset) {
                     let _ = self.request_page_texture(
                         ctx,
                         document,

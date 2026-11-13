@@ -64,6 +64,7 @@ pub(super) fn shelf_cover(
     radius: f32,
     theme: &ReaderTheme,
     cover_loader: &mut CoverLoader,
+    default_title: &str,
 ) -> egui::Response {
     let is_cozy = !theme.is_dark();
     let (cover_rect, cover_response) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -100,7 +101,15 @@ pub(super) fn shelf_cover(
             );
         }
     } else {
-        paint_procedural_cover(ui.painter(), cover_rect, title, author, path, radius);
+        paint_procedural_cover(
+            ui.painter(),
+            cover_rect,
+            title,
+            author,
+            path,
+            radius,
+            default_title,
+        );
     }
 
     ui.painter().rect_stroke(
@@ -117,11 +126,7 @@ pub(super) fn shelf_cover(
         StrokeKind::Inside,
     );
 
-    let format_str = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("DOC")
-        .to_uppercase();
+    let format_str = crate::document::registry::format_badge_for_path(path);
     let badge_bg = match format_str.as_str() {
         "PDF" => CozyPalette::SECONDARY,
         "FB2" | "CBZ" | "CBR" => CozyPalette::TERTIARY,
@@ -157,6 +162,7 @@ pub(super) fn paint_procedural_cover(
     author: &str,
     path: &Path,
     radius: f32,
+    default_title: &str,
 ) {
     let (bg, spine_col, foil) = book_cover_palette(title, path);
 
@@ -217,7 +223,9 @@ pub(super) fn paint_procedural_cover(
     if rect.width() >= 100.0 {
         let clipped = painter.with_clip_rect(rect.shrink(2.0));
         let display_title = if title.trim().is_empty() {
-            path.file_stem().and_then(|s| s.to_str()).unwrap_or("Книга")
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(default_title)
         } else {
             title
         };
@@ -359,15 +367,17 @@ pub(super) fn render_add_book_card(
             theme.panel_bg_color().gamma_multiply(1.2)
         },
     );
-    ui.painter().text(
-        badge_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "EPUB • FB2 • PDF • CBZ",
+    let badge_text_color = if is_cozy {
+        CozyPalette::ON_SURFACE_VARIANT
+    } else {
+        theme.secondary_text_color()
+    };
+    crate::app::icons::paint_dotted_tokens(
+        ui.painter(),
+        badge_rect,
+        &["EPUB", "FB2", "PDF", "CBZ"],
         egui::FontId::proportional(9.5),
-        if is_cozy {
-            CozyPalette::ON_SURFACE_VARIANT
-        } else {
-            theme.secondary_text_color()
-        },
+        badge_text_color,
+        badge_text_color.gamma_multiply(0.7),
     );
 }

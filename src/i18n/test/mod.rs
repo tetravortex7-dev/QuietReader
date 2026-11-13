@@ -199,3 +199,306 @@ fn test_reading_ruler_translations() {
         assert!(!t.reading_ruler_dim_label.is_empty());
     }
 }
+
+#[test]
+fn test_all_locales_extended_and_error_templates_complete() {
+    for lang in UiLanguage::CONCRETE {
+        let t = lang.t();
+        let e = &t.extra;
+
+        let non_empty = [
+            e.format_desc_fb2_zip,
+            e.format_desc_html,
+            e.format_desc_xml,
+            e.format_desc_dot,
+            e.format_desc_zip,
+            e.format_desc_rar,
+            e.format_desc_7z,
+            e.format_desc_tar,
+            e.format_kindle,
+            e.weekday_mon,
+            e.weekday_tue,
+            e.weekday_wed,
+            e.weekday_thu,
+            e.weekday_fri,
+            e.weekday_sat,
+            e.weekday_sun,
+            e.date_recently,
+            e.word_days_one,
+            e.word_days_two,
+            e.word_days_few,
+            e.word_days_many,
+            e.word_pages_two,
+            e.word_chapters_two,
+            e.word_matches_two,
+            e.word_books_two,
+            e.default_book_title,
+            e.default_html_document,
+            e.opds_default_catalog,
+            e.megabytes_short,
+            e.bytes_short,
+            e.err_unsafe_path,
+            e.err_fb2_missing_in_zip,
+            e.err_fb2_missing_root,
+            e.err_fb2_extract_failed,
+            e.err_epub_no_rootfile,
+            e.err_epub_empty_spine,
+            e.err_comic_no_images,
+            e.err_binary_file,
+            e.err_extract_chapters_failed,
+            e.err_image_not_found,
+            e.err_image_empty,
+            e.err_image_zero_size,
+        ];
+        assert!(
+            non_empty.iter().all(|s| !s.trim().is_empty()),
+            "Empty string in locale {:?}",
+            lang
+        );
+
+        let placeholder_checks: &[(&str, &[&str])] = &[
+            (e.chapter_short, &["{n}"]),
+            (e.section_short, &["{n}"]),
+            (e.cli_unknown_option, &["{option}"]),
+            (e.cli_file_not_found, &["{path}"]),
+            (e.cli_too_many_files, &["{limit}"]),
+            (e.err_io_open, &["{target}", "{error}"]),
+            (e.err_io_read, &["{target}", "{error}"]),
+            (e.err_io_metadata, &["{fmt}", "{error}"]),
+            (e.err_io_not_found, &["{path}"]),
+            (e.err_io_archive_read, &["{error}"]),
+            (e.err_cache_dir_create, &["{error}"]),
+            (e.err_cache_file_create, &["{error}"]),
+            (e.err_cache_permissions, &["{error}"]),
+            (e.err_cache_save_page, &["{error}"]),
+            (e.err_file_too_large, &["{fmt}"]),
+            (e.err_file_too_large_limit, &["{fmt}", "{limit}"]),
+            (e.err_data_too_large, &["{fmt}"]),
+            (e.err_data_too_large_limit, &["{fmt}", "{limit}"]),
+            (e.err_decompressed_too_large, &["{fmt}", "{limit}"]),
+            (e.err_archive_parse, &["{fmt}", "{error}"]),
+            (e.err_archive_read, &["{fmt}", "{error}"]),
+            (e.err_archive_too_many_files, &["{fmt}", "{limit}"]),
+            (e.err_archive_entry_too_large, &["{entry}"]),
+            (e.err_archive_entry_too_large_limit, &["{entry}", "{limit}"]),
+            (e.err_archive_entry_too_large_bytes, &["{limit}"]),
+            (e.err_archive_total_too_large, &["{fmt}"]),
+            (
+                e.err_archive_total_too_large_fmt_limit,
+                &["{fmt}", "{limit}"],
+            ),
+            (e.err_archive_total_too_large_limit, &["{limit}"]),
+            (e.err_archive_unsafe_path, &["{fmt}", "{entry}"]),
+            (e.err_archive_entry_not_found, &["{fmt}", "{entry}"]),
+            (e.err_archive_entry_error, &["{entry}", "{error}"]),
+            (e.err_archive_entry_read, &["{entry}", "{error}"]),
+            (e.err_archive_cache_unavailable, &["{fmt}"]),
+            (e.err_epub_parse_opf, &["{error}"]),
+            (e.err_epub_parse_container, &["{error}"]),
+            (e.err_comic_xml_parse, &["{error}"]),
+            (e.err_comic_unsupported_format, &["{ext}"]),
+            (e.err_unsupported_format, &["{path}"]),
+            (e.err_file_too_short, &["{fmt}"]),
+            (e.err_invalid_header, &["{fmt}", "{detail}"]),
+            (e.err_file_empty, &["{fmt}"]),
+            (e.err_invalid_sector_size, &["{fmt}"]),
+            (e.err_parse_failed, &["{fmt}", "{error}"]),
+            (e.err_parse_corrupted, &["{fmt}"]),
+            (e.err_decoder_panic, &["{fmt}"]),
+            (e.err_no_pages, &["{fmt}"]),
+            (e.err_no_readable_text, &["{fmt}"]),
+            (e.err_empty_document, &["{fmt}"]),
+            (e.err_page_out_of_bounds, &["{page}"]),
+            (e.err_page_not_found, &["{page}"]),
+            (e.err_page_get_error, &["{page}", "{error}"]),
+            (e.err_page_invalid_dims, &["{page}"]),
+            (e.err_page_zero_size, &["{page}"]),
+            (e.err_page_render_error, &["{fmt}", "{page}", "{error}"]),
+            (
+                e.err_page_buffer_mismatch,
+                &["{page}", "{expected}", "{actual}"],
+            ),
+            (e.err_page_render_panic, &["{page}"]),
+            (e.err_image_format_error, &["{error}"]),
+            (e.err_image_too_large, &["{width}", "{height}"]),
+            (e.err_image_decode_failed, &["{error}"]),
+            (e.library_collection_count, &["{count}"]),
+            (t.library_export_done, &["{exported}", "{skipped}"]),
+        ];
+        for (tmpl, keys) in placeholder_checks {
+            for key in *keys {
+                assert!(
+                    tmpl.contains(key),
+                    "Template {:?} missing placeholder {} in {:?}",
+                    tmpl,
+                    key,
+                    lang
+                );
+            }
+        }
+    }
+
+    let en = UiLanguage::En.t();
+    let fr = UiLanguage::Fr.t();
+    assert_ne!(fr.text_encoding_auto, en.text_encoding_auto);
+    assert_ne!(fr.layout_single, en.layout_single);
+    assert_ne!(fr.layout_double, en.layout_double);
+    assert_ne!(fr.fit_window, en.fit_window);
+    assert_ne!(fr.fit_width, en.fit_width);
+    assert_ne!(fr.fit_height, en.fit_height);
+    assert_ne!(fr.original_size, en.original_size);
+    assert_ne!(fr.extra.comic_pages_range, en.extra.comic_pages_range);
+
+    let id = UiLanguage::Id.t();
+    assert_ne!(id.status_default, en.status_default);
+    assert_ne!(id.edit_note, en.edit_note);
+}
+
+#[test]
+fn test_arabic_french_and_russian_plurals() {
+    assert_eq!(plural_pages(0, UiLanguage::Ar), "0 صفحات");
+    assert_eq!(plural_pages(1, UiLanguage::Ar), "1 صفحة");
+    assert_eq!(plural_pages(2, UiLanguage::Ar), "2 صفحتان");
+    assert_eq!(plural_pages(3, UiLanguage::Ar), "3 صفحات");
+    assert_eq!(plural_pages(11, UiLanguage::Ar), "11 صفحة");
+    assert_eq!(plural_pages(100, UiLanguage::Ar), "100 صفحة");
+    assert_eq!(plural_pages(102, UiLanguage::Ar), "102 صفحة");
+    assert_eq!(plural_pages(103, UiLanguage::Ar), "103 صفحات");
+
+    assert_eq!(plural_days(0, UiLanguage::Ar), "0 أيام");
+    assert_eq!(plural_days(1, UiLanguage::Ar), "1 يوم");
+    assert_eq!(plural_days(2, UiLanguage::Ar), "2 يومان");
+    assert_eq!(plural_days(5, UiLanguage::Ar), "5 أيام");
+    assert_eq!(plural_days(11, UiLanguage::Ar), "11 يوماً");
+    assert_eq!(plural_days(100, UiLanguage::Ar), "100 يوم");
+
+    assert_eq!(plural_pages(0, UiLanguage::Fr), "0 page");
+    assert_eq!(plural_pages(1, UiLanguage::Fr), "1 page");
+    assert_eq!(plural_pages(2, UiLanguage::Fr), "2 pages");
+
+    assert_eq!(plural_pages(0, UiLanguage::En), "0 pages");
+    assert_eq!(plural_pages(1, UiLanguage::En), "1 page");
+    assert_eq!(plural_pages(2, UiLanguage::En), "2 pages");
+
+    assert_eq!(plural_days(1, UiLanguage::Ru), "1 день");
+    assert_eq!(plural_days(2, UiLanguage::Ru), "2 дня");
+    assert_eq!(plural_days(5, UiLanguage::Ru), "5 дней");
+    assert_eq!(plural_days(21, UiLanguage::Ru), "21 день");
+}
+
+#[test]
+fn test_extension_descriptions_relative_time_and_structured_errors() {
+    let extensions = [
+        "fb2", ".FB2", "fb2.zip", ".fb2.zip", "epub", "mobi", "prc", "azw", "azw3", "doc", "dot",
+        "docx", "rtf", "txt", "md", "markdown", "log", "html", "htm", "xhtml", "xml", "pdf",
+        "djvu", "djv", "cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "tar",
+    ];
+    for lang in UiLanguage::CONCRETE {
+        for ext in extensions {
+            assert!(
+                !format_extension_description(ext, lang).is_empty(),
+                "Missing description for {:?} in {:?}",
+                ext,
+                lang
+            );
+        }
+        assert_eq!(
+            format_extension_description(".EPUB", lang),
+            format_extension_description("epub", lang)
+        );
+        assert_eq!(
+            format_extension_description(".fb2.zip", lang),
+            format_extension_description("fb2.zip", lang)
+        );
+        assert_eq!(
+            format_extension_description("DJV", lang),
+            format_extension_description("djvu", lang)
+        );
+        assert_eq!(format_extension_description("unknown_ext", lang), "");
+
+        assert_eq!(
+            format_relative_time(0, 10_000, lang),
+            lang.t().extra.date_recently
+        );
+        assert_eq!(
+            format_relative_time(10_000, 10_010, lang),
+            lang.t().date_just_now
+        );
+    }
+
+    use crate::document::{DocumentError, errors};
+    let sample_errors = [
+        DocumentError::Io(errors::io_open("EPUB", &"denied")),
+        DocumentError::LimitExceeded(errors::file_too_large_mb("PDF", 300)),
+        DocumentError::LimitExceeded(errors::archive_too_many_files("ZIP", 10_000)),
+        DocumentError::Corrupted(errors::invalid_header("DOC", "OLE2")),
+        DocumentError::Unsupported(errors::unsupported_format("book.xyz")),
+        DocumentError::Corrupted(errors::fb2_missing_root()),
+        DocumentError::Corrupted(errors::page_buffer_mismatch(3, 400, 200)),
+        DocumentError::LimitExceeded(errors::image_too_large(9000, 5000)),
+        DocumentError::Io(errors::cache_permissions(&"perm")),
+        DocumentError::PasswordRequired,
+    ];
+    for lang in UiLanguage::CONCRETE {
+        for err in &sample_errors {
+            let formatted = format_document_error(err, lang);
+            assert!(!formatted.is_empty());
+            assert!(!formatted.contains('\x1e'));
+            assert!(!formatted.contains('\x1f'));
+            if !matches!(lang, UiLanguage::Ru | UiLanguage::Uk) {
+                assert!(
+                    !formatted
+                        .chars()
+                        .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)),
+                    "Unexpected Cyrillic in {:?}: {}",
+                    lang,
+                    formatted
+                );
+            }
+        }
+    }
+    assert_ne!(
+        format_document_error(&sample_errors[1], UiLanguage::En),
+        format_document_error(&sample_errors[1], UiLanguage::Fr)
+    );
+    assert_ne!(
+        format_document_error(&sample_errors[1], UiLanguage::En),
+        format_document_error(&sample_errors[1], UiLanguage::Ar)
+    );
+}
+
+#[test]
+fn test_no_forbidden_ui_symbols_in_translations() {
+    let is_forbidden = |c: char| -> bool {
+        matches!(
+            c,
+            '\u{00B7}'
+                | '\u{2022}'
+                | '\u{2023}'
+                | '\u{2043}'
+                | '\u{2219}'
+                | '\u{22C5}'
+                | '\u{2190}'..='\u{21FF}'
+                | '\u{25A0}'..='\u{25FF}'
+                | '\u{2600}'..='\u{27BF}'
+                | '\u{2B00}'..='\u{2BFF}'
+                | '\u{1F000}'..='\u{1FAFF}'
+        )
+    };
+
+    for lang in UiLanguage::CONCRETE {
+        let t = lang.t();
+        let serialized = format!("{t:?}");
+        if let Some(bad) = serialized.chars().find(|&c| is_forbidden(c)) {
+            panic!(
+                "Forbidden UI symbol U+{:04X} ({bad}) found in locale {:?}",
+                bad as u32, lang
+            );
+        }
+        assert!(!t.library_collection_sub.is_empty());
+        assert!(!t.fonts[0].badge_tag.is_empty());
+        assert!(!t.fonts[5].badge_tag.is_empty());
+        assert!(!t.fonts[7].badge_tag.is_empty());
+        assert!(!t.fonts[8].badge_tag.is_empty());
+    }
+}

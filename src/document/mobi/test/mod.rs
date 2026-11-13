@@ -221,3 +221,126 @@ fn test_11_mobi_if_present_decodes_cyrillic() {
     assert!(!text.contains("\u{0420}\u{045F}"));
     assert!(!text.contains("\u{0421}\u{0402}"));
 }
+
+#[test]
+fn test_mobi_extract_note_at_utf8_mid_char_and_4000_byte_boundary() {
+    let template = "<html><body><p>Текст <a filepos=\"0000000000\"><sup>1</sup></a></p><p>Сноска: кириллица</p><p id=\"long\">{long}</p><a href=\"#long\">[2]</a></body></html>";
+    let mid_char_pos = template.find("Сноска").unwrap() + "Сноска".len() - 1;
+    assert!(!template.is_char_boundary(mid_char_pos));
+    let long_body = "Ж".repeat(2500);
+    let html = template
+        .replace("0000000000", &format!("{mid_char_pos:010}"))
+        .replace("{long}", &long_body);
+    let (prepared, notes) = super::links::preprocess_links(&html);
+    let pos_key = format!("mobi_pos_{mid_char_pos}");
+    assert_eq!(
+        notes.get(&pos_key).map(String::as_str),
+        Some("а: кириллица")
+    );
+    assert!(prepared.contains(&crate::document::footnote_token(&pos_key)));
+    let long_note = notes
+        .get("mobi_hash_long")
+        .expect("4000+ byte Cyrillic note");
+    assert!(!long_note.is_empty());
+    assert!(long_note.chars().all(|c| c == 'Ж'));
+}
+
+#[test]
+fn test_mobi_cp1251_filepos_maps_raw_offset_to_decoded_utf8() {
+    let filler = "Русский текст до сноски. ".repeat(12);
+    let template = format!(
+        "<html><body><p>{filler}<a filepos=\"0000000000\"><sup>1</sup></a></p><p>Целевая сноска на кириллице.</p></body></html>"
+    );
+    let (raw_template, _, _) = encoding_rs::WINDOWS_1251.encode(&template);
+    let target_bytes = encoding_rs::WINDOWS_1251
+        .encode("<p>Целевая сноска на кириллице.")
+        .0;
+    let raw_pos = raw_template
+        .windows(target_bytes.len())
+        .position(|w| w == target_bytes.as_ref())
+        .expect("target offset in CP1251 bytes");
+    let html = template.replace("0000000000", &format!("{raw_pos:010}"));
+    let (raw_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(&html);
+    let decoded = super::decode::decode_mobi_content(&raw_bytes, 1251);
+    assert!(raw_pos < decoded.len());
+    let (prepared, notes) = super::links::preprocess_links_with_raw(&decoded, &raw_bytes, 1251);
+    let key = format!("mobi_pos_{raw_pos}");
+    assert_eq!(
+        notes.get(&key).map(String::as_str),
+        Some("Целевая сноска на кириллице.")
+    );
+    assert!(prepared.contains(&crate::document::footnote_token(&key)));
+}
+
+#[test]
+fn test_mobi_extract_note_by_attr_whitespace_cyrillic_and_data_id() {
+    let html = concat!(
+        r##"<html><body><p>Сноска <a href="#n1"><sup>1</sup></a>.</p>"##,
+        r##"<p data-id="n1">Ложная сноска</p>"##,
+        r##"<p id =  "Привет" data-extra="x">Другой абзац</p>"##,
+        r##"<p id = 'n1'>Настоящая сноска.</p></body></html>"##,
+    );
+    let (prepared, notes) = super::links::preprocess_links(html);
+    assert_eq!(
+        notes.get("mobi_hash_n1").map(String::as_str),
+        Some("Настоящая сноска.")
+    );
+    assert!(prepared.contains("{{note:mobi_hash_n1}}"));
+}
+
+#[test]
+fn test_mobi_abbr_aside_ignored_and_nested_marker_tags_supported() {
+    let html = concat!(
+        r##"<html><body>"##,
+        r##"<abbr title="abbr" href="#n1">1</abbr> <aside href="#n1">1</aside> "##,
+        r##"<a name="sec"/><a name="unclosed">Раздел <a href="#n1">[<sup>1</sup>]</a>"##,
+        r##"<a href="#n2"><sup>2</sup></a> <a href="#n3"><span><i>*</i></span></a> "##,
+        r##"<a href="#n4"><sup>&dagger;</sup></a> <a href="#n5"><b>a</b></a>"##,
+        r##"<p id="n1">Сноска 1</p><p id="n2">Сноска 2</p><p id="n3">Сноска 3</p>"##,
+        r##"<p id="n4">Сноска 4</p><p id="n5">Сноска 5</p></body></html>"##,
+    );
+    let (prepared, notes) = super::links::preprocess_links(html);
+    assert!(prepared.contains(r##"<abbr title="abbr" href="#n1">1</abbr>"##));
+    assert!(prepared.contains(r##"<aside href="#n1">1</aside>"##));
+    assert_eq!(
+        notes.get("mobi_hash_n1").map(String::as_str),
+        Some("Сноска 1")
+    );
+    assert_eq!(
+        notes.get("mobi_hash_n2").map(String::as_str),
+        Some("Сноска 2")
+    );
+    assert_eq!(
+        notes.get("mobi_hash_n3").map(String::as_str),
+        Some("Сноска 3")
+    );
+    assert_eq!(
+        notes.get("mobi_hash_n4").map(String::as_str),
+        Some("Сноска 4")
+    );
+    assert_eq!(
+        notes.get("mobi_hash_n5").map(String::as_str),
+        Some("Сноска 5")
+    );
+}
+
+#[test]
+fn test_parse_mobi_html_preserves_short_first_paragraph() {
+    let html = "<p>Привет!</p><p>Второй абзац главы.</p><mbp:pagebreak/><p>Кто там?</p><p>Тишина в коридоре.</p>";
+    let (chapters, _) = parse_mobi_html(html, "Тест");
+    assert_eq!(chapters.len(), 2);
+    assert_eq!(
+        chapters[0].paragraphs,
+        vec!["Привет!", "Второй абзац главы."]
+    );
+    assert_eq!(
+        chapters[1].paragraphs,
+        vec!["Кто там?", "Тишина в коридоре."]
+    );
+
+    let with_h1 = "<h1>Встреча</h1><p>Да!</p><p>Он вошёл.</p>";
+    let (h1_chapters, _) = parse_mobi_html(with_h1, "Тест");
+    assert_eq!(h1_chapters.len(), 1);
+    assert_eq!(h1_chapters[0].title, "Встреча");
+    assert_eq!(h1_chapters[0].paragraphs, vec!["Да!", "Он вошёл."]);
+}

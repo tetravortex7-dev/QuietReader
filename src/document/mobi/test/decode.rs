@@ -92,3 +92,43 @@ fn test_decode_metadata_string() {
     let decoded_utf8 = decode_metadata_string(utf8_title, None, 1252);
     assert_eq!(decoded_utf8, "Преступление и наказание");
 }
+
+#[test]
+fn test_western_european_texts_not_misdetected_as_cp1252_mojibake() {
+    let cases = [
+        (
+            "L'Île mystérieuse — Noël à Nîmes, où l'on a créé l'œuvre pour « À bientôt… »",
+            "Été à Paris",
+        ),
+        (
+            "Über größere Straßen gehen die Mädchen — Grüße aus München, weißt du? Süß und heiß.",
+            "Große Grüße",
+        ),
+        (
+            "Bæði í óðnum með öðrum — Það er góð bók um Álfhildi og Þórhall við ána á Íslandi.",
+            "Þjóð og bók",
+        ),
+    ];
+
+    for (sample, title) in cases {
+        let long_book = format!(
+            "<html><body>{}</body></html>",
+            vec![format!("<p>{sample}</p>"); 25].join("\n")
+        );
+        assert!(!is_cp1252_mojibake(sample));
+        assert!(!is_cp1252_mojibake(&long_book));
+        assert_eq!(repair_cp1252_mojibake(sample), sample);
+        assert_eq!(decode_mobi_content(sample.as_bytes(), 1252), sample);
+        assert_eq!(decode_mobi_content(long_book.as_bytes(), 1252), long_book);
+
+        let (cp1252_sample, _, had_err1) = encoding_rs::WINDOWS_1252.encode(sample);
+        if !had_err1 {
+            assert!(!is_cyrillic_windows1251(&cp1252_sample));
+            assert_eq!(decode_mobi_content(&cp1252_sample, 1252), sample);
+        }
+        let (cp1252_title, _, had_err2) = encoding_rs::WINDOWS_1252.encode(title);
+        if !had_err2 {
+            assert_eq!(decode_metadata_string(&cp1252_title, None, 1252), title);
+        }
+    }
+}

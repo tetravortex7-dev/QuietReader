@@ -666,3 +666,86 @@ fn test_fb2_footnotes_from_comments_body_strip_formatting() {
         })
     );
 }
+
+#[test]
+fn test_find_xml_encoding_and_decode_with_unicode_case_shifts() {
+    use crate::document::fb2::find_xml_encoding;
+
+    assert_eq!(
+        find_xml_encoding("<!-- İ --> <?xml version=\"1.0\" encoding=\"windows-1251\"?>"),
+        Some("windows-1251")
+    );
+    assert_eq!(
+        find_xml_encoding("<!-- İİİİİİ --> <?xml ENCODING = 'UTF-8' ?>"),
+        Some("UTF-8")
+    );
+    assert_eq!(
+        find_xml_encoding("<!-- ẞẞ ẞ --> <?xml version='1.0' encoding=\"CP1251\"?>"),
+        Some("CP1251")
+    );
+    assert_eq!(
+        find_xml_encoding("<!-- my_encoding=\"utf-8\" --> <FictionBook/>"),
+        None
+    );
+
+    let cp1251_xml = "<!-- Предыдущий комментарий с кириллицей до декларации --><?xml version=\"1.0\" ENCODING=\"windows-1251\"?><FictionBook><description><title-info><book-title>Заголовок</book-title></title-info></description><body><section><p>Текст книги в Windows-1251</p></section></body></FictionBook>";
+    let (encoded, _, _) = encoding_rs::WINDOWS_1251.encode(cp1251_xml);
+    let doc = Fb2Document::from_bytes(&encoded).expect("windows-1251 fb2 with prefix");
+    assert_eq!(doc.metadata().title, "Заголовок");
+    assert!(
+        doc.chapters()[0]
+            .paragraphs
+            .iter()
+            .any(|p| p.contains("Текст книги в Windows-1251"))
+    );
+
+    let utf8_xml = "<!-- İİİ ẞẞ --><?xml version=\"1.0\" encoding=\"utf-8\"?><FictionBook><description><title-info><book-title>UTF8 Книга</book-title></title-info></description><body><section><p>İstanbul ẞ</p></section></body></FictionBook>";
+    let utf8_doc =
+        Fb2Document::from_bytes(utf8_xml.as_bytes()).expect("utf8 fb2 with case-shifting prolog");
+    assert_eq!(utf8_doc.metadata().title, "UTF8 Книга");
+}
+
+#[test]
+fn test_fb2_lenient_ignores_intertag_junk_and_resets_buffers() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook>
+  <description>
+    <title-info>
+      <genre>prose</genre>
+      <annotation><p>Аннотация не является главой</p></annotation>
+      <book-title>Чистое название</book-title>
+      <author><first-name>Анна</first-name><last-name>Каренина</last-name></author>
+    </title-info>
+  </description>
+  <body>
+    Посторонний межтеговый текст до секции
+    <p>Незавершённый старый абзац
+    <section>
+      мусор до заголовка
+      <title>грязь<p>Глава 1</p>хвост</title>
+      <p>Первый <strong>чистый</strong> абзац.</p>
+    </section>
+    <section>
+      <title><p>Глава 2</p></title>
+      <p>Второй абзац.</p>
+    </section>
+  </body>
+</FictionBook>"#;
+
+    let (title, author, chapters) = super::lenient::extract_fb2_lenient(xml);
+    assert_eq!(title, "Чистое название");
+    assert_eq!(author, "Анна Каренина");
+    assert_eq!(chapters.len(), 2);
+    assert_eq!(chapters[0].title, "Глава 1");
+    assert_eq!(chapters[0].paragraphs, vec!["Первый <b>чистый</b> абзац."]);
+    assert_eq!(chapters[1].title, "Глава 2");
+    assert_eq!(chapters[1].paragraphs, vec!["Второй абзац."]);
+
+    let no_author = "<FictionBook><genre>sf</genre><book-title>Без автора</book-title><section><title><p>Раздел</p></title><p>Текст раздела.</p></section></FictionBook>";
+    let (t2, a2, c2) = super::lenient::extract_fb2_lenient(no_author);
+    assert_eq!(t2, "Без автора");
+    assert_eq!(a2, "");
+    assert_eq!(c2.len(), 1);
+    assert_eq!(c2[0].title, "Раздел");
+    assert_eq!(c2[0].paragraphs, vec!["Текст раздела."]);
+}

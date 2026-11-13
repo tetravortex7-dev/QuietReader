@@ -1,10 +1,12 @@
+use crate::opds::covers::{
+    BoundedLruMap, DEFAULT_MAX_COVER_CACHE_BYTES, DEFAULT_MAX_COVER_CACHE_ENTRIES,
+};
 use crate::opds::{OpdsAuth, OpdsCoverManager};
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
-use std::collections::HashMap;
 
 pub struct OpdsCoverCache {
     manager: OpdsCoverManager,
-    textures: HashMap<String, Option<TextureHandle>>,
+    textures: BoundedLruMap<TextureHandle>,
 }
 
 impl Default for OpdsCoverCache {
@@ -15,10 +17,22 @@ impl Default for OpdsCoverCache {
 
 impl OpdsCoverCache {
     pub fn new() -> Self {
+        Self::with_limits(
+            DEFAULT_MAX_COVER_CACHE_ENTRIES,
+            DEFAULT_MAX_COVER_CACHE_BYTES,
+        )
+    }
+
+    pub fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
         Self {
-            manager: OpdsCoverManager::new(),
-            textures: HashMap::new(),
+            manager: OpdsCoverManager::with_limits(max_entries, max_bytes),
+            textures: BoundedLruMap::new(max_entries, max_bytes),
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.textures.clear();
+        self.manager.clear();
     }
 
     pub fn poll(&mut self, ctx: &egui::Context) {
@@ -34,17 +48,19 @@ impl OpdsCoverCache {
         auth: Option<OpdsAuth>,
     ) -> Option<TextureHandle> {
         self.poll(ctx);
-        if let Some(cached) = self.textures.get(url) {
-            return cached.clone();
+        if let Some(cached) = self.textures.get_cloned(url) {
+            return Some(cached);
         }
 
         let cover = self.manager.get_cover(url, auth)?;
+        let byte_size = cover.width.saturating_mul(cover.height).saturating_mul(4);
         let handle = ctx.load_texture(
-            format!("opds_cover_{}", url.chars().take(60).collect::<String>()),
+            format!("opds_cover_{url}"),
             ColorImage::from_rgba_unmultiplied([cover.width, cover.height], &cover.rgba),
             TextureOptions::LINEAR,
         );
-        self.textures.insert(url.to_string(), Some(handle.clone()));
+        self.textures
+            .insert(url.to_string(), handle.clone(), byte_size);
         Some(handle)
     }
 }

@@ -70,6 +70,10 @@ pub struct DictionaryState {
 impl DictionaryState {
     pub fn new() -> Self {
         let packs_dir = crate::dictionary::data_dir();
+        Self::from_packs_dir(packs_dir)
+    }
+
+    pub(crate) fn from_packs_dir(packs_dir: PathBuf) -> Self {
         let installed = stardict::discover(&packs_dir);
         let catalog = catalog::load_cached(&packs_dir).unwrap_or_default();
         let wiki_lang = UiLanguage::Auto.resolve().code().to_string();
@@ -215,7 +219,10 @@ impl DictionaryState {
     }
 
     pub fn delete_pack(&mut self, id: &str) {
-        let dir = self.packs_dir.join(id);
+        let Some(safe_id) = install::sanitize_pack_id(id) else {
+            return;
+        };
+        let dir = self.packs_dir.join(safe_id);
         let _ = std::fs::remove_dir_all(dir);
         self.refresh_installed();
     }
@@ -606,14 +613,16 @@ fn render_catalog(
                         ui.horizontal(|ui| {
                             let installed = state.installed.iter().any(|pack| pack.id == entry.id);
                             ui.label(RichText::new(&entry.id).strong().color(theme.text_color()));
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} · {:.1} MB",
-                                    entry.headwords,
-                                    entry.size_mb()
-                                ))
-                                .small()
-                                .color(theme.text_color().gamma_multiply(0.7)),
+                            let meta_size = egui::TextStyle::Small.resolve(ui.style()).size;
+                            let meta_color = theme.text_color().gamma_multiply(0.7);
+                            let words_str = entry.headwords.to_string();
+                            let size_str = format!("{:.1} MB", entry.size_mb());
+                            crate::app::icons::dotted_strip(
+                                ui,
+                                &[&words_str, &size_str],
+                                meta_size,
+                                meta_color,
+                                meta_color,
                             );
                             if installed {
                                 if ui.button(t.dictionary_delete).clicked() {
@@ -714,9 +723,13 @@ fn render_words(
             .add_filter("CSV", &["csv"])
             .set_file_name("quietreader_words.csv")
             .save_file()
-        && std::fs::write(&path, words_to_csv(&settings.saved_words)).is_ok()
     {
-        state.words_notice = Some(t.vocabulary_exported.to_string());
+        state.words_notice = Some(super::bookmarks_view::save_export_text(
+            &path,
+            &words_to_csv(&settings.saved_words),
+            t.vocabulary_exported,
+            t.library_export_failed,
+        ));
     }
 }
 
@@ -730,17 +743,12 @@ pub(crate) fn words_to_csv(words: &[crate::settings::SavedWord]) -> String {
             &word.language,
             &word.book,
         ];
-        let row: Vec<String> = fields.iter().map(|value| csv_field(value)).collect();
+        let row: Vec<String> = fields
+            .iter()
+            .map(|value| crate::core::csv_field(value))
+            .collect();
         csv.push_str(&row.join(","));
         csv.push('\n');
     }
     csv
-}
-
-fn csv_field(value: &str) -> String {
-    if value.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
 }

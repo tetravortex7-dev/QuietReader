@@ -2,7 +2,7 @@ use super::footnotes::{self, ParagraphStyle};
 use eframe::egui::{self, Color32, Stroke};
 use std::collections::HashSet;
 
-pub(super) fn append_with_highlight(
+pub(crate) fn append_with_highlight(
     job: &mut egui::text::LayoutJob,
     text: &str,
     base_format: &egui::TextFormat,
@@ -10,12 +10,13 @@ pub(super) fn append_with_highlight(
     is_active_hit: bool,
     quotes: &[(&str, Color32)],
 ) {
-    if quotes.is_empty() {
+    if quotes.is_empty() || quotes.iter().all(|(quote, _)| quote.trim().is_empty()) {
         append_with_query_highlight(job, text, base_format, query, is_active_hit);
         return;
     }
 
     let lower_text = crate::core::normalize_search_text(text);
+    let mut index: Option<crate::core::NormalizedSearchIndex> = None;
     let mut intervals: Vec<(usize, usize, Color32)> = Vec::new();
 
     for (quote_text, marker_color) in quotes {
@@ -24,18 +25,15 @@ pub(super) fn append_with_highlight(
             continue;
         }
         let lower_q = crate::core::normalize_search_text(q_clean);
-        let mut search_from = 0;
-        while let Some(found_idx) = lower_text[search_from..].find(&lower_q) {
-            let abs_start = search_from + found_idx;
-            let abs_end = abs_start + lower_q.len();
-            let safe_start = text.floor_char_boundary(abs_start);
-            let safe_end = text.ceil_char_boundary(abs_end.min(text.len()));
-            if safe_start < safe_end {
-                intervals.push((safe_start, safe_end, *marker_color));
-            }
-            search_from = abs_end.max(search_from + 1);
-            if search_from >= lower_text.len() {
-                break;
+        if lower_q.is_empty() || !lower_text.contains(&lower_q) {
+            continue;
+        }
+        let idx = index.get_or_insert_with(|| {
+            crate::core::NormalizedSearchIndex::from_normalized(text, lower_text.clone())
+        });
+        for (start, end) in idx.find_normalized_ranges(&lower_q) {
+            if start < end {
+                intervals.push((start, end, *marker_color));
             }
         }
     }
@@ -48,9 +46,10 @@ pub(super) fn append_with_highlight(
     intervals.sort_by_key(|&(s, _, _)| s);
     let mut last_idx = 0;
     for (start, end, color) in intervals {
-        if start < last_idx {
+        if end <= last_idx {
             continue;
         }
+        let start = start.max(last_idx);
         if start > last_idx {
             append_with_query_highlight(
                 job,
@@ -85,7 +84,17 @@ fn append_with_query_highlight(
     }
 
     let lower_text = crate::core::normalize_search_text(text);
-    let mut last_idx = 0;
+    if !lower_text.contains(&q) {
+        job.append(text, 0.0, base_format.clone());
+        return;
+    }
+
+    let index = crate::core::NormalizedSearchIndex::from_normalized(text, lower_text);
+    let ranges = index.find_normalized_ranges(&q);
+    if ranges.is_empty() {
+        job.append(text, 0.0, base_format.clone());
+        return;
+    }
 
     let highlight_format = if is_active_hit {
         egui::TextFormat {
@@ -105,23 +114,17 @@ fn append_with_query_highlight(
         }
     };
 
-    while let Some(found_idx) = lower_text[last_idx..].find(&q) {
-        let match_start = last_idx + found_idx;
-        let match_end = match_start + q.len();
-
-        let safe_start = text.floor_char_boundary(match_start);
-        let safe_end = text.ceil_char_boundary(match_end.min(text.len()));
-
-        if safe_start > last_idx {
-            job.append(&text[last_idx..safe_start], 0.0, base_format.clone());
+    let mut last_idx = 0;
+    for (start, end) in ranges {
+        if end <= last_idx {
+            continue;
         }
-
-        job.append(&text[safe_start..safe_end], 0.0, highlight_format.clone());
-        last_idx = safe_end;
-
-        if last_idx >= text.len() {
-            break;
+        let start = start.max(last_idx);
+        if start > last_idx {
+            job.append(&text[last_idx..start], 0.0, base_format.clone());
         }
+        job.append(&text[start..end], 0.0, highlight_format.clone());
+        last_idx = end;
     }
 
     if last_idx < text.len() {

@@ -1,28 +1,127 @@
+use super::decode::{
+    decode_mobi_content, is_cp1251_mojibake, is_cp1252_mojibake, resolve_mobi_encoding,
+};
 use std::collections::HashMap;
 
+pub(crate) struct RawMobiContext<'a> {
+    clean_bytes: &'a [u8],
+    bom_len: usize,
+    header_codepage: u32,
+    effective_enc: &'static encoding_rs::Encoding,
+    cp1251_mojibake: bool,
+}
+
+impl<'a> RawMobiContext<'a> {
+    pub(crate) fn new(raw_bytes: &'a [u8], html: &str, header_codepage: u32) -> Self {
+        let bom_len = if raw_bytes.starts_with(b"\xEF\xBB\xBF") {
+            3
+        } else {
+            0
+        };
+        let clean_bytes = &raw_bytes[bom_len..];
+        let detected = resolve_mobi_encoding(clean_bytes, header_codepage);
+        let cp1251_mojibake =
+            detected != encoding_rs::UTF_8 && is_cp1251_mojibake(&detected.decode(clean_bytes).0);
+        let effective_enc = if detected != encoding_rs::UTF_8
+            && !cp1251_mojibake
+            && is_cp1252_mojibake(&detected.decode(clean_bytes).0)
+        {
+            encoding_rs::WINDOWS_1251
+        } else if detected == encoding_rs::UTF_8 && html.len() == clean_bytes.len() {
+            encoding_rs::UTF_8
+        } else {
+            detected
+        };
+        Self {
+            clean_bytes,
+            bom_len,
+            header_codepage,
+            effective_enc,
+            cp1251_mojibake,
+        }
+    }
+
+    fn resolve_offset(&self, html: &str, raw_offset: usize) -> usize {
+        let adj = raw_offset
+            .saturating_sub(self.bom_len)
+            .min(self.clean_bytes.len());
+        let byte_offset = if self.cp1251_mojibake {
+            decode_mobi_content(&self.clean_bytes[..adj], self.header_codepage).len()
+        } else if self.effective_enc == encoding_rs::UTF_8 {
+            adj
+        } else {
+            decoded_utf8_len(self.effective_enc, &self.clean_bytes[..adj])
+        };
+        html.floor_char_boundary(byte_offset.min(html.len()))
+    }
+}
+
+fn decoded_utf8_len(enc: &'static encoding_rs::Encoding, input: &[u8]) -> usize {
+    if input.is_empty() {
+        return 0;
+    }
+    let mut decoder = enc.new_decoder_without_bom_handling();
+    let mut buf = [0u8; 4096];
+    let mut total_read = 0usize;
+    let mut total_written = 0usize;
+    loop {
+        let (result, read, written, _) =
+            decoder.decode_to_utf8(&input[total_read..], &mut buf, true);
+        total_read += read;
+        total_written += written;
+        if matches!(result, encoding_rs::CoderResult::InputEmpty) || (read == 0 && written == 0) {
+            break;
+        }
+    }
+    total_written
+}
+
+#[cfg(all(test, feature = "enable_tests"))]
 pub fn preprocess_links(html: &str) -> (String, HashMap<String, String>) {
+    preprocess_links_internal(html, None)
+}
+
+pub(crate) fn preprocess_links_with_raw(
+    html: &str,
+    raw_bytes: &[u8],
+    header_codepage: u32,
+) -> (String, HashMap<String, String>) {
+    let ctx = RawMobiContext::new(raw_bytes, html, header_codepage);
+    preprocess_links_internal(html, Some(&ctx))
+}
+
+fn preprocess_links_internal(
+    html: &str,
+    raw_ctx: Option<&RawMobiContext<'_>>,
+) -> (String, HashMap<String, String>) {
     let lower = html.to_ascii_lowercase();
     let mut output = String::with_capacity(html.len());
     let mut notes = HashMap::new();
     let mut last = 0;
     let mut search = 0;
 
-    while let Some(relative) = lower[search..].find("<a") {
-        let tag_start = search + relative;
-        let Some(tag_end_rel) = lower[tag_start..].find('>') else {
-            break;
-        };
-        let tag_end = tag_start + tag_end_rel;
+    while let Some((tag_start, tag_end)) = find_anchor_start(&lower, search) {
         let tag = &html[tag_start..=tag_end];
+        if tag.trim_end().ends_with("/>") {
+            search = tag_end + 1;
+            continue;
+        }
         let Some(close_rel) = lower[tag_end + 1..].find("</a>") else {
             search = tag_end + 1;
             continue;
         };
         let close_start = tag_end + 1 + close_rel;
+        if let Some((inner_start, inner_end)) =
+            find_anchor_start(&lower[..close_start], tag_end + 1)
+            && !lower[inner_start..=inner_end].trim_end().ends_with("/>")
+        {
+            search = tag_end + 1;
+            continue;
+        }
         let close_end = close_start + 4;
         let label = &html[tag_end + 1..close_start];
 
-        if let Some((id, note)) = note_reference(tag, label, html) {
+        if let Some((id, note)) = note_reference(tag, label, html, &lower, raw_ctx) {
             output.push_str(&html[last..tag_start]);
             output.push_str(&crate::document::footnote_token(&id));
             last = close_end;
@@ -35,7 +134,32 @@ pub fn preprocess_links(html: &str) -> (String, HashMap<String, String>) {
     (output, notes)
 }
 
-fn note_reference(tag: &str, label: &str, html: &str) -> Option<(String, String)> {
+fn find_anchor_start(lower: &str, from: usize) -> Option<(usize, usize)> {
+    let bytes = lower.as_bytes();
+    let mut cursor = lower.floor_char_boundary(from.min(lower.len()));
+    while let Some(relative) = lower[cursor..].find("<a") {
+        let tag_start = cursor + relative;
+        let valid_boundary = matches!(
+            bytes.get(tag_start + 2),
+            Some(&b) if b.is_ascii_whitespace() || b == b'>' || b == b'/'
+        );
+        if !valid_boundary {
+            cursor = tag_start + 2;
+            continue;
+        }
+        let tag_end_rel = lower[tag_start + 2..].find('>')?;
+        return Some((tag_start, tag_start + 2 + tag_end_rel));
+    }
+    None
+}
+
+fn note_reference(
+    tag: &str,
+    label: &str,
+    html: &str,
+    lower_html: &str,
+    raw_ctx: Option<&RawMobiContext<'_>>,
+) -> Option<(String, String)> {
     let filepos =
         tag_attribute(tag, "filepos").and_then(|value| value.trim().parse::<usize>().ok());
     let href = tag_attribute(tag, "href");
@@ -48,23 +172,23 @@ fn note_reference(tag: &str, label: &str, html: &str) -> Option<(String, String)
     }
 
     if let Some(offset) = filepos {
-        let note = extract_note_at(html, offset)?;
+        let note = extract_note_at(html, offset, raw_ctx)?;
         return Some((format!("mobi_pos_{offset}"), note));
     }
 
-    if let Some(ref href) = href {
-        if let Some((fid, offset, fragment)) = parse_kindle_pos_fid(href) {
-            if let Some(ref frag) = fragment {
-                if let Some(note) = extract_note_by_id(html, frag) {
-                    let decoded_frag = crate::document::epub::percent_decode_str(frag);
-                    return Some((format!("mobi_kf8_{fid}_{offset}_{decoded_frag}"), note));
-                }
-            }
-            if offset > 0 {
-                if let Some(note) = extract_note_at(html, offset) {
-                    return Some((format!("mobi_kf8_{fid}_{offset}"), note));
-                }
-            }
+    if let Some(ref href) = href
+        && let Some((fid, offset, fragment)) = parse_kindle_pos_fid(href)
+    {
+        if let Some(ref frag) = fragment
+            && let Some(note) = extract_note_by_id(html, lower_html, frag)
+        {
+            let decoded_frag = crate::document::epub::percent_decode_str(frag);
+            return Some((format!("mobi_kf8_{fid}_{offset}_{decoded_frag}"), note));
+        }
+        if offset > 0
+            && let Some(note) = extract_note_at(html, offset, raw_ctx)
+        {
+            return Some((format!("mobi_kf8_{fid}_{offset}"), note));
         }
     }
 
@@ -72,7 +196,7 @@ fn note_reference(tag: &str, label: &str, html: &str) -> Option<(String, String)
         && let Some(fragment) = href.strip_prefix('#')
         && !fragment.is_empty()
     {
-        let note = extract_note_by_id(html, fragment)?;
+        let note = extract_note_by_id(html, lower_html, fragment)?;
         return Some((
             format!(
                 "mobi_hash_{}",
@@ -115,8 +239,15 @@ pub fn parse_kindle_pos_fid(href: &str) -> Option<(usize, usize, Option<String>)
     Some((fid, offset, fragment))
 }
 
-fn extract_note_at(html: &str, offset: usize) -> Option<String> {
-    let offset = offset.min(html.len());
+fn extract_note_at(
+    html: &str,
+    raw_offset: usize,
+    raw_ctx: Option<&RawMobiContext<'_>>,
+) -> Option<String> {
+    let offset = match raw_ctx {
+        Some(ctx) => ctx.resolve_offset(html, raw_offset),
+        None => html.floor_char_boundary(raw_offset.min(html.len())),
+    };
     let mut start = offset;
     let before = &html[..offset];
     let inside_tag = before.rfind('<') > before.rfind('>');
@@ -129,44 +260,34 @@ fn extract_note_at(html: &str, offset: usize) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
-fn extract_note_by_id(html: &str, id: &str) -> Option<String> {
-    extract_note_by_attr(html, "id=", id).or_else(|| extract_note_by_attr(html, "name=", id))
+fn extract_note_by_id(html: &str, lower: &str, id: &str) -> Option<String> {
+    extract_note_by_attr(html, lower, "id", id)
+        .or_else(|| extract_note_by_attr(html, lower, "name", id))
 }
 
-fn extract_note_by_attr(html: &str, attr: &str, id: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
+fn extract_note_by_attr(html: &str, lower: &str, attr_name: &str, id: &str) -> Option<String> {
     let decoded = crate::document::epub::percent_decode_str(id);
     let mut search = 0;
-    while let Some(relative) = lower[search..].find(attr) {
-        let index = search + relative;
-        let rest = &html[index + attr.len()..];
-        let rest = rest.trim_start();
-        let Some(quote) = rest.chars().next() else {
-            break;
-        };
-        if quote != '"' && quote != '\'' {
-            search = index + attr.len();
-            continue;
-        }
-        let Some(end) = rest[1..].find(quote) else {
-            break;
-        };
-        let value = &rest[1..1 + end];
+    while let Some((_, after_val, value)) =
+        find_attr_in_slice(html, lower, attr_name, search, false)
+    {
         if value == id || value == decoded {
-            let tag_end = html[index..].find('>')? + index;
+            let tag_end = html[after_val..].find('>')? + after_val;
             let slice = &html[tag_end + 1..];
             let end = block_end(slice);
             let text = strip_tags(&slice[..end]);
             return if text.is_empty() { None } else { Some(text) };
         }
-        search = index + attr.len() + end;
+        search = after_val;
     }
     None
 }
 
 fn block_end(slice: &str) -> usize {
-    let lower = slice.to_ascii_lowercase();
-    let mut end = slice.len().min(4000);
+    let max_end = slice.floor_char_boundary(slice.len().min(4000));
+    let probe_end = slice.floor_char_boundary(slice.len().min(4016));
+    let lower = slice[..probe_end].to_ascii_lowercase();
+    let mut end = max_end;
     for marker in ["</p>", "</div>", "</li>", "<p ", "<div ", "<li "] {
         if let Some(position) = lower.find(marker)
             && position > 0
@@ -192,10 +313,16 @@ fn strip_tags(text: &str) -> String {
 }
 
 fn looks_like_note_marker(text: &str) -> bool {
-    let trimmed = text.trim();
-    let inner = trimmed.trim_matches(|c: char| {
-        matches!(c, '[' | ']' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?')
-    });
+    let plain = strip_tags(text)
+        .replace("&dagger;", "†")
+        .replace("&Dagger;", "‡")
+        .replace("&ast;", "*");
+    let trimmed = plain.trim();
+    let inner = trimmed
+        .trim_matches(|c: char| {
+            matches!(c, '[' | ']' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?')
+        })
+        .trim();
     if inner.is_empty() || inner.chars().count() > 8 {
         return false;
     }
@@ -204,19 +331,76 @@ fn looks_like_note_marker(text: &str) -> bool {
         || (inner.chars().count() <= 4 && inner.chars().all(|c| c.is_ascii_alphabetic()))
 }
 
+fn find_attr_in_slice<'a>(
+    haystack: &'a str,
+    lower_haystack: &str,
+    name: &str,
+    start_from: usize,
+    allow_unquoted: bool,
+) -> Option<(usize, usize, &'a str)> {
+    let bytes = lower_haystack.as_bytes();
+    let mut cursor = haystack.floor_char_boundary(start_from.min(haystack.len()));
+
+    while let Some(rel) = lower_haystack[cursor..].find(name) {
+        let key_start = cursor + rel;
+        let key_end = key_start + name.len();
+        if key_start > 0
+            && !bytes[key_start - 1].is_ascii_whitespace()
+            && bytes[key_start - 1] != b'"'
+            && bytes[key_start - 1] != b'\''
+        {
+            cursor = key_end;
+            continue;
+        }
+
+        let mut pos = key_end;
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if bytes.get(pos) != Some(&b'=') {
+            cursor = key_end;
+            continue;
+        }
+        pos += 1;
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            return None;
+        }
+
+        let quote_byte = bytes[pos];
+        if quote_byte == b'"' || quote_byte == b'\'' {
+            let quote = quote_byte as char;
+            let value_start = pos + 1;
+            let Some(end_rel) = haystack[value_start..].find(quote) else {
+                cursor = value_start;
+                continue;
+            };
+            let value_end = value_start + end_rel;
+            return Some((key_start, value_end + 1, &haystack[value_start..value_end]));
+        }
+
+        if allow_unquoted {
+            let rest = &haystack[pos..];
+            let value = rest
+                .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                .next()
+                .unwrap_or("");
+            if !value.is_empty() {
+                return Some((key_start, pos + value.len(), value));
+            }
+        }
+
+        let Some(ch) = haystack[pos..].chars().next() else {
+            return None;
+        };
+        cursor = pos + ch.len_utf8();
+    }
+    None
+}
+
 fn tag_attribute(tag: &str, name: &str) -> Option<String> {
     let lower = tag.to_ascii_lowercase();
-    let pattern = format!("{name}=");
-    let index = lower.find(&pattern)?;
-    let rest = tag[index + pattern.len()..].trim_start();
-    let quote = rest.chars().next()?;
-    if quote == '"' || quote == '\'' {
-        let end = rest[1..].find(quote)?;
-        Some(rest[1..1 + end].to_string())
-    } else {
-        rest.split(|c: char| c.is_whitespace() || c == '>' || c == '/')
-            .next()
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    }
+    find_attr_in_slice(tag, &lower, name, 0, true).map(|(_, _, value)| value.to_string())
 }

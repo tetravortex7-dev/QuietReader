@@ -138,7 +138,7 @@ pub struct QuietReaderApp {
     pub show_library: bool,
     pub updater: crate::updater::UpdateChecker,
     pub show_opds_dialog: bool,
-    pub opds_state: crate::opds::OpdsBrowserState,
+    pub opds_state: opds_view::OpdsBrowserState,
     pub translate: TranslateState,
     pub dictionary: DictionaryState,
     pub sidebar_tab: SidebarTab,
@@ -194,6 +194,9 @@ impl eframe::App for QuietReaderApp {
             ctx.request_repaint();
         }
 
+        let ppp = ctx.pixels_per_point();
+        let zoom = ctx.zoom_factor().max(0.1);
+        let native_scale = (ppp / zoom).clamp(0.5, 6.0);
         let close_requested = ctx.input(|i| {
             let vp = i.viewport();
             let is_fs = self.is_fullscreen
@@ -203,13 +206,14 @@ impl eframe::App for QuietReaderApp {
                 && !vp.minimized.unwrap_or(false)
                 && let Some(inner) = vp.inner_rect
             {
-                let pos = vp.outer_rect.map(|r| (r.min.x, r.min.y));
-                self.settings.update_window_state(
+                let pos = vp.outer_rect.map(|r| (r.min.x * zoom, r.min.y * zoom));
+                self.settings.update_window_state_with_scale(
                     pos.map(|p| p.0),
                     pos.map(|p| p.1),
-                    inner.width(),
-                    inner.height(),
+                    inner.width() * zoom,
+                    inner.height() * zoom,
                     vp.maximized.unwrap_or(false),
+                    Some(native_scale),
                 );
             }
             vp.close_requested()
@@ -453,12 +457,13 @@ impl eframe::App for QuietReaderApp {
 
         if (!self.is_fullscreen || self.show_toc) && !self.show_library {
             let prev_pdf_page = self.pdf_view.current_page;
+            let prev_comic_page = self.comic_view.current_page;
             let current_page_ref = match view_kind {
                 DocumentViewKind::Pdf => &mut self.pdf_view.current_page,
                 _ => &mut self.comic_view.current_page,
             };
             let mut on_add_bookmark = false;
-            TocView::render(
+            if TocView::render(
                 ui,
                 &self.document,
                 &mut self.current_chapter,
@@ -476,12 +481,19 @@ impl eframe::App for QuietReaderApp {
                 &mut self.bookmark_view_state,
                 &mut self.toc_view,
                 &mut on_add_bookmark,
-            );
+            ) {
+                self.mark_settings_dirty();
+            }
             if on_add_bookmark {
                 self.toggle_quick_bookmark();
             }
             if view_kind == DocumentViewKind::Pdf && self.pdf_view.current_page != prev_pdf_page {
                 self.pdf_view.go_to_page(self.pdf_view.current_page);
+            }
+            if view_kind == DocumentViewKind::Comic
+                && self.comic_view.current_page != prev_comic_page
+            {
+                self.comic_view.go_to_page(self.comic_view.current_page);
             }
         }
 
@@ -626,11 +638,11 @@ impl eframe::App for QuietReaderApp {
                         DocumentViewKind::Pdf => {
                             let smart_scan_allowed =
                                 self.settings.can_use(ProFeature::SmartScanProcessing);
-                            let djvu_query = if self.search.is_open
+                            let highlight_query = if self.search.is_open
                                 && self
                                     .document
                                     .as_ref()
-                                    .is_some_and(|d| d.format_name() == "DjVu")
+                                    .is_some_and(|d| d.supports_search_highlight())
                             {
                                 Some(self.search.query.clone())
                             } else {
@@ -648,7 +660,7 @@ impl eframe::App for QuietReaderApp {
                                 &mut self.max_scroll_y,
                                 &mut self.status_message,
                                 self.settings.ui_language,
-                                djvu_query.as_deref(),
+                                highlight_query.as_deref(),
                                 &mut on_translate,
                                 &mut on_dictionary,
                                 smart_scan_allowed,

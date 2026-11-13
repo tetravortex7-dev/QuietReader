@@ -44,11 +44,12 @@ fn main() -> eframe::Result<()> {
         .with_min_inner_size([600.0, 400.0])
         .with_title("QuietReader");
 
-    let (pos_x, pos_y, w, h) = platform::sanitize_window_geometry(
+    let (pos_x, pos_y, w, h) = platform::sanitize_window_geometry_with_scale(
         settings.window.x,
         settings.window.y,
         settings.window.width,
         settings.window.height,
+        settings.window.scale_factor,
     );
     viewport = viewport.with_inner_size([w, h]);
 

@@ -444,6 +444,74 @@ impl Drop for TempFileGuard {
     }
 }
 
+static NEXT_TEMP_SEQ: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn make_temp_download_path(target_hint: &Path) -> PathBuf {
+    let seq = NEXT_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let base_name = target_hint
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("book");
+    target_hint.with_file_name(format!(".{base_name}.{pid}.{seq}.part"))
+}
+
+pub(crate) fn create_unique_temp_file(
+    target_hint: &Path,
+) -> Result<(PathBuf, std::fs::File), OpdsError> {
+    let mut last_err = None;
+    for _ in 0..64 {
+        let candidate = make_temp_download_path(target_hint);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+            }
+            Err(e) => return Err(OpdsError::CreateFile(e.to_string())),
+        }
+    }
+    let msg = last_err
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "create_new".to_string());
+    Err(OpdsError::CreateFile(msg))
+}
+
+fn finalize_unique_download_path(
+    temp_path: &Path,
+    downloads_dir: &Path,
+    author: &str,
+    title: &str,
+    ext: &str,
+) -> Result<PathBuf, OpdsError> {
+    let mut last_err = None;
+    for attempt in 0..16 {
+        let target_path = if attempt == 0 {
+            make_unique_filepath(downloads_dir, author, title, ext)
+        } else {
+            let suffix = NEXT_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+            make_unique_filepath(downloads_dir, author, &format!("{title}_{suffix}"), ext)
+        };
+        if target_path.exists() {
+            continue;
+        }
+        match std::fs::rename(temp_path, &target_path) {
+            Ok(()) => return Ok(target_path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+            }
+            Err(e) => return Err(OpdsError::MoveFile(e.to_string())),
+        }
+    }
+    let msg = last_err
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "rename".to_string());
+    Err(OpdsError::MoveFile(msg))
+}
+
 fn download_book_sync<F>(
     agent: &ureq::Agent,
     url: &str,
@@ -457,9 +525,7 @@ fn download_book_sync<F>(
 where
     F: FnMut(usize, Option<usize>),
 {
-    let _ = std::fs::create_dir_all(downloads_dir);
-    let target_path = make_unique_filepath(downloads_dir, author, title, ext);
-    let temp_path = target_path.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::create_dir_all(downloads_dir).map_err(|e| OpdsError::CreateFile(e.to_string()))?;
 
     let ua = crate::net::user_agent(Some("OPDS Downloader"));
     let mut req = agent.get(url).header("User-Agent", &ua);
@@ -485,9 +551,9 @@ where
     }
     let content_len = content_len.and_then(|len| usize::try_from(len).ok());
 
+    let target_hint = make_unique_filepath(downloads_dir, author, title, ext);
+    let (temp_path, mut file) = create_unique_temp_file(&target_hint)?;
     let guard = TempFileGuard::new(temp_path.clone());
-    let mut file =
-        std::fs::File::create(&temp_path).map_err(|e| OpdsError::CreateFile(e.to_string()))?;
     let mut reader = resp.body_mut().as_reader();
     let mut buffer = [0u8; 32768];
     let mut downloaded: usize = 0;
@@ -518,7 +584,7 @@ where
     file.flush().map_err(|e| OpdsError::Flush(e.to_string()))?;
     drop(file);
     on_progress(downloaded, content_len);
-    std::fs::rename(&temp_path, &target_path).map_err(|e| OpdsError::MoveFile(e.to_string()))?;
+    let final_path = finalize_unique_download_path(&temp_path, downloads_dir, author, title, ext)?;
     guard.disarm();
-    Ok(target_path)
+    Ok(final_path)
 }

@@ -99,21 +99,21 @@ impl Fb2Document {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
         let meta = std::fs::metadata(path_ref)
-            .map_err(|e| DocumentError::Io(format!("Failed to read file metadata: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_metadata("FB2", &e)))?;
         if meta.len() > Self::MAX_FB2_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер файла FB2 превышает максимально допустимый лимит (150 МБ)".to_string(),
+                crate::document::errors::file_too_large_mb("FB2", 150),
             ));
         }
         let bytes = std::fs::read(path_ref)
-            .map_err(|e| DocumentError::Io(format!("Failed to read file: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_read("FB2", &e)))?;
         Self::from_bytes(&bytes)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > Self::MAX_FB2_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер данных FB2 превышает максимально допустимый лимит (150 МБ)".to_string(),
+                crate::document::errors::data_too_large_mb("FB2", 150),
             ));
         }
         let text = decode_text(bytes);
@@ -123,34 +123,37 @@ impl Fb2Document {
     pub fn from_zip_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
         let file = File::open(path_ref)
-            .map_err(|e| DocumentError::Io(format!("Не удалось открыть ZIP: {e}")))?;
-        let mut zip = ZipArchive::new(file)
-            .map_err(|e| DocumentError::Corrupted(format!("Ошибка парсинга ZIP: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_open("ZIP", &e)))?;
+        let mut zip = ZipArchive::new(file).map_err(|e| {
+            DocumentError::Corrupted(crate::document::errors::archive_parse("ZIP", &e))
+        })?;
 
         if zip.len() > MAX_ARCHIVE_ENTRIES {
             return Err(DocumentError::LimitExceeded(
-                "В архиве превышен лимит количества файлов (10 000)".to_string(),
+                crate::document::errors::archive_too_many_files("ZIP", MAX_ARCHIVE_ENTRIES),
             ));
         }
 
         let mut total_unpacked = 0u64;
         for i in 0..zip.len() {
-            let entry = zip
-                .by_index(i)
-                .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?;
+            let entry = zip.by_index(i).map_err(|e| {
+                DocumentError::Corrupted(crate::document::errors::archive_read("ZIP", &e))
+            })?;
             let name = entry
                 .name()
-                .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?
+                .map_err(|e| {
+                    DocumentError::Corrupted(crate::document::errors::archive_read("ZIP", &e))
+                })?
                 .to_string();
             if !is_safe_archive_path(&name) {
-                return Err(DocumentError::Corrupted(format!(
-                    "Обнаружен небезопасный путь в архиве: {name}"
-                )));
+                return Err(DocumentError::Corrupted(
+                    crate::document::errors::archive_unsafe_path("ZIP", &name),
+                ));
             }
             if entry.size() > MAX_SINGLE_ENTRY_BYTES {
-                return Err(DocumentError::LimitExceeded(format!(
-                    "Файл {name} превышает лимит 50 МБ"
-                )));
+                return Err(DocumentError::LimitExceeded(
+                    crate::document::errors::archive_entry_too_large_mb(&name, 50),
+                ));
             }
             if !name.to_ascii_lowercase().ends_with(".fb2") {
                 continue;
@@ -165,14 +168,14 @@ impl Fb2Document {
         }
 
         Err(DocumentError::Unsupported(
-            "В ZIP-архиве не найден файл FB2".to_string(),
+            crate::document::errors::fb2_missing_in_zip(),
         ))
     }
 
     fn parse_xml(xml: &str) -> Result<Self, DocumentError> {
         if !xml.to_ascii_lowercase().contains("<fictionbook") {
             return Err(DocumentError::Corrupted(
-                "Отсутствует корневой тег <FictionBook> в FB2 документе".to_string(),
+                crate::document::errors::fb2_missing_root(),
             ));
         }
         let sanitized = crate::document::epub::sanitize_xml_entities(xml);
@@ -676,13 +679,13 @@ impl Fb2Document {
             author_parts.push(author_last.trim());
         }
         let mut author = if author_parts.is_empty() {
-            "Неизвестный автор".to_string()
+            crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string()
         } else {
             author_parts.join(" ")
         };
 
         let mut title = if book_title.trim().is_empty() {
-            "Без названия".to_string()
+            crate::document::errors::tokens::UNTITLED.to_string()
         } else {
             book_title.trim().to_string()
         };
@@ -693,10 +696,12 @@ impl Fb2Document {
         if chapters.is_empty() || chapters.iter().all(|c| c.is_empty()) {
             let (fb_title, fb_author, fb_chapters) = extract_fb2_lenient(xml);
             if !fb_chapters.is_empty() && fb_chapters.iter().any(|c| !c.is_empty()) {
-                if title == "Без названия" && !fb_title.is_empty() {
+                if title == crate::document::errors::tokens::UNTITLED && !fb_title.is_empty() {
                     title = fb_title;
                 }
-                if author == "Неизвестный автор" && !fb_author.is_empty() {
+                if author == crate::document::errors::tokens::UNKNOWN_AUTHOR
+                    && !fb_author.is_empty()
+                {
                     author = fb_author;
                 }
                 chapters = fb_chapters;
@@ -707,7 +712,7 @@ impl Fb2Document {
                     .map(|(i, c)| TocItem {
                         id: c.id.clone(),
                         title: if c.title.is_empty() {
-                            format!("Раздел {}", i + 1)
+                            crate::document::errors::tokens::section(i + 1)
                         } else {
                             c.title.clone()
                         },
@@ -717,7 +722,7 @@ impl Fb2Document {
                     .collect();
             } else {
                 return Err(DocumentError::Corrupted(
-                    "Не удалось извлечь содержимое из повреждённого FB2 документа".to_string(),
+                    crate::document::errors::fb2_extract_failed(),
                 ));
             }
         }
@@ -828,15 +833,45 @@ fn decode_text(bytes: &[u8]) -> String {
     decoded.into_owned()
 }
 
-fn find_xml_encoding(header: &str) -> Option<&str> {
-    let lower = header.to_lowercase();
-    let enc_idx = lower.find("encoding=")?;
-    let remainder = &header[enc_idx + 9..];
-    let quote = remainder.chars().next()?;
-    if quote != '"' && quote != '\'' {
+pub(crate) fn find_xml_encoding(header: &str) -> Option<&str> {
+    let bytes = header.as_bytes();
+    for (i, window) in bytes.windows(8).enumerate() {
+        if !window.eq_ignore_ascii_case(b"encoding") {
+            continue;
+        }
+        if i > 0
+            && (!bytes[i - 1].is_ascii()
+                || bytes[i - 1].is_ascii_alphanumeric()
+                || matches!(bytes[i - 1], b'_' | b'-'))
+        {
+            continue;
+        }
+        if let Some(label) = parse_encoding_attr(header, i + 8) {
+            return Some(label);
+        }
+    }
+    None
+}
+
+fn parse_encoding_attr(header: &str, after_key: usize) -> Option<&str> {
+    let bytes = header.as_bytes();
+    let mut pos = after_key;
+    while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    if bytes.get(pos) != Some(&b'=') {
         return None;
     }
-    let rest = &remainder[1..];
+    pos += 1;
+    while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+        pos += 1;
+    }
+    let quote = match bytes.get(pos) {
+        Some(&b'"') => '"',
+        Some(&b'\'') => '\'',
+        _ => return None,
+    };
+    let rest = &header[pos + 1..];
     let end_idx = rest.find(quote)?;
     Some(&rest[..end_idx])
 }

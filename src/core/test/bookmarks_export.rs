@@ -236,3 +236,27 @@ fn test_notes_format_render_and_extensions() {
     }
     assert_eq!(NotesFormat::default(), NotesFormat::Markdown);
 }
+
+#[test]
+fn test_bookmarks_to_csv_neutralizes_formula_injection() {
+    let bookmarks = vec![bookmark(
+        "inj",
+        0,
+        0.0,
+        "+Chapter",
+        "=cmd|' /C calc'!A0",
+        "@SUM(1,2)",
+        BookmarkColor::Yellow,
+        BookmarkKind::Quote,
+        10.0,
+        1,
+    )];
+    let csv = bookmarks_to_csv("=Book", "-Author", &bookmarks);
+    assert!(csv.contains("'=Book,'-Author,'+Chapter,"));
+    assert!(csv.contains("'=cmd|' /C calc'!A0"));
+    assert!(csv.contains("\"'@SUM(1,2)\""));
+
+    assert_eq!(crate::core::csv_field("\t=1+1"), "'\t=1+1");
+    assert_eq!(crate::core::csv_field("\r=1+1"), "\"'\r=1+1\"");
+    assert_eq!(crate::core::csv_field("  =1+1"), "'  =1+1");
+}

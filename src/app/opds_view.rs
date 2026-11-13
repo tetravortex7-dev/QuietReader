@@ -20,6 +20,8 @@ pub struct OpdsBrowserState {
     pub breadcrumbs: Vec<OpdsBreadcrumb>,
     pub history: Vec<(String, Vec<OpdsBreadcrumb>)>,
     pub current_feed: Option<OpdsFeed>,
+    pub pending_request_id: Option<u64>,
+    pub last_requested_url: Option<String>,
     pub is_loading: bool,
     pub error_message: Option<String>,
     pub search_query: String,
@@ -51,6 +53,8 @@ impl OpdsBrowserState {
             breadcrumbs: Vec::new(),
             history: Vec::new(),
             current_feed: None,
+            pending_request_id: None,
+            last_requested_url: None,
             is_loading: false,
             error_message: None,
             search_query: String::new(),
@@ -67,22 +71,55 @@ impl OpdsBrowserState {
         }
     }
 
+    pub(crate) fn apply_feed_event(
+        &mut self,
+        request_id: u64,
+        url: String,
+        result: Result<OpdsFeed, crate::opds::OpdsError>,
+        ui_lang: crate::i18n::UiLanguage,
+    ) -> bool {
+        if self.pending_request_id != Some(request_id) {
+            return false;
+        }
+        self.pending_request_id = None;
+        self.is_loading = false;
+        match result {
+            Ok(feed) => {
+                self.current_url = Some(url.clone());
+                self.last_requested_url = Some(url);
+                self.current_feed = Some(feed);
+                self.error_message = None;
+            }
+            Err(e) => {
+                self.error_message = Some(format_opds_error(&e, ui_lang));
+            }
+        }
+        true
+    }
+
+    pub fn cancel_loading(&mut self) {
+        self.pending_request_id = None;
+        self.is_loading = false;
+        if let Some((_, prev_bc)) = self.history.last() {
+            if self.current_feed.is_some()
+                && self.current_url.as_deref() != self.breadcrumbs.last().map(|b| b.url.as_str())
+            {
+                self.breadcrumbs = prev_bc.clone();
+                self.history.pop();
+            }
+        }
+    }
+
     pub fn poll(&mut self, settings: &mut AppSettings) {
         let events = self.client.poll_events();
         for event in events {
             match event {
-                OpdsEvent::FeedLoaded { url, result, .. } => {
-                    self.is_loading = false;
-                    match result {
-                        Ok(feed) => {
-                            self.current_url = Some(url);
-                            self.current_feed = Some(feed);
-                            self.error_message = None;
-                        }
-                        Err(e) => {
-                            self.error_message = Some(format_opds_error(&e, settings.ui_language));
-                        }
-                    }
+                OpdsEvent::FeedLoaded {
+                    request_id,
+                    url,
+                    result,
+                } => {
+                    self.apply_feed_event(request_id, url, result, settings.ui_language);
                 }
                 OpdsEvent::DownloadProgress {
                     download_id,
@@ -127,12 +164,14 @@ impl OpdsBrowserState {
         }];
         self.search_query.clear();
         self.error_message = None;
+        self.last_requested_url = Some(catalog.url.clone());
         match OpdsAuth::from_catalog(catalog) {
             Ok(auth) => {
                 self.is_loading = true;
-                self.client.fetch_feed(&catalog.url, auth);
+                self.pending_request_id = Some(self.client.fetch_feed(&catalog.url, auth));
             }
             Err(err) => {
+                self.pending_request_id = None;
                 self.is_loading = false;
                 self.error_message = Some(format_opds_auth_error(err, settings.ui_language));
             }
@@ -170,9 +209,11 @@ impl OpdsBrowserState {
     }
 
     fn fetch_url(&mut self, url: &str, settings: &AppSettings) {
+        self.last_requested_url = Some(url.to_string());
         let auth = match self.active_auth(settings) {
             Ok(auth) => auth,
             Err(err) => {
+                self.pending_request_id = None;
                 self.is_loading = false;
                 self.error_message = Some(format_opds_auth_error(err, settings.ui_language));
                 return;
@@ -180,7 +221,7 @@ impl OpdsBrowserState {
         };
         self.is_loading = true;
         self.error_message = None;
-        self.client.fetch_feed(url, auth);
+        self.pending_request_id = Some(self.client.fetch_feed(url, auth));
     }
 
     pub(crate) fn active_auth(
@@ -221,7 +262,10 @@ impl OpdsBrowserState {
         {
             self.active_catalog_id = None;
             self.current_url = None;
+            self.last_requested_url = None;
             self.current_feed = None;
+            self.pending_request_id = None;
+            self.cover_manager.clear();
             self.breadcrumbs.clear();
             self.history.clear();
             self.is_loading = false;
@@ -243,14 +287,15 @@ impl OpdsBrowserState {
 
         let mut is_open = *show_window;
 
-        let screen_rect = ctx
-            .input(|i| i.viewport().inner_rect)
-            .unwrap_or(Rect::from_min_size(
-                egui::Pos2::ZERO,
-                Vec2::new(1280.0, 800.0),
-            ));
-        let default_w = (screen_rect.width() * 0.88).clamp(980.0, 1440.0);
-        let default_h = (screen_rect.height() * 0.86).clamp(640.0, 960.0);
+        let screen_rect = ctx.content_rect();
+        let avail_w = screen_rect.width().max(280.0);
+        let avail_h = screen_rect.height().max(240.0);
+        let max_w = (avail_w - 8.0).clamp(240.0, 1560.0);
+        let max_h = (avail_h - 8.0).max(180.0);
+        let min_w = (max_w - 16.0).clamp(240.0, 420.0);
+        let min_h = (max_h - 16.0).clamp(180.0, 280.0);
+        let default_w = (avail_w * 0.90).clamp(min_w, max_w);
+        let default_h = (avail_h * 0.85).clamp(min_h, max_h);
         let default_pos = screen_rect.center() - Vec2::new(default_w * 0.5, default_h * 0.5);
 
         egui::Window::new(t.opds_catalogs)
@@ -259,19 +304,48 @@ impl OpdsBrowserState {
             .collapsible(false)
             .resizable(true)
             .default_size([default_w, default_h])
-            .default_pos([default_pos.x.max(10.0), default_pos.y.max(10.0)])
-            .min_size([720.0, 480.0])
+            .default_pos([
+                default_pos.x.max(screen_rect.left() + 4.0),
+                default_pos.y.max(screen_rect.top() + 4.0),
+            ])
+            .min_size([min_w, min_h])
+            .max_size([max_w, max_h])
+            .constrain_to(screen_rect.shrink(4.0))
             .frame(frame)
             .show(ctx, |ui| {
-                ui.allocate_ui_with_layout(
-                    ui.available_size(),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        self.render_catalogs_sidebar(ui, settings, theme, on_pro_required);
+                let total_w = ui.available_width();
+                if total_w >= 640.0 {
+                    let sidebar_w = (total_w * 0.23).clamp(180.0, 270.0);
+                    ui.allocate_ui_with_layout(
+                        ui.available_size(),
+                        egui::Layout::left_to_right(egui::Align::Min),
+                        |ui| {
+                            self.render_catalogs_sidebar(
+                                ui,
+                                sidebar_w,
+                                false,
+                                settings,
+                                theme,
+                                on_pro_required,
+                            );
+                            ui.separator();
+                            self.render_feed_content(ctx, ui, settings, theme);
+                        },
+                    );
+                } else {
+                    ui.vertical(|ui| {
+                        self.render_catalogs_sidebar(
+                            ui,
+                            total_w,
+                            true,
+                            settings,
+                            theme,
+                            on_pro_required,
+                        );
                         ui.separator();
                         self.render_feed_content(ctx, ui, settings, theme);
-                    },
-                );
+                    });
+                }
             });
 
         *show_window = is_open;
@@ -290,9 +364,18 @@ impl OpdsBrowserState {
         let accent = theme.accent_color();
 
         ui.vertical(|ui| {
-            ui.set_width(ui.available_width());
-            ui.set_height(ui.available_height());
-            ui.horizontal(|ui| {
+            let feed_w = ui.available_width().max(180.0);
+            let feed_h = ui.available_height().max(80.0);
+            ui.set_width(feed_w);
+            ui.set_height(feed_h);
+
+            let search_w = if feed_w < 460.0 {
+                (feed_w - 84.0).clamp(110.0, 220.0)
+            } else {
+                (feed_w * 0.28).clamp(140.0, 280.0)
+            };
+
+            ui.horizontal_wrapped(|ui| {
                 let can_go_back = !self.history.is_empty();
                 if ui
                     .add_enabled(can_go_back, IconButton::new(Icon::ArrowLeft, t.opds_back))
@@ -312,94 +395,95 @@ impl OpdsBrowserState {
 
                 ui.separator();
 
-                let mut clicked_crumb = None;
-                for (idx, crumb) in self.breadcrumbs.iter().enumerate() {
-                    if idx > 0 {
-                        ui.add(
-                            IconLabel::new(Icon::ArrowRight, "")
-                                .size(14.0)
-                                .color(sec_text),
-                        );
-                    }
-                    let is_last = idx == self.breadcrumbs.len() - 1;
-                    let crumb_btn = egui::Button::new(
-                        RichText::new(&crumb.title)
-                            .size(13.0)
-                            .strong()
-                            .color(if is_last { text_color } else { accent }),
+                let has_remote_search = self
+                    .current_feed
+                    .as_ref()
+                    .map(|f| f.search_template.is_some() || f.search_descriptor_url.is_some())
+                    .unwrap_or(false);
+
+                let enter_pressed = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text(t.opds_search_placeholder)
+                            .desired_width(search_w),
                     )
-                    .frame(false);
-                    if ui.add(crumb_btn).clicked() && !is_last {
-                        clicked_crumb = Some(idx);
-                    }
+                    .lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                if !self.search_query.is_empty()
+                    && ui
+                        .add(IconButton::new(Icon::Cross, ""))
+                        .on_hover_text(t.extra.clear_search)
+                        .clicked()
+                {
+                    self.search_query.clear();
                 }
-                if let Some(idx) = clicked_crumb {
-                    self.navigate_to_crumb(idx, settings);
-                }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let has_remote_search = self
-                        .current_feed
-                        .as_ref()
-                        .map(|f| f.search_template.is_some() || f.search_descriptor_url.is_some())
-                        .unwrap_or(false);
+                let search_btn = ui.add(IconButton::new(Icon::Search, t.opds_search_btn));
 
-                    let search_btn = ui.add(IconButton::new(Icon::Search, t.opds_search_btn));
-                    if !self.search_query.is_empty()
-                        && ui
-                            .add(IconButton::new(Icon::Cross, ""))
-                            .on_hover_text(t.extra.clear_search)
-                            .clicked()
-                    {
-                        self.search_query.clear();
-                    }
-
-                    let enter_pressed = ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.search_query)
-                                .hint_text(t.opds_search_placeholder)
-                                .desired_width(180.0),
-                        )
-                        .lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-                    if (search_btn.clicked() || enter_pressed)
-                        && !self.search_query.trim().is_empty()
-                        && has_remote_search
-                    {
-                        if let Some(feed) = &self.current_feed {
-                            match self.active_auth(settings) {
-                                Ok(auth) => {
-                                    if let Some(cur) = self.current_url.clone() {
-                                        self.history.push((cur, self.breadcrumbs.clone()));
-                                    }
-                                    self.breadcrumbs.push(OpdsBreadcrumb {
-                                        title: format!(
-                                            "{}: {}",
-                                            t.search,
-                                            self.search_query.trim()
-                                        ),
-                                        url: String::new(),
-                                    });
-                                    self.is_loading = true;
-                                    self.error_message = None;
-                                    self.client.search(
-                                        feed.search_template.clone(),
-                                        feed.search_descriptor_url.clone(),
-                                        self.search_query.trim(),
-                                        auth,
-                                    );
+                if (search_btn.clicked() || enter_pressed)
+                    && !self.search_query.trim().is_empty()
+                    && has_remote_search
+                {
+                    if let Some(feed) = &self.current_feed {
+                        match self.active_auth(settings) {
+                            Ok(auth) => {
+                                if let Some(cur) = self.current_url.clone() {
+                                    self.history.push((cur, self.breadcrumbs.clone()));
                                 }
-                                Err(err) => {
-                                    self.is_loading = false;
-                                    self.error_message =
-                                        Some(format_opds_auth_error(err, settings.ui_language));
-                                }
+                                self.breadcrumbs.push(OpdsBreadcrumb {
+                                    title: format!("{}: {}", t.search, self.search_query.trim()),
+                                    url: String::new(),
+                                });
+                                self.is_loading = true;
+                                self.error_message = None;
+                                self.pending_request_id = Some(self.client.search(
+                                    feed.search_template.clone(),
+                                    feed.search_descriptor_url.clone(),
+                                    self.search_query.trim(),
+                                    auth,
+                                ));
+                            }
+                            Err(err) => {
+                                self.pending_request_id = None;
+                                self.is_loading = false;
+                                self.error_message =
+                                    Some(format_opds_auth_error(err, settings.ui_language));
                             }
                         }
                     }
-                });
+                }
             });
+
+            if !self.breadcrumbs.is_empty() {
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
+                    let mut clicked_crumb = None;
+                    for (idx, crumb) in self.breadcrumbs.iter().enumerate() {
+                        if idx > 0 {
+                            ui.add(
+                                IconLabel::new(Icon::ArrowRight, "")
+                                    .size(14.0)
+                                    .color(sec_text),
+                            );
+                        }
+                        let is_last = idx == self.breadcrumbs.len() - 1;
+                        let crumb_btn = egui::Button::new(
+                            RichText::new(&crumb.title)
+                                .size(13.0)
+                                .strong()
+                                .color(if is_last { text_color } else { accent }),
+                        )
+                        .frame(false);
+                        if ui.add(crumb_btn).clicked() && !is_last {
+                            clicked_crumb = Some(idx);
+                        }
+                    }
+                    if let Some(idx) = clicked_crumb {
+                        self.navigate_to_crumb(idx, settings);
+                    }
+                });
+            }
 
             ui.add_space(4.0);
             ui.separator();
@@ -409,11 +493,20 @@ impl OpdsBrowserState {
 
             if self.is_loading {
                 ui.centered_and_justified(|ui| {
-                    ui.horizontal(|ui| {
-                        let (icon_rect, _) =
-                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
-                        paint_icon(ui.painter(), Icon::Refresh, icon_rect, accent);
-                        ui.label(RichText::new(t.loading_doc).size(15.0).color(accent));
+                    ui.vertical_centered(|ui| {
+                        ui.horizontal(|ui| {
+                            let (icon_rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                            paint_icon(ui.painter(), Icon::Refresh, icon_rect, accent);
+                            ui.label(RichText::new(t.loading_doc).size(15.0).color(accent));
+                        });
+                        ui.add_space(8.0);
+                        if ui
+                            .add(IconButton::new(Icon::Cross, t.opds_cancel_btn))
+                            .clicked()
+                        {
+                            self.cancel_loading();
+                        }
                     });
                 });
                 return;
@@ -433,7 +526,11 @@ impl OpdsBrowserState {
                             .add(IconButton::new(Icon::Refresh, t.opds_retry))
                             .clicked()
                         {
-                            if let Some(cur) = self.current_url.clone() {
+                            if let Some(cur) = self
+                                .last_requested_url
+                                .clone()
+                                .or_else(|| self.current_url.clone())
+                            {
                                 self.fetch_url(&cur, settings);
                             }
                         }
@@ -530,15 +627,46 @@ impl OpdsBrowserState {
                             );
                             ui.add_space(6.0);
                         }
-                        for book in books {
-                            self.render_book_card(ctx, ui, book, settings, theme);
-                            ui.add_space(8.0);
+                        let content_w = (ui.available_width() - 4.0).max(160.0);
+                        let max_grid_w = content_w.min(1360.0);
+                        if content_w >= 920.0 && books.len() > 1 {
+                            let col_w = ((max_grid_w - 8.0) * 0.5).max(200.0);
+                            for row in books.chunks(2) {
+                                ui.horizontal_top(|ui| {
+                                    for book in row {
+                                        self.render_book_card(
+                                            ctx,
+                                            ui,
+                                            book,
+                                            col_w,
+                                            settings,
+                                            theme,
+                                            &mut nav_url_to_open,
+                                        );
+                                    }
+                                });
+                                ui.add_space(8.0);
+                            }
+                        } else {
+                            let col_w = max_grid_w;
+                            for book in books {
+                                self.render_book_card(
+                                    ctx,
+                                    ui,
+                                    book,
+                                    col_w,
+                                    settings,
+                                    theme,
+                                    &mut nav_url_to_open,
+                                );
+                                ui.add_space(8.0);
+                            }
                         }
                     }
 
                     if feed.prev_url.is_some() || feed.next_url.is_some() {
                         ui.add_space(10.0);
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if let Some(p) = &feed.prev_url {
                                 if ui
                                     .add(IconButton::new(Icon::ArrowLeft, t.opds_prev_page))
@@ -568,175 +696,21 @@ impl OpdsBrowserState {
         });
     }
 
-    fn render_categories_grid(
-        &mut self,
-        ui: &mut egui::Ui,
-        categories: &[&OpdsEntry],
-        theme: &ReaderTheme,
-        nav_url_to_open: &mut Option<(String, String)>,
-    ) {
-        let text_color = theme.text_color();
-        let sec_text = theme.secondary_text_color();
-        let accent = theme.accent_color();
-
-        let avail_w = ui.available_width() - 8.0;
-        let cols = if avail_w > 720.0 { 3 } else { 2 };
-        let card_w = (avail_w - (cols as f32 - 1.0) * 8.0) / (cols as f32);
-
-        for row in categories.chunks(cols) {
-            ui.horizontal(|ui| {
-                for entry in row {
-                    let card_frame = egui::Frame::new()
-                        .fill(theme.bg_color())
-                        .stroke(Stroke::new(1.0, accent.gamma_multiply(0.2)))
-                        .corner_radius(6.0)
-                        .inner_margin(egui::Margin::symmetric(10, 8));
-
-                    let resp = card_frame.show(ui, |ui| {
-                        ui.set_width(card_w);
-                        ui.horizontal(|ui| {
-                            let (icon_rect, _) =
-                                ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-                            paint_icon(ui.painter(), Icon::Folder, icon_rect, accent);
-                            ui.add_space(4.0);
-                            ui.vertical(|ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(&entry.title)
-                                            .size(12.5)
-                                            .strong()
-                                            .color(text_color),
-                                    )
-                                    .truncate(),
-                                );
-                                if let Some(summary) = &entry.summary {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(summary).size(10.5).color(sec_text),
-                                        )
-                                        .truncate(),
-                                    );
-                                }
-                            });
-                        });
-                    });
-
-                    let interact =
-                        ui.interact(resp.response.rect, resp.response.id, egui::Sense::click());
-                    if interact.hovered() {
-                        ui.painter().rect_stroke(
-                            resp.response.rect,
-                            6.0,
-                            Stroke::new(1.5, accent),
-                            StrokeKind::Inside,
-                        );
-                    }
-                    if interact.clicked() {
-                        if let Some(link) = &entry.navigation_link {
-                            *nav_url_to_open = Some((entry.title.clone(), link.clone()));
-                        }
-                    }
-
-                    ui.add_space(6.0);
-                }
-            });
-            ui.add_space(6.0);
-        }
-    }
-
-    fn render_downloads_banner(
-        &mut self,
-        ui: &mut egui::Ui,
-        theme: &ReaderTheme,
-        lang: crate::i18n::UiLanguage,
-    ) {
-        if self.downloads.is_empty() {
-            return;
-        }
-        let t = lang.t();
-
-        let active_downloads: Vec<_> = self
-            .downloads
-            .values()
-            .filter(|d| {
-                matches!(
-                    d.status,
-                    DownloadStatus::Downloading { .. } | DownloadStatus::Queued
-                )
-            })
-            .cloned()
-            .collect();
-
-        if active_downloads.is_empty() {
-            return;
-        }
-
-        egui::Frame::new()
-            .fill(theme.bg_color())
-            .stroke(Stroke::new(1.0, theme.accent_color().gamma_multiply(0.4)))
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                for item in active_downloads {
-                    ui.horizontal(|ui| match item.status {
-                        DownloadStatus::Downloading { downloaded, total } => {
-                            let pct = if let Some(tot) = total
-                                && tot > 0
-                            {
-                                downloaded as f32 / tot as f32
-                            } else {
-                                0.0
-                            };
-                            let mb_dl = downloaded as f32 / (1024.0 * 1024.0);
-                            let info = if let Some(tot) = total {
-                                let mb_tot = tot as f32 / (1024.0 * 1024.0);
-                                format!(
-                                    "{} [{}]: {:.1} MB / {:.1} MB ({:.0}%)",
-                                    item.title,
-                                    item.format_label,
-                                    mb_dl,
-                                    mb_tot,
-                                    pct * 100.0
-                                )
-                            } else {
-                                format!("{} [{}]: {:.1} MB", item.title, item.format_label, mb_dl)
-                            };
-                            ui.add(
-                                IconLabel::new(Icon::Download, &info)
-                                    .color(theme.accent_color())
-                                    .size(12.0)
-                                    .strong(),
-                            );
-                            if total.is_some() {
-                                ui.add(egui::ProgressBar::new(pct).desired_width(120.0));
-                            }
-                        }
-                        DownloadStatus::Queued => {
-                            let text = crate::i18n::fill(
-                                t.extra.queued_download,
-                                &[("{title}", &item.title)],
-                            );
-                            ui.add(IconLabel::new(Icon::Recent, &text).size(12.0));
-                        }
-                        _ => {}
-                    });
-                }
-            });
-        ui.add_space(4.0);
-    }
-
     fn render_book_card(
         &mut self,
         ctx: &egui::Context,
         ui: &mut egui::Ui,
         entry: &OpdsEntry,
+        card_width: f32,
         settings: &AppSettings,
         theme: &ReaderTheme,
+        nav_url_to_open: &mut Option<(String, String)>,
     ) {
         let t = settings.ui_language.t();
         let text_color = theme.text_color();
         let sec_text = theme.secondary_text_color();
         let accent = theme.accent_color();
+        let inner_w = (card_width - 20.0).max(160.0);
 
         let card_frame = egui::Frame::new()
             .fill(theme.bg_color())
@@ -745,8 +719,13 @@ impl OpdsBrowserState {
             .inner_margin(egui::Margin::same(10));
 
         card_frame.show(ui, |ui| {
+            ui.set_width(inner_w);
             ui.horizontal_top(|ui| {
-                let cover_size = Vec2::new(72.0, 104.0);
+                let cover_size = if card_width < 340.0 {
+                    Vec2::new(52.0, 76.0)
+                } else {
+                    Vec2::new(72.0, 104.0)
+                };
                 let auth = self.active_auth(settings).ok().flatten();
                 let opt_tex = entry
                     .thumbnail_url
@@ -774,20 +753,27 @@ impl OpdsBrowserState {
                 ui.add_space(8.0);
 
                 ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new(&entry.title)
-                            .size(14.0)
-                            .strong()
-                            .color(text_color),
+                    ui.set_max_width(ui.available_width().max(80.0));
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&entry.title)
+                                .size(14.0)
+                                .strong()
+                                .color(text_color),
+                        )
+                        .wrap(),
                     );
 
                     if !entry.authors.is_empty() {
                         let authors_str = entry.authors.join(", ");
-                        ui.label(RichText::new(authors_str).size(12.0).color(accent));
+                        ui.add(
+                            egui::Label::new(RichText::new(authors_str).size(12.0).color(accent))
+                                .wrap(),
+                        );
                     }
 
                     if !entry.categories.is_empty() {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             for cat in entry.categories.iter().take(4) {
                                 let badge_frame = egui::Frame::new()
                                     .fill(accent.gamma_multiply(0.08))
@@ -803,12 +789,15 @@ impl OpdsBrowserState {
 
                     if let Some(summary) = &entry.summary {
                         let is_expanded = self.expanded_summaries.contains(&entry.id);
-                        if summary.len() > 180 && !is_expanded {
-                            let truncated: String = summary.chars().take(180).collect();
-                            ui.label(
-                                RichText::new(format!("{truncated}..."))
-                                    .size(11.0)
-                                    .color(sec_text),
+                        let truncated_opt = truncate_summary_chars(summary, 180);
+                        if let Some(truncated) = truncated_opt
+                            && !is_expanded
+                        {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(truncated).size(11.0).color(sec_text),
+                                )
+                                .wrap(),
                             );
                             if ui
                                 .add(
@@ -821,8 +810,12 @@ impl OpdsBrowserState {
                                 self.expanded_summaries.insert(entry.id.clone());
                             }
                         } else {
-                            ui.label(RichText::new(summary).size(11.0).color(sec_text));
-                            if summary.len() > 180
+                            let can_collapse = summary_exceeds_chars(summary, 180);
+                            ui.add(
+                                egui::Label::new(RichText::new(summary).size(11.0).color(sec_text))
+                                    .wrap(),
+                            );
+                            if can_collapse
                                 && ui
                                     .add(
                                         IconButton::new(Icon::ChevronUp, t.opds_collapse)
@@ -836,14 +829,26 @@ impl OpdsBrowserState {
                         }
                     }
 
-                    if !entry.acquisition_links.is_empty() {
+                    if !entry.acquisition_links.is_empty() || entry.navigation_link.is_some() {
                         ui.add_space(4.0);
-                        ui.horizontal(|ui| {
+                        let mut failed_errors: Vec<(String, String)> = Vec::new();
+                        ui.horizontal_wrapped(|ui| {
                             for acq in &entry.acquisition_links {
                                 let download_id = format!("{}_{}", entry.id, acq.format_label);
                                 let item_opt = self.downloads.get(&download_id);
 
                                 match item_opt.map(|i| &i.status) {
+                                    Some(DownloadStatus::Queued) => {
+                                        let queued_text = crate::i18n::fill(
+                                            t.extra.queued_download,
+                                            &[("{title}", &acq.format_label)],
+                                        );
+                                        ui.add(
+                                            IconLabel::new(Icon::Recent, &queued_text)
+                                                .size(11.5)
+                                                .color(sec_text),
+                                        );
+                                    }
                                     Some(DownloadStatus::Downloading { downloaded, total }) => {
                                         let progress_label = if let Some(tot) = total
                                             && *tot > 0
@@ -874,7 +879,18 @@ impl OpdsBrowserState {
                                             self.new_download_to_open = Some(file_path.clone());
                                         }
                                     }
-                                    _ => {
+                                    Some(DownloadStatus::Failed(err)) => {
+                                        failed_errors.push((acq.format_label.clone(), err.clone()));
+                                        let retry_text =
+                                            format!("{} ({})", t.opds_retry, acq.format_label);
+                                        let btn = IconButton::new(Icon::Refresh, &retry_text)
+                                            .font_size(11.5)
+                                            .color(Color32::RED);
+                                        if ui.add(btn).clicked() {
+                                            self.start_download(entry, acq, settings);
+                                        }
+                                    }
+                                    None => {
                                         let dl_text = format!(
                                             "{} {}",
                                             t.opds_download_format, acq.format_label
@@ -888,7 +904,24 @@ impl OpdsBrowserState {
                                     }
                                 }
                             }
+                            if let Some(nav_link) = &entry.navigation_link {
+                                let nav_btn =
+                                    IconButton::new(Icon::Folder, t.extra.opds_open_section)
+                                        .font_size(11.5)
+                                        .color(accent);
+                                if ui.add(nav_btn).clicked() {
+                                    *nav_url_to_open =
+                                        Some((entry.title.clone(), nav_link.clone()));
+                                }
+                            }
                         });
+                        for (fmt_label, err) in failed_errors {
+                            ui.add(
+                                IconLabel::new(Icon::Warning, &format!("[{fmt_label}] {err}"))
+                                    .color(Color32::RED)
+                                    .size(11.0),
+                            );
+                        }
                     }
                 });
             });
@@ -935,5 +968,19 @@ impl OpdsBrowserState {
             auth,
             downloads_dir,
         );
+    }
+}
+
+pub(crate) fn summary_exceeds_chars(summary: &str, max_chars: usize) -> bool {
+    summary.chars().nth(max_chars).is_some()
+}
+
+pub(crate) fn truncate_summary_chars(summary: &str, max_chars: usize) -> Option<String> {
+    let mut chars = summary.chars();
+    let prefix: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        Some(format!("{prefix}..."))
+    } else {
+        None
     }
 }

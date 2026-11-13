@@ -17,32 +17,96 @@ pub enum SettingsTab {
 
 pub struct Dialogs;
 
+fn filter_group_label(
+    group: crate::document::registry::FormatFilterGroup,
+    t: &crate::i18n::Translations,
+) -> &'static str {
+    use crate::document::registry::FormatFilterGroup;
+    match group {
+        FormatFilterGroup::Word => t.format_word,
+        FormatFilterGroup::Rtf => t.format_rtf,
+        FormatFilterGroup::Pdf => t.format_pdf,
+        FormatFilterGroup::Djvu => t.format_djvu,
+        FormatFilterGroup::Comics => t.format_comics,
+        FormatFilterGroup::Epub => t.format_epub,
+        FormatFilterGroup::Fb2 => t.format_fb2,
+        FormatFilterGroup::Kindle => t.extra.format_kindle,
+        FormatFilterGroup::Text => t.format_txt,
+        FormatFilterGroup::Html => t.format_html,
+    }
+}
+
+pub(crate) fn render_association_presets(
+    ui: &mut egui::Ui,
+    settings: &mut AppSettings,
+    on_save_settings: &mut bool,
+) {
+    let t = settings.ui_language.t();
+    ui.horizontal(|ui| {
+        if ui.small_button(t.select_all).clicked() {
+            settings.associated_extensions = crate::platform::supported_extensions()
+                .iter()
+                .map(|ext| (*ext).to_string())
+                .collect();
+            *on_save_settings = true;
+        }
+        if ui.small_button(t.deselect_all).clicked() {
+            settings.associated_extensions.clear();
+            *on_save_settings = true;
+        }
+        if ui.small_button(t.only_books).clicked() {
+            settings.associated_extensions = crate::document::registry::DEFAULT_BOOK_ASSOCIATIONS
+                .iter()
+                .map(|ext| (*ext).to_string())
+                .collect();
+            *on_save_settings = true;
+        }
+    });
+}
+
+pub(crate) fn render_extension_association_checkbox(
+    ui: &mut egui::Ui,
+    ext: &str,
+    settings: &mut AppSettings,
+    on_save_settings: &mut bool,
+) {
+    let label = crate::i18n::format::format_extension_description(ext, settings.ui_language);
+    let mut is_checked = settings
+        .associated_extensions
+        .iter()
+        .any(|e| e.eq_ignore_ascii_case(ext));
+    if ui.checkbox(&mut is_checked, label).changed() {
+        if is_checked {
+            if !settings
+                .associated_extensions
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(ext))
+            {
+                settings.associated_extensions.push(ext.to_string());
+            }
+        } else {
+            settings
+                .associated_extensions
+                .retain(|e| !e.eq_ignore_ascii_case(ext));
+        }
+        *on_save_settings = true;
+    }
+}
+
 impl Dialogs {
     pub fn pick_document_files(lang: crate::i18n::UiLanguage) -> Option<Vec<PathBuf>> {
         let t = lang.t();
-        rfd::FileDialog::new()
-            .add_filter(
-                t.format_all_supported,
-                &[
-                    "pdf", "djvu", "djv", "fb2", "fb2.zip", "epub", "mobi", "prc", "azw", "azw3",
-                    "docx", "doc", "rtf", "txt", "md", "markdown", "log", "cbz", "cbr", "cb7",
-                    "cbt", "zip", "rar", "7z", "tar", "xml", "html", "htm", "xhtml",
-                ],
-            )
-            .add_filter(t.format_word, &["docx", "doc", "dot"])
-            .add_filter(t.format_rtf, &["rtf"])
-            .add_filter(t.format_pdf, &["pdf"])
-            .add_filter(t.format_djvu, &["djvu", "djv"])
-            .add_filter(
-                t.format_comics,
-                &["cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "tar"],
-            )
-            .add_filter(t.format_epub, &["epub"])
-            .add_filter(t.format_fb2, &["fb2", "fb2.zip", "xml"])
-            .add_filter("Kindle / MOBI / AZW3", &["mobi", "prc", "azw", "azw3"])
-            .add_filter(t.format_txt, &["txt", "md", "markdown", "log"])
-            .add_filter(t.format_html, &["html", "htm", "xhtml"])
-            .pick_files()
+        let mut dialog = rfd::FileDialog::new().add_filter(
+            t.format_all_supported,
+            crate::document::registry::all_picker_extensions(),
+        );
+        for &group in crate::document::registry::DIALOG_FILTER_GROUPS {
+            dialog = dialog.add_filter(
+                filter_group_label(group, t),
+                crate::document::registry::filter_extensions(group),
+            );
+        }
+        dialog.pick_files()
     }
 
     pub fn pick_comic_folder(lang: crate::i18n::UiLanguage) -> Option<PathBuf> {
@@ -100,24 +164,7 @@ impl Dialogs {
                 ui.label(t.assoc_dialog_text);
                 ui.add_space(8.0);
 
-                ui.horizontal(|ui| {
-                    if ui.small_button(t.select_all).clicked() {
-                        settings.associated_extensions = crate::platform::SUPPORTED_EXTENSIONS
-                            .iter()
-                            .map(|ext| ext.to_string())
-                            .collect();
-                        *on_save_settings = true;
-                    }
-                    if ui.small_button(t.deselect_all).clicked() {
-                        settings.associated_extensions.clear();
-                        *on_save_settings = true;
-                    }
-                    if ui.small_button(t.only_books).clicked() {
-                        settings.associated_extensions =
-                            vec!["fb2".to_string(), "epub".to_string()];
-                        *on_save_settings = true;
-                    }
-                });
+                render_association_presets(ui, settings, on_save_settings);
                 ui.add_space(6.0);
 
                 egui::Frame::new()
@@ -132,33 +179,13 @@ impl Dialogs {
                         egui::ScrollArea::vertical()
                             .max_height(210.0)
                             .show(ui, |ui| {
-                                for &ext in crate::platform::SUPPORTED_EXTENSIONS {
-                                    let label = crate::i18n::format::format_extension_description(
+                                for &ext in crate::platform::supported_extensions() {
+                                    render_extension_association_checkbox(
+                                        ui,
                                         ext,
-                                        settings.ui_language,
+                                        settings,
+                                        on_save_settings,
                                     );
-                                    let mut is_checked = settings
-                                        .associated_extensions
-                                        .iter()
-                                        .any(|e| e.eq_ignore_ascii_case(ext));
-                                    if ui.checkbox(&mut is_checked, label).changed() {
-                                        if is_checked {
-                                            if !settings
-                                                .associated_extensions
-                                                .iter()
-                                                .any(|e| e.eq_ignore_ascii_case(ext))
-                                            {
-                                                settings
-                                                    .associated_extensions
-                                                    .push(ext.to_string());
-                                            }
-                                        } else {
-                                            settings
-                                                .associated_extensions
-                                                .retain(|e| !e.eq_ignore_ascii_case(ext));
-                                        }
-                                        *on_save_settings = true;
-                                    }
                                 }
                             });
                     });
@@ -355,7 +382,7 @@ impl Dialogs {
             .path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("PDF");
+            .unwrap_or(t.extra.default_document_title);
 
         egui::Window::new(t.pdf_password_title)
             .collapsible(false)

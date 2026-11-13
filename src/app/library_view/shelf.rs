@@ -507,6 +507,7 @@ impl LibraryViewState {
                                 radius.min(8.0),
                                 theme,
                                 &mut self.cover_loader,
+                                t.extra.default_book_title,
                             );
                             if cover_response.clicked() {
                                 *open_path = Some(entry.path.clone());
@@ -669,6 +670,7 @@ impl LibraryViewState {
             8.0,
             theme,
             &mut self.cover_loader,
+            t.extra.default_book_title,
         );
         if cover_response.clicked() {
             *open_path = Some(entry.path.clone());
@@ -710,29 +712,7 @@ impl LibraryViewState {
         );
 
         ui.add_space(6.0);
-        let percent: u32 = match entry.title.as_str() {
-            "Невидимые города" => 100,
-            "Дюна" => 82,
-            "Левая рука Тьмы" => 100,
-            "Хранители" => 24,
-            "Вымышленные истории" => 100,
-            "Поэтика пространства" => 55,
-            "Норвежский лес" => 100,
-            "Обделённые" => 12,
-            "Дзен и искусство ухода за мотоциклом" => 100,
-            "Пиранези" => 100,
-            "Полиция памяти" => 36,
-            _ => {
-                if entry.status == LibraryReadingStatus::Finished {
-                    100
-                } else if entry.total_units > 0 {
-                    ((entry.current_unit + 1) as f32 / entry.total_units as f32 * 100.0).round()
-                        as u32
-                } else {
-                    0
-                }
-            }
-        };
+        let percent = entry.progress_percent().round() as u32;
         let is_finished = entry.status == LibraryReadingStatus::Finished || percent == 100;
         let fraction = percent as f32 / 100.0;
         let status_color = if is_finished {
@@ -750,9 +730,9 @@ impl LibraryViewState {
         let (prog_r, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), 14.0), egui::Sense::hover());
         let label = if is_finished {
-            "Прочитано"
+            t.library_status_finished
         } else {
-            "Прогресс"
+            t.library_progress_label
         };
         let font_id = egui::FontId::proportional(metrics.status_size);
         ui.painter().text(

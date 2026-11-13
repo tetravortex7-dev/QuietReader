@@ -89,3 +89,22 @@ fn test_djvu_thread_safety_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<DjvuDocument>();
 }
+
+#[test]
+fn test_djvu_file_read_respects_size_limit() {
+    let dir = crate::test::util::unique_test_dir("djvu_limit");
+    let file_path = dir.join("sample.djvu");
+    let data = vec![0x41u8; 128];
+    std::fs::write(&file_path, &data).expect("write djvu sample");
+
+    let ok = crate::document::djvu::read_djvu_file_with_limit(&file_path, 128);
+    assert_eq!(ok.expect("within limit").len(), 128);
+
+    let err = crate::document::djvu::read_djvu_file_with_limit(&file_path, 127);
+    assert!(matches!(
+        err,
+        Err(document::DocumentError::LimitExceeded(_))
+    ));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -60,44 +60,103 @@ pub fn plural_category(n: usize, lang: UiLanguage) -> PluralCategory {
     }
 }
 
+fn plural_word<'a>(
+    n: usize,
+    lang: UiLanguage,
+    one: &'a str,
+    two: &'a str,
+    few: &'a str,
+    many: &'a str,
+) -> String {
+    let num_str = format_number(n, lang);
+    let resolved = lang.resolve();
+    let word = match plural_category(n, resolved) {
+        PluralCategory::Zero => {
+            if matches!(resolved, UiLanguage::Ar) {
+                few
+            } else {
+                many
+            }
+        }
+        PluralCategory::One => one,
+        PluralCategory::Two => {
+            if matches!(resolved, UiLanguage::Ar) {
+                two
+            } else {
+                few
+            }
+        }
+        PluralCategory::Few => few,
+        PluralCategory::Many => many,
+        PluralCategory::Other => {
+            if matches!(resolved, UiLanguage::Ar) {
+                one
+            } else {
+                many
+            }
+        }
+    };
+    format!("{num_str} {word}")
+}
+
 pub fn plural_pages(n: usize, lang: UiLanguage) -> String {
     let t = lang.t();
-    let num_str = format_number(n, lang);
-    match plural_category(n, lang) {
-        PluralCategory::One => format!("{num_str} {}", t.word_pages_one),
-        PluralCategory::Few => format!("{num_str} {}", t.word_pages_few),
-        _ => format!("{num_str} {}", t.word_pages_many),
-    }
+    plural_word(
+        n,
+        lang,
+        t.word_pages_one,
+        t.extra.word_pages_two,
+        t.word_pages_few,
+        t.word_pages_many,
+    )
 }
 
 pub fn plural_chapters(n: usize, lang: UiLanguage) -> String {
     let t = lang.t();
-    let num_str = format_number(n, lang);
-    match plural_category(n, lang) {
-        PluralCategory::One => format!("{num_str} {}", t.word_chapters_one),
-        PluralCategory::Few => format!("{num_str} {}", t.word_chapters_few),
-        _ => format!("{num_str} {}", t.word_chapters_many),
-    }
+    plural_word(
+        n,
+        lang,
+        t.word_chapters_one,
+        t.extra.word_chapters_two,
+        t.word_chapters_few,
+        t.word_chapters_many,
+    )
 }
 
 pub fn plural_matches(n: usize, lang: UiLanguage) -> String {
     let t = lang.t();
-    let num_str = format_number(n, lang);
-    match plural_category(n, lang) {
-        PluralCategory::One => format!("{num_str} {}", t.word_matches_one),
-        PluralCategory::Few => format!("{num_str} {}", t.word_matches_few),
-        _ => format!("{num_str} {}", t.word_matches_many),
-    }
+    plural_word(
+        n,
+        lang,
+        t.word_matches_one,
+        t.extra.word_matches_two,
+        t.word_matches_few,
+        t.word_matches_many,
+    )
 }
 
 pub fn plural_books(n: usize, lang: UiLanguage) -> String {
     let t = lang.t();
-    let num_str = format_number(n, lang);
-    match plural_category(n, lang) {
-        PluralCategory::One => format!("{num_str} {}", t.word_books_one),
-        PluralCategory::Few => format!("{num_str} {}", t.word_books_few),
-        _ => format!("{num_str} {}", t.word_books_many),
-    }
+    plural_word(
+        n,
+        lang,
+        t.word_books_one,
+        t.extra.word_books_two,
+        t.word_books_few,
+        t.word_books_many,
+    )
+}
+
+pub fn plural_days(n: usize, lang: UiLanguage) -> String {
+    let t = lang.t();
+    plural_word(
+        n,
+        lang,
+        t.extra.word_days_one,
+        t.extra.word_days_two,
+        t.extra.word_days_few,
+        t.extra.word_days_many,
+    )
 }
 
 pub fn format_number(n: usize, lang: UiLanguage) -> String {
@@ -180,6 +239,9 @@ pub fn format_date(year: i32, month: u32, day: u32, lang: UiLanguage) -> String 
 
 pub fn format_relative_time(timestamp_secs: u64, current_secs: u64, lang: UiLanguage) -> String {
     let t = lang.t();
+    if timestamp_secs == 0 {
+        return t.extra.date_recently.to_string();
+    }
     if current_secs <= timestamp_secs || current_secs - timestamp_secs < 60 {
         return t.date_just_now.to_string();
     }
@@ -232,12 +294,21 @@ fn format_error_detail(prefix: &str, message: &str, lang: UiLanguage) -> String 
 pub fn format_document_error(err: &DocumentError, lang: UiLanguage) -> String {
     let t = lang.t();
     match err {
-        DocumentError::Io(msg) => format_error_detail(t.err_io, msg, lang),
-        DocumentError::Unsupported(msg) => format_error_detail(t.err_unsupported, msg, lang),
-        DocumentError::Corrupted(msg) => format_error_detail(t.err_corrupted, msg, lang),
-        DocumentError::LimitExceeded(msg) => format_error_detail(t.err_limit_exceeded, msg, lang),
+        DocumentError::Io(msg) => format_doc_error_detail(t.err_io, msg, lang),
+        DocumentError::Unsupported(msg) => format_doc_error_detail(t.err_unsupported, msg, lang),
+        DocumentError::Corrupted(msg) => format_doc_error_detail(t.err_corrupted, msg, lang),
+        DocumentError::LimitExceeded(msg) => {
+            format_doc_error_detail(t.err_limit_exceeded, msg, lang)
+        }
         DocumentError::PasswordRequired => t.err_password_required.to_string(),
     }
+}
+
+fn format_doc_error_detail(prefix: &str, msg: &str, lang: UiLanguage) -> String {
+    if let Some(decoded) = super::error_format::decode_document_error_detail(msg, lang) {
+        return format!("{prefix}: {decoded}");
+    }
+    format_error_detail(prefix, msg, lang)
 }
 
 pub fn format_opds_auth_error(err: OpdsAuthError, lang: UiLanguage) -> String {
@@ -298,24 +369,35 @@ pub fn format_opds_error(err: &OpdsError, lang: UiLanguage) -> String {
 }
 
 pub fn format_extension_description(ext: &str, lang: UiLanguage) -> &'static str {
+    use crate::document::registry::FormatDescKey;
+    let Some(key) = crate::document::registry::description_key_for_extension(ext) else {
+        return "";
+    };
     let t = lang.t();
-    match ext.to_ascii_lowercase().as_str() {
-        "fb2" => t.format_desc_fb2,
-        "epub" => t.format_desc_epub,
-        "mobi" | "prc" => t.extra.format_desc_mobi,
-        "azw3" | "azw" => t.extra.format_desc_azw3,
-        "log" => t.extra.format_desc_log,
-        "txt" => t.format_desc_txt,
-        "doc" => t.format_desc_doc,
-        "docx" => t.format_desc_docx,
-        "rtf" => t.format_desc_rtf,
-        "pdf" => t.format_desc_pdf,
-        "djvu" | "djv" => t.format_desc_djvu,
-        "cbz" => t.format_desc_cbz,
-        "cbr" => t.format_desc_cbr,
-        "cb7" => t.format_desc_cb7,
-        "cbt" | "tar" => t.format_desc_cbt,
-        "md" | "markdown" => t.format_desc_md,
-        _ => "",
+    match key {
+        FormatDescKey::Fb2 => t.format_desc_fb2,
+        FormatDescKey::Fb2Zip => t.extra.format_desc_fb2_zip,
+        FormatDescKey::Epub => t.format_desc_epub,
+        FormatDescKey::Mobi => t.extra.format_desc_mobi,
+        FormatDescKey::Azw3 => t.extra.format_desc_azw3,
+        FormatDescKey::Log => t.extra.format_desc_log,
+        FormatDescKey::Txt => t.format_desc_txt,
+        FormatDescKey::Doc => t.format_desc_doc,
+        FormatDescKey::Dot => t.extra.format_desc_dot,
+        FormatDescKey::Docx => t.format_desc_docx,
+        FormatDescKey::Rtf => t.format_desc_rtf,
+        FormatDescKey::Pdf => t.format_desc_pdf,
+        FormatDescKey::Djvu => t.format_desc_djvu,
+        FormatDescKey::Cbz => t.format_desc_cbz,
+        FormatDescKey::Cbr => t.format_desc_cbr,
+        FormatDescKey::Cb7 => t.format_desc_cb7,
+        FormatDescKey::Cbt => t.format_desc_cbt,
+        FormatDescKey::Zip => t.extra.format_desc_zip,
+        FormatDescKey::Rar => t.extra.format_desc_rar,
+        FormatDescKey::SevenZ => t.extra.format_desc_7z,
+        FormatDescKey::Tar => t.extra.format_desc_tar,
+        FormatDescKey::Md => t.format_desc_md,
+        FormatDescKey::Html => t.extra.format_desc_html,
+        FormatDescKey::Xml => t.extra.format_desc_xml,
     }
 }

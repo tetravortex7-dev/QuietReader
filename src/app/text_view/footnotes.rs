@@ -128,6 +128,72 @@ pub(super) fn collect_numbers(chapter: &BookChapter) -> HashMap<String, usize> {
     numbers
 }
 
+const FOOTNOTE_CARDS_STATE_KEY: &str = "quietreader_footnote_cards";
+
+pub(super) struct FootnoteFrameState {
+    prev_cards: Vec<(String, egui::Rect)>,
+    next_cards: Vec<(String, egui::Rect)>,
+    any_hit: bool,
+}
+
+impl FootnoteFrameState {
+    pub(super) fn begin(ctx: &egui::Context) -> Self {
+        let prev_cards = ctx
+            .data(|data| {
+                data.get_temp::<Vec<(String, egui::Rect)>>(egui::Id::unique(
+                    FOOTNOTE_CARDS_STATE_KEY,
+                ))
+            })
+            .unwrap_or_default();
+        Self {
+            prev_cards,
+            next_cards: Vec::new(),
+            any_hit: false,
+        }
+    }
+
+    pub(super) fn finish(self, ctx: &egui::Context, clicked: bool, pinned: &mut Option<String>) {
+        let pointer = ctx.input(|i| i.pointer.hover_pos());
+        let over_any_card = pointer.is_some_and(|pos| {
+            self.prev_cards
+                .iter()
+                .any(|(_, rect)| rect.expand(4.0).contains(pos))
+        });
+        if clicked && !self.any_hit && !over_any_card {
+            *pinned = None;
+        }
+        ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::unique(FOOTNOTE_CARDS_STATE_KEY), self.next_cards);
+        });
+    }
+}
+
+pub(crate) fn update_pinned_on_markers(
+    marker_ids: &[&str],
+    hovered: &[bool],
+    over_card: &[bool],
+    clicked: bool,
+    pinned: &mut Option<String>,
+) -> bool {
+    let mut hit_any = false;
+    for ((id, &is_hovered), &is_over_card) in
+        marker_ids.iter().zip(hovered.iter()).zip(over_card.iter())
+    {
+        if is_hovered || is_over_card {
+            hit_any = true;
+        }
+        if clicked && is_hovered {
+            if pinned.as_deref() == Some(*id) {
+                *pinned = None;
+            } else {
+                *pinned = Some((*id).to_string());
+            }
+        }
+    }
+    hit_any
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn show_hover_card(
     ui: &mut egui::Ui,
     document: &dyn Document,
@@ -138,18 +204,19 @@ pub(super) fn show_hover_card(
     t: &Translations,
     font_size: f32,
     pinned: &mut Option<String>,
+    frame_state: &mut FootnoteFrameState,
 ) -> Option<String> {
     let pointer = ui.input(|i| i.pointer.hover_pos());
     let clicked = ui.input(|i| i.pointer.primary_clicked());
-    let card_state_id = egui::Id::unique("quietreader_footnote_card_last");
-    let last_card: Option<(String, egui::Rect)> =
-        ui.ctx().data(|data| data.get_temp(card_state_id));
     let origin = match galley.job.halign {
         egui::Align::LEFT => response.rect.left_top(),
         egui::Align::RIGHT => response.rect.right_top(),
         egui::Align::Center => egui::pos2(response.rect.center().x, response.rect.top()),
     };
-    let mut hovered_any = false;
+    let mut rects = Vec::with_capacity(markers.len());
+    let mut hovered = Vec::with_capacity(markers.len());
+    let mut over_card = Vec::with_capacity(markers.len());
+    let mut marker_ids = Vec::with_capacity(markers.len());
     for marker in markers {
         let start = galley.pos_from_cursor(egui::text::CCursor::new(marker.start_char));
         let end = galley.pos_from_cursor(egui::text::CCursor::new(marker.end_char));
@@ -158,39 +225,49 @@ pub(super) fn show_hover_card(
             egui::pos2(origin.x + end.min.x, origin.y + start.max.y),
         )
         .expand(2.0);
-        let hovered = pointer.is_some_and(|position| rect.contains(position));
-        if hovered {
-            hovered_any = true;
-        }
-        if clicked && hovered {
-            if pinned.as_deref() == Some(marker.id.as_str()) {
-                *pinned = None;
-            } else {
-                *pinned = Some(marker.id.clone());
-            }
-        }
-        let over_card = pointer.is_some_and(|position| {
-            last_card.as_ref().is_some_and(|(id, card_rect)| {
-                id == &marker.id && card_rect.expand(4.0).contains(position)
-            })
+        let is_hovered = pointer.is_some_and(|position| rect.contains(position));
+        let is_over_card = pointer.is_some_and(|position| {
+            frame_state
+                .prev_cards
+                .iter()
+                .any(|(id, card_rect)| id == &marker.id && card_rect.expand(4.0).contains(position))
         });
+        rects.push(rect);
+        hovered.push(is_hovered);
+        over_card.push(is_over_card);
+        marker_ids.push(marker.id.as_str());
+    }
 
-        if hovered || over_card || pinned.as_deref() == Some(marker.id.as_str()) {
+    if update_pinned_on_markers(&marker_ids, &hovered, &over_card, clicked, pinned) {
+        frame_state.any_hit = true;
+    }
+
+    let mut jump_to = None;
+    for (idx, marker) in markers.iter().enumerate() {
+        if hovered[idx] || over_card[idx] || pinned.as_deref() == Some(marker.id.as_str()) {
             let text = document.footnote(&marker.id);
             let can_jump = document.note_location(&marker.id).is_some();
-            if let Some(note_id) = show_card(ui, marker, rect, text, can_jump, theme, t, font_size)
-            {
+            if let Some(note_id) = show_card(
+                ui,
+                marker,
+                rects[idx],
+                text,
+                can_jump,
+                theme,
+                t,
+                font_size,
+                frame_state,
+            ) {
                 *pinned = None;
-                return Some(note_id);
+                jump_to = Some(note_id);
+                break;
             }
         }
-        if clicked && !hovered_any && !over_card {
-            *pinned = None;
-        }
     }
-    None
+    jump_to
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_card(
     ui: &mut egui::Ui,
     marker: &FootnoteMarker,
@@ -200,6 +277,7 @@ fn show_card(
     theme: &ReaderTheme,
     t: &Translations,
     font_size: f32,
+    frame_state: &mut FootnoteFrameState,
 ) -> Option<String> {
     let mut jump_to = None;
     let screen = ui.ctx().content_rect();
@@ -260,11 +338,8 @@ fn show_card(
                     }
                 });
         });
-    ui.ctx().data_mut(|data| {
-        data.insert_temp(
-            egui::Id::unique("quietreader_footnote_card_last"),
-            (marker.id.clone(), card.response.rect),
-        );
-    });
+    frame_state
+        .next_cards
+        .push((marker.id.clone(), card.response.rect));
     jump_to
 }

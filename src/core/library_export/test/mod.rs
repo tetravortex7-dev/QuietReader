@@ -61,3 +61,27 @@ fn exports_books_deduplicates_names_and_writes_csv() {
     let _ = std::fs::remove_dir_all(&source);
     let _ = std::fs::remove_dir_all(&destination);
 }
+
+#[test]
+fn exports_library_csv_neutralizes_formula_injection() {
+    let source = unique_test_dir("library_export_inj_src");
+    let destination = unique_test_dir("library_export_inj_dst");
+    std::fs::create_dir_all(&source).unwrap();
+    let book = source.join("safe.epub");
+    std::fs::write(&book, b"book").unwrap();
+
+    let entries = vec![LibraryEntry {
+        path: book,
+        title: "=HYPERLINK(\"http://evil\")".to_string(),
+        author: "+EVIL()".to_string(),
+        ..Default::default()
+    }];
+
+    export_library(&destination, &entries).unwrap();
+    let csv = std::fs::read_to_string(destination.join("library.csv")).unwrap();
+    assert!(csv.contains("\"'=HYPERLINK(\"\"http://evil\"\")\""));
+    assert!(csv.contains("'+EVIL()"));
+
+    let _ = std::fs::remove_dir_all(&source);
+    let _ = std::fs::remove_dir_all(&destination);
+}

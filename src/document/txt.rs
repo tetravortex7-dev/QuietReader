@@ -57,33 +57,26 @@ impl TxtDocument {
         })
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
-        Self::from_file_with_encoding(path, None)
-    }
-
     pub fn from_file_with_encoding<P: AsRef<Path>>(
         path: P,
         encoding: Option<&str>,
     ) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
-        let meta = std::fs::metadata(path_ref).map_err(|e| {
-            DocumentError::Io(format!(
-                "Не удалось прочитать метаданные текстового файла: {e}"
-            ))
-        })?;
+        let meta = std::fs::metadata(path_ref)
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_metadata("TXT", &e)))?;
         if meta.len() > Self::MAX_TXT_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер текстового файла превышает допустимый лимит (100 МБ)".to_string(),
+                crate::document::errors::file_too_large_mb("TXT", 100),
             ));
         }
 
         let bytes = std::fs::read(path_ref)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать текстовый файл: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_read("TXT", &e)))?;
 
         let default_title = path_ref
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Текстовый документ")
+            .unwrap_or(crate::document::errors::tokens::TITLE_TEXT)
             .to_string();
 
         let ext = path_ref
@@ -108,19 +101,23 @@ impl TxtDocument {
     ) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > Self::MAX_TXT_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер текстовых данных превышает допустимый лимит (100 МБ)".to_string(),
+                crate::document::errors::data_too_large_mb("TXT", 100),
             ));
         }
 
-        let sample = &bytes[..bytes.len().min(4096)];
         let forced_utf16 = encoding
             .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
             .is_some_and(|enc| enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE);
-        let is_utf16 =
-            forced_utf16 || bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
-        if !is_utf16 && sample.contains(&0) {
+        let has_utf16_bom = bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]);
+        let detected_utf16 = if !forced_utf16 && !has_utf16_bom && encoding.is_none() {
+            detect_bomless_utf16(bytes)
+        } else {
+            None
+        };
+        let is_utf16 = forced_utf16 || has_utf16_bom || detected_utf16.is_some();
+        if !is_utf16 && bytes.contains(&0) {
             return Err(DocumentError::Corrupted(
-                "Файл содержит бинарные данные и не является текстовым документом".to_string(),
+                crate::document::errors::binary_file(),
             ));
         }
 
@@ -153,6 +150,72 @@ impl TxtDocument {
     }
 }
 
+fn is_valid_utf16_candidate(bytes: &[u8], little_endian: bool) -> bool {
+    let mut even_zero = 0usize;
+    let mut odd_zero = 0usize;
+    for pair in bytes.chunks_exact(2) {
+        if pair == [0, 0] {
+            return false;
+        }
+        if pair[0] == 0 {
+            even_zero += 1;
+        }
+        if pair[1] == 0 {
+            odd_zero += 1;
+        }
+    }
+    let zero_pattern_ok = if little_endian {
+        even_zero == 0 && odd_zero > 0
+    } else {
+        odd_zero == 0 && even_zero > 0
+    };
+    if !zero_pattern_ok {
+        return false;
+    }
+
+    let units = bytes.chunks_exact(2).map(|pair| {
+        if little_endian {
+            u16::from_le_bytes([pair[0], pair[1]])
+        } else {
+            u16::from_be_bytes([pair[0], pair[1]])
+        }
+    });
+    let mut total = 0usize;
+    let mut printable = 0usize;
+    for decoded in char::decode_utf16(units) {
+        let Ok(c) = decoded else {
+            return false;
+        };
+        if c == '\0' || (c.is_control() && !matches!(c, '\t' | '\n' | '\r' | '\x0C' | '\u{0085}')) {
+            return false;
+        }
+        total += 1;
+        if c.is_alphabetic()
+            || c.is_ascii_digit()
+            || c.is_whitespace()
+            || c.is_ascii_punctuation()
+            || matches!(c, '\u{2010}'..='\u{205E}' | '«' | '»' | '№')
+        {
+            printable += 1;
+        }
+    }
+
+    total >= 2 && printable * 10 >= total * 8
+}
+
+fn detect_bomless_utf16(bytes: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    if bytes.len() < 4 || !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+    if is_valid_utf16_candidate(bytes, true) {
+        Some(encoding_rs::UTF_16LE)
+    } else if is_valid_utf16_candidate(bytes, false) {
+        Some(encoding_rs::UTF_16BE)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn decode_text_bytes_with(bytes: &[u8], encoding: Option<&str>) -> String {
     let forced = encoding.and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()));
     if let Some(forced) = forced {
@@ -172,6 +235,10 @@ fn decode_text_bytes(bytes: &[u8]) -> String {
     }
     if bytes.starts_with(&[0xFE, 0xFF]) {
         let (cow, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return cow.into_owned();
+    }
+    if let Some(enc) = detect_bomless_utf16(bytes) {
+        let (cow, _) = enc.decode_without_bom_handling(bytes);
         return cow.into_owned();
     }
     if let Ok(s) = std::str::from_utf8(bytes) {
@@ -263,18 +330,27 @@ fn parse_markdown_chapters(text: &str, default_title: &str) -> (Vec<BookChapter>
     let mut current_paragraphs = Vec::new();
     let mut current_p = String::new();
     let mut in_code_block = false;
+    let mut code_lines: Vec<String> = Vec::new();
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("```") {
+        let is_fence = trimmed.starts_with("```")
+            && (!in_code_block || trimmed.trim_start_matches('`').trim().is_empty());
+        if is_fence {
             flush_markdown_paragraph(&mut current_paragraphs, &mut current_p);
-            in_code_block = !in_code_block;
+            if in_code_block {
+                if !code_lines.is_empty() {
+                    current_paragraphs.push(code_lines.join("\n"));
+                    code_lines.clear();
+                }
+                in_code_block = false;
+            } else {
+                in_code_block = true;
+            }
             continue;
         }
         if in_code_block {
-            if !trimmed.is_empty() {
-                current_paragraphs.push(trimmed.to_string());
-            }
+            code_lines.push(line.trim_end_matches('\r').to_string());
             continue;
         }
         if let Some(heading) = markdown_heading(trimmed) {
@@ -308,6 +384,9 @@ fn parse_markdown_chapters(text: &str, default_title: &str) -> (Vec<BookChapter>
         }
     }
 
+    if in_code_block && !code_lines.is_empty() {
+        current_paragraphs.push(code_lines.join("\n"));
+    }
     flush_markdown_paragraph(&mut current_paragraphs, &mut current_p);
     if !current_title.is_empty() || !current_paragraphs.is_empty() || chapters.is_empty() {
         push_markdown_chapter(
@@ -611,7 +690,7 @@ fn parse_log_chapters(text: &str, default_title: &str) -> (Vec<BookChapter>, Vec
         let title = if lines.len() <= LINES_PER_CHUNK {
             default_title.to_string()
         } else {
-            format!("{default_title} (строки {start_line}–{end_line})")
+            crate::document::errors::tokens::lines_range(default_title, start_line, end_line)
         };
         chapters.push(BookChapter {
             id: Some(format!("log_{idx}")),
@@ -740,7 +819,7 @@ fn parse_plain_text_chapters(text: &str, default_title: &str) -> (Vec<BookChapte
         let title = if paragraphs.len() <= PARAGRAPHS_PER_CHAPTER {
             default_title.to_string()
         } else {
-            format!("Раздел {}", idx + 1)
+            crate::document::errors::tokens::section(idx + 1)
         };
         chapters.push(BookChapter {
             id: Some(format!("txt_{idx}")),

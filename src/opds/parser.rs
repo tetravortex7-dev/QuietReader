@@ -1,61 +1,45 @@
 use super::types::{OpdsAcquisitionLink, OpdsEntry, OpdsFeed, OpdsLink};
 use quick_xml::events::Event;
+use quick_xml::events::attributes::Attribute;
 use quick_xml::reader::Reader;
+use url::Url;
 
 pub fn resolve_relative_url(base: &str, relative: &str) -> String {
     let rel = relative.trim();
     if rel.is_empty() {
-        return base.to_string();
+        return base.trim().to_string();
     }
-    if rel.starts_with("http://") || rel.starts_with("https://") {
-        return rel.to_string();
+
+    const LCURL_TOKEN: &str = "__QUIETREADER_OPDS_LCURL__";
+    const RCURL_TOKEN: &str = "__QUIETREADER_OPDS_RCURL__";
+
+    let safe_rel = rel.replace('{', LCURL_TOKEN).replace('}', RCURL_TOKEN);
+    if let Ok(abs) = Url::parse(&safe_rel) {
+        return abs
+            .as_str()
+            .replace(LCURL_TOKEN, "{")
+            .replace(RCURL_TOKEN, "}");
     }
-    if rel.starts_with("//") {
-        let scheme = if base.starts_with("https:") {
-            "https:"
+
+    let base_trimmed = base.trim();
+    let base_url = Url::parse(base_trimmed).ok().or_else(|| {
+        if !base_trimmed.contains("://") && !base_trimmed.is_empty() {
+            Url::parse(&format!("http://{base_trimmed}")).ok()
         } else {
-            "http:"
-        };
-        return format!("{scheme}{rel}");
-    }
+            None
+        }
+    });
 
-    let (scheme, rest) = if let Some((s, r)) = base.split_once("://") {
-        (s, r)
-    } else {
-        ("http", base)
-    };
-
-    let (host_port, path_query) = if let Some((hp, pq)) = rest.split_once('/') {
-        (hp, format!("/{pq}"))
-    } else {
-        (rest, "/".to_string())
-    };
-
-    if rel.starts_with('/') {
-        return format!("{scheme}://{host_port}{rel}");
-    }
-
-    let path_only = path_query.split('?').next().unwrap_or("/");
-    let dir = if let Some(idx) = path_only.rfind('/') {
-        &path_only[..=idx]
-    } else {
-        "/"
-    };
-
-    let combined = format!("{dir}{rel}");
-    let mut segments = Vec::new();
-    for seg in combined.split('/') {
-        if seg.is_empty() || seg == "." {
-            continue;
-        } else if seg == ".." {
-            segments.pop();
-        } else {
-            segments.push(seg);
+    if let Some(base_parsed) = base_url {
+        if let Ok(joined) = base_parsed.join(&safe_rel) {
+            return joined
+                .as_str()
+                .replace(LCURL_TOKEN, "{")
+                .replace(RCURL_TOKEN, "}");
         }
     }
 
-    let normalized_path = segments.join("/");
-    format!("{scheme}://{host_port}/{normalized_path}")
+    rel.to_string()
 }
 
 pub fn percent_encode_query(input: &str) -> String {
@@ -77,7 +61,7 @@ pub fn percent_encode_query(input: &str) -> String {
 
 pub fn base64_encode(input: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     let mut chunks = input.chunks_exact(3);
     for chunk in chunks.by_ref() {
         let n = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
@@ -122,7 +106,8 @@ pub fn sanitize_filename(name: &str) -> String {
 
 pub fn detect_format_and_ext(mime: &str, href: &str) -> Option<(&'static str, &'static str)> {
     let m = mime.to_ascii_lowercase();
-    let h = href.to_ascii_lowercase();
+    let href_path = href.split(['?', '#']).next().unwrap_or(href);
+    let h = href_path.to_ascii_lowercase();
     const FORMATS: &[(&[&str], &[&str], &str, &str)] = &[
         (&["epub"], &[".epub"], "EPUB", "epub"),
         (&["fictionbook", "fb2"], &[".fb2", ".fb2.zip"], "FB2", "fb2"),
@@ -145,24 +130,112 @@ pub fn detect_format_and_ext(mime: &str, href: &str) -> Option<(&'static str, &'
     None
 }
 
+fn decode_html_entity(entity: &str) -> Option<String> {
+    match entity {
+        "amp" => Some("&".to_string()),
+        "lt" => Some("<".to_string()),
+        "gt" => Some(">".to_string()),
+        "quot" => Some("\"".to_string()),
+        "apos" | "#39" => Some("'".to_string()),
+        "nbsp" => Some(" ".to_string()),
+        "mdash" => Some("—".to_string()),
+        "ndash" => Some("–".to_string()),
+        s if s.starts_with("#x") || s.starts_with("#X") => u32::from_str_radix(&s[2..], 16)
+            .ok()
+            .and_then(char::from_u32)
+            .map(|ch| ch.to_string()),
+        s if s.starts_with('#') => s[1..]
+            .parse::<u32>()
+            .ok()
+            .and_then(char::from_u32)
+            .map(|ch| ch.to_string()),
+        _ => None,
+    }
+}
+
+fn is_block_break_tag(tag_raw: &str) -> bool {
+    let trimmed = tag_raw.trim().trim_start_matches('/');
+    let name = trimmed.split_whitespace().next().unwrap_or("");
+    name.eq_ignore_ascii_case("p")
+        || name.eq_ignore_ascii_case("div")
+        || name.eq_ignore_ascii_case("br")
+        || name.eq_ignore_ascii_case("hr")
+        || name.eq_ignore_ascii_case("li")
+        || name.eq_ignore_ascii_case("blockquote")
+        || name.eq_ignore_ascii_case("h1")
+        || name.eq_ignore_ascii_case("h2")
+        || name.eq_ignore_ascii_case("h3")
+        || name.eq_ignore_ascii_case("h4")
+}
+
 pub fn strip_html_tags(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+    let mut no_tags = String::with_capacity(input.len());
     let mut in_tag = false;
+    let mut tag_buf = String::new();
     for c in input.chars() {
         match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
+            '<' => {
+                in_tag = true;
+                tag_buf.clear();
+            }
+            '>' => {
+                if in_tag && is_block_break_tag(&tag_buf) && !no_tags.is_empty() {
+                    if !no_tags.ends_with(char::is_whitespace) {
+                        no_tags.push(' ');
+                    }
+                }
+                in_tag = false;
+                tag_buf.clear();
+            }
+            _ if in_tag => tag_buf.push(c),
+            _ => no_tags.push(c),
         }
     }
-    out.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
+
+    let mut out = String::with_capacity(no_tags.len());
+    let mut chars = no_tags.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '&' {
+            if let Some(semi_rel) = no_tags[idx + 1..].find(';') {
+                if semi_rel <= 12 {
+                    let entity = &no_tags[idx + 1..idx + 1 + semi_rel];
+                    if let Some(decoded) = decode_html_entity(entity) {
+                        out.push_str(&decoded);
+                        for _ in 0..=semi_rel {
+                            chars.next();
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(ch);
+    }
+    out.trim().to_string()
+}
+
+fn decode_attr_value(attr: &Attribute<'_>) -> String {
+    attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+        .map(|v| v.into_owned())
+        .unwrap_or_else(|_| attr.value.to_string())
+}
+
+fn pop_matching_tag(stack: &mut Vec<String>, closing: &str) {
+    if let Some(pos) = stack
+        .iter()
+        .rposition(|tag| tag.eq_ignore_ascii_case(closing))
+    {
+        stack.truncate(pos);
+    }
+}
+
+fn in_entry_element(stack: &[String], target: &str) -> bool {
+    let Some(entry_pos) = stack.iter().rposition(|t| t.eq_ignore_ascii_case("entry")) else {
+        return false;
+    };
+    stack[entry_pos + 1..]
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(target))
 }
 
 pub fn parse_opensearch_template(xml_str: &str, base_url: &str) -> Option<String> {
@@ -180,12 +253,12 @@ pub fn parse_opensearch_template(xml_str: &str, base_url: &str) -> Option<String
                     for attr in e.attributes().flatten() {
                         let key = attr.key.local_name();
                         if key.as_ref().eq_ignore_ascii_case("type") {
-                            let val = attr.value.as_ref();
+                            let val = decode_attr_value(&attr).to_ascii_lowercase();
                             if val.contains("atom+xml") || val.contains("opds") {
                                 is_atom = true;
                             }
                         } else if key.as_ref().eq_ignore_ascii_case("template") {
-                            template = Some(attr.value.to_string());
+                            template = Some(decode_attr_value(&attr));
                         }
                     }
                     if is_atom && let Some(tmpl) = template {
@@ -219,15 +292,15 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
     let mut in_feed = false;
     let mut in_entry = false;
     let mut in_author = false;
-    let mut current_tag = String::new();
+    let mut tag_stack: Vec<String> = Vec::new();
 
     let mut cur_entry_id = String::new();
     let mut cur_entry_title = String::new();
     let mut cur_author_name = String::new();
     let mut cur_entry_authors: Vec<String> = Vec::new();
     let mut cur_entry_summary_raw = String::new();
-    let mut cur_entry_summary = None;
-    let mut cur_entry_updated = None;
+    let mut cur_entry_updated_raw = String::new();
+    let mut cur_entry_published_raw = String::new();
     let mut cur_entry_categories = Vec::new();
     let mut cur_entry_thumb = None;
     let mut cur_entry_acquisitions: Vec<OpdsAcquisitionLink> = Vec::new();
@@ -238,31 +311,51 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
     macro_rules! append_active {
         ($txt:expr) => {
             if in_entry {
-                if current_tag.eq_ignore_ascii_case("title") {
-                    cur_entry_title.push_str($txt);
-                } else if current_tag.eq_ignore_ascii_case("id") {
-                    cur_entry_id.push_str($txt.trim());
-                } else if in_author && current_tag.eq_ignore_ascii_case("name") {
+                if in_author
+                    && tag_stack
+                        .last()
+                        .is_some_and(|t| t.eq_ignore_ascii_case("name"))
+                {
                     cur_author_name.push_str($txt);
-                } else if current_tag.eq_ignore_ascii_case("summary")
-                    || current_tag.eq_ignore_ascii_case("content")
+                } else if in_entry_element(&tag_stack, "summary")
+                    || in_entry_element(&tag_stack, "content")
                 {
                     cur_entry_summary_raw.push_str($txt);
-                } else if current_tag.eq_ignore_ascii_case("updated")
-                    || current_tag.eq_ignore_ascii_case("published")
+                } else if !in_author && in_entry_element(&tag_stack, "title") {
+                    cur_entry_title.push_str($txt);
+                } else if !in_author
+                    && tag_stack
+                        .last()
+                        .is_some_and(|t| t.eq_ignore_ascii_case("id"))
                 {
-                    if cur_entry_updated.is_none() {
-                        cur_entry_updated = Some($txt.trim().to_string());
-                    }
+                    cur_entry_id.push_str($txt.trim());
+                } else if tag_stack
+                    .last()
+                    .is_some_and(|t| t.eq_ignore_ascii_case("updated"))
+                {
+                    cur_entry_updated_raw.push_str($txt.trim());
+                } else if tag_stack
+                    .last()
+                    .is_some_and(|t| t.eq_ignore_ascii_case("published"))
+                {
+                    cur_entry_published_raw.push_str($txt.trim());
                 }
             } else if in_feed {
-                if current_tag.eq_ignore_ascii_case("title") {
-                    feed_title.push_str($txt);
-                } else if current_tag.eq_ignore_ascii_case("id") {
-                    feed_id.push_str($txt.trim());
-                } else if current_tag.eq_ignore_ascii_case("icon")
-                    || current_tag.eq_ignore_ascii_case("logo")
+                if !in_author
+                    && tag_stack
+                        .last()
+                        .is_some_and(|t| t.eq_ignore_ascii_case("title"))
                 {
+                    feed_title.push_str($txt);
+                } else if !in_author
+                    && tag_stack
+                        .last()
+                        .is_some_and(|t| t.eq_ignore_ascii_case("id"))
+                {
+                    feed_id.push_str($txt.trim());
+                } else if tag_stack.last().is_some_and(|t| {
+                    t.eq_ignore_ascii_case("icon") || t.eq_ignore_ascii_case("logo")
+                }) {
                     feed_icon_raw.push_str($txt.trim());
                 }
             }
@@ -273,6 +366,16 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
                 let name = e.local_name().as_ref().to_string();
+                if in_entry
+                    && (in_entry_element(&tag_stack, "summary")
+                        || in_entry_element(&tag_stack, "content"))
+                    && is_block_break_tag(&name)
+                    && !cur_entry_summary_raw.is_empty()
+                    && !cur_entry_summary_raw.ends_with(char::is_whitespace)
+                {
+                    cur_entry_summary_raw.push(' ');
+                }
+
                 if name.eq_ignore_ascii_case("feed") {
                     in_feed = true;
                 } else if name.eq_ignore_ascii_case("entry") {
@@ -282,8 +385,8 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                     cur_author_name.clear();
                     cur_entry_authors.clear();
                     cur_entry_summary_raw.clear();
-                    cur_entry_summary = None;
-                    cur_entry_updated = None;
+                    cur_entry_updated_raw.clear();
+                    cur_entry_published_raw.clear();
                     cur_entry_categories.clear();
                     cur_entry_thumb = None;
                     cur_entry_acquisitions.clear();
@@ -292,11 +395,12 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                     in_author = true;
                     cur_author_name.clear();
                 }
-                current_tag = name;
+                tag_stack.push(name);
             }
             Ok(Event::Empty(ref e)) => {
                 let name = e.local_name();
-                if name.as_ref().eq_ignore_ascii_case("link") {
+                let name_str = name.as_ref();
+                if name_str.eq_ignore_ascii_case("link") {
                     let mut href = String::new();
                     let mut rel = String::new();
                     let mut mime_type = String::new();
@@ -305,7 +409,7 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
 
                     for attr in e.attributes().flatten() {
                         let k = attr.key.local_name();
-                        let v = attr.value.to_string();
+                        let v = decode_attr_value(&attr);
                         if k.as_ref().eq_ignore_ascii_case("href") {
                             href = v;
                         } else if k.as_ref().eq_ignore_ascii_case("rel") {
@@ -351,7 +455,7 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                             }
                         } else if rel_lower.contains("subsection")
                             || type_lower.contains("atom+xml")
-                            || rel_lower == "alternate" && type_lower.contains("opds")
+                            || (rel_lower == "alternate" && type_lower.contains("opds"))
                         {
                             if cur_entry_nav.is_none() {
                                 cur_entry_nav = Some(resolved_href.clone());
@@ -386,19 +490,27 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                             title: if title.is_empty() { None } else { Some(title) },
                         });
                     }
-                } else if name.as_ref().eq_ignore_ascii_case("category") && in_entry {
+                } else if name_str.eq_ignore_ascii_case("category") && in_entry {
                     for attr in e.attributes().flatten() {
                         let k = attr.key.local_name();
                         if k.as_ref().eq_ignore_ascii_case("label")
                             || k.as_ref().eq_ignore_ascii_case("term")
                         {
-                            let val = attr.value.trim().to_string();
+                            let val = decode_attr_value(&attr).trim().to_string();
                             if !val.is_empty() && !cur_entry_categories.contains(&val) {
                                 cur_entry_categories.push(val);
                                 break;
                             }
                         }
                     }
+                } else if in_entry
+                    && (in_entry_element(&tag_stack, "summary")
+                        || in_entry_element(&tag_stack, "content"))
+                    && is_block_break_tag(name_str)
+                    && !cur_entry_summary_raw.is_empty()
+                    && !cur_entry_summary_raw.ends_with(char::is_whitespace)
+                {
+                    cur_entry_summary_raw.push(' ');
                 }
             }
             Ok(Event::Text(ref e)) => {
@@ -436,7 +548,18 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
             }
             Ok(Event::End(ref e)) => {
                 let name = e.local_name();
-                if name.as_ref().eq_ignore_ascii_case("entry") {
+                let name_str = name.as_ref();
+                if in_entry
+                    && (in_entry_element(&tag_stack, "summary")
+                        || in_entry_element(&tag_stack, "content"))
+                    && is_block_break_tag(name_str)
+                    && !cur_entry_summary_raw.is_empty()
+                    && !cur_entry_summary_raw.ends_with(char::is_whitespace)
+                {
+                    cur_entry_summary_raw.push(' ');
+                }
+
+                if name_str.eq_ignore_ascii_case("entry") {
                     let final_title = cur_entry_title.trim().to_string();
                     let final_id = if cur_entry_id.is_empty() {
                         final_title.clone()
@@ -451,7 +574,14 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                             None
                         }
                     } else {
-                        cur_entry_summary.take()
+                        None
+                    };
+                    let final_updated = if !cur_entry_updated_raw.trim().is_empty() {
+                        Some(cur_entry_updated_raw.trim().to_string())
+                    } else if !cur_entry_published_raw.trim().is_empty() {
+                        Some(cur_entry_published_raw.trim().to_string())
+                    } else {
+                        None
                     };
 
                     entries.push(OpdsEntry {
@@ -459,14 +589,14 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                         title: final_title,
                         authors: cur_entry_authors.clone(),
                         summary: final_summary,
-                        updated: cur_entry_updated.take(),
+                        updated: final_updated,
                         categories: cur_entry_categories.clone(),
                         thumbnail_url: cur_entry_thumb.take(),
                         acquisition_links: cur_entry_acquisitions.clone(),
                         navigation_link: cur_entry_nav.take(),
                     });
                     in_entry = false;
-                } else if name.as_ref().eq_ignore_ascii_case("author") {
+                } else if name_str.eq_ignore_ascii_case("author") {
                     let clean_auth = cur_author_name.trim().to_string();
                     if !clean_auth.is_empty() && !cur_entry_authors.contains(&clean_auth) {
                         cur_entry_authors.push(clean_auth);
@@ -474,7 +604,7 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                     cur_author_name.clear();
                     in_author = false;
                 }
-                current_tag.clear();
+                pop_matching_tag(&mut tag_stack, name_str);
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(format!("XML error: {e}")),

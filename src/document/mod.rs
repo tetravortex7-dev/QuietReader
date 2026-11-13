@@ -28,6 +28,8 @@ pub use txt::TxtDocument;
 
 use std::path::Path;
 
+pub mod errors;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentError {
     Io(String),
@@ -43,8 +45,8 @@ impl std::fmt::Display for DocumentError {
             Self::Io(msg)
             | Self::Unsupported(msg)
             | Self::Corrupted(msg)
-            | Self::LimitExceeded(msg) => write!(f, "{msg}"),
-            Self::PasswordRequired => write!(f, "Требуется пароль для открытия документа"),
+            | Self::LimitExceeded(msg) => f.write_str(&errors::fallback_display(msg)),
+            Self::PasswordRequired => write!(f, "Password required to open document"),
         }
     }
 }
@@ -173,7 +175,7 @@ impl BookChapter {
 }
 
 pub const NOTES_CHAPTER_ID: &str = "__quietreader_notes__";
-pub const NOTES_CHAPTER_TITLE: &str = "Примечания";
+pub const NOTES_CHAPTER_TITLE: &str = errors::tokens::NOTES;
 
 pub fn push_notes_chapter(
     chapters: &mut Vec<BookChapter>,
@@ -476,6 +478,9 @@ pub trait Document: Send + Sync {
     fn can_copy(&self) -> bool {
         true
     }
+    fn supports_search_highlight(&self) -> bool {
+        false
+    }
     fn page_content(&self) -> Option<&dyn PageContent> {
         None
     }
@@ -552,22 +557,21 @@ pub fn read_bounded<R: std::io::Read>(
     let n = reader
         .take(max_entry_bytes.saturating_add(1))
         .read_to_end(&mut buf)
-        .map_err(|e| DocumentError::Io(format!("Ошибка чтения из архива: {e}")))?
-        as u64;
+        .map_err(|e| DocumentError::Io(errors::io_archive_read(&e)))? as u64;
     if n > max_entry_bytes {
-        return Err(DocumentError::LimitExceeded(format!(
-            "Превышен лимит размера файла в архиве ({max_entry_bytes} байт)"
-        )));
+        return Err(DocumentError::LimitExceeded(
+            errors::archive_entry_too_large_bytes(max_entry_bytes),
+        ));
     }
     let Some(new_total) = total_unpacked.checked_add(n) else {
-        return Err(DocumentError::LimitExceeded(format!(
-            "Превышен общий лимит распаковки архива ({max_total_bytes} байт)"
-        )));
+        return Err(DocumentError::LimitExceeded(
+            errors::archive_total_too_large_bytes(max_total_bytes),
+        ));
     };
     if new_total > max_total_bytes {
-        return Err(DocumentError::LimitExceeded(format!(
-            "Превышен общий лимит распаковки архива ({max_total_bytes} байт)"
-        )));
+        return Err(DocumentError::LimitExceeded(
+            errors::archive_total_too_large_bytes(max_total_bytes),
+        ));
     }
     *total_unpacked = new_total;
     Ok(buf)

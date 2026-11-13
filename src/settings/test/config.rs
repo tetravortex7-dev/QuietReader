@@ -84,3 +84,30 @@ fn test_translation_key_is_ignored_on_load() {
     assert_eq!(settings.provider, TranslationProvider::DeepL);
     assert!(settings.deepl_api_key.is_empty());
 }
+
+#[test]
+fn test_library_pin_requires_current_pin_to_clear_or_overwrite() {
+    let mut settings = crate::settings::AppSettings::default();
+    assert!(!settings.has_library_pin());
+    assert!(!settings.clear_library_pin("1234"));
+
+    settings.set_library_pin("1234");
+    assert!(settings.has_library_pin());
+    assert!(settings.verify_library_pin("1234"));
+
+    settings.set_library_pin("");
+    settings.set_library_pin("9999");
+    assert!(settings.verify_library_pin("1234"));
+    assert!(!settings.verify_library_pin("9999"));
+
+    assert!(!settings.clear_library_pin(""));
+    assert!(!settings.clear_library_pin("0000"));
+    assert!(settings.has_library_pin());
+
+    assert!(settings.clear_library_pin("1234"));
+    assert!(!settings.has_library_pin());
+
+    settings.set_library_pin("5678");
+    assert!(settings.has_library_pin());
+    assert!(settings.verify_library_pin("5678"));
+}

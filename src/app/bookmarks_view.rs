@@ -24,6 +24,43 @@ fn format_label(format: NotesFormat, t: &crate::i18n::Translations) -> &'static 
     }
 }
 
+pub(crate) fn save_export_text(
+    path: &Path,
+    content: &str,
+    ok_message: &str,
+    err_template: &str,
+) -> String {
+    match std::fs::write(path, content) {
+        Ok(()) => ok_message.to_string(),
+        Err(err) => err_template.replace("{}", &err.to_string()),
+    }
+}
+
+pub(crate) fn set_bookmark_color(bookmark: &mut Bookmark, color: BookmarkColor) -> bool {
+    if bookmark.color == color {
+        return false;
+    }
+    bookmark.color = color;
+    true
+}
+
+pub(crate) fn set_bookmark_note(bookmarks: &mut [Bookmark], id: &str, note: String) -> bool {
+    let Some(item) = bookmarks.iter_mut().find(|b| b.id == id) else {
+        return false;
+    };
+    if item.note == note {
+        return false;
+    }
+    item.note = note;
+    true
+}
+
+pub(crate) fn remove_bookmark_by_id(bookmarks: &mut Vec<Bookmark>, id: &str) -> bool {
+    let before = bookmarks.len();
+    bookmarks.retain(|b| b.id != id);
+    bookmarks.len() != before
+}
+
 pub struct BookmarksView;
 
 impl BookmarksView {
@@ -41,10 +78,11 @@ impl BookmarksView {
         status_message: &mut Option<String>,
         book_title: &str,
         book_author: &str,
+        can_copy: bool,
         return_location: &mut Option<(usize, f32, Option<usize>)>,
         state: &mut BookmarkViewState,
         on_add_bookmark: &mut bool,
-    ) {
+    ) -> bool {
         let t = lang.t();
         let Some(file_path) = current_file_path else {
             ui.add_space(16.0);
@@ -55,8 +93,9 @@ impl BookmarksView {
                         .color(Color32::from_gray(140)),
                 );
             });
-            return;
+            return false;
         };
+        let mut changed = false;
 
         if let Some((ret_ch, ret_sy, ret_pg)) = *return_location {
             let ret_btn = IconButton::new(Icon::ArrowLeft, t.return_to_reading)
@@ -325,8 +364,8 @@ impl BookmarksView {
                                             );
                                         }
                                     }
-                                    if c_resp.clicked() {
-                                        b.color = c;
+                                    if c_resp.clicked() && set_bookmark_color(b, c) {
+                                        changed = true;
                                     }
                                 }
 
@@ -342,14 +381,21 @@ impl BookmarksView {
                                     state.editing_text = b.note.clone();
                                 }
 
-                                if ui.small_button(t.copy).clicked() {
-                                    let copy_str = if b.note.is_empty() {
-                                        b.text.clone()
+                                let copy_btn = ui
+                                    .add_enabled(can_copy, egui::Button::new(t.copy).small())
+                                    .on_disabled_hover_text(t.extra.copy_restricted);
+                                if copy_btn.clicked() {
+                                    if !can_copy {
+                                        *status_message = Some(t.extra.copy_restricted.to_string());
                                     } else {
-                                        format!("{}\n\n{}: {}", b.text, t.add_note, b.note)
-                                    };
-                                    ui.ctx().copy_text(copy_str);
-                                    *status_message = Some(t.copy.to_string());
+                                        let copy_str = if b.note.is_empty() {
+                                            b.text.clone()
+                                        } else {
+                                            format!("{}\n\n{}: {}", b.text, t.add_note, b.note)
+                                        };
+                                        ui.ctx().copy_text(copy_str);
+                                        *status_message = Some(t.copy.to_string());
+                                    }
                                 }
 
                                 ui.with_layout(
@@ -373,14 +419,16 @@ impl BookmarksView {
                 }
             });
 
-        if let Some((id, note)) = save_note_action {
-            if let Some(item) = settings.bookmarks.iter_mut().find(|b| b.id == id) {
-                item.note = note;
-            }
+        if let Some((id, note)) = save_note_action
+            && set_bookmark_note(&mut settings.bookmarks, &id, note)
+        {
+            changed = true;
         }
 
         if let Some(del_id) = to_delete_id {
-            settings.bookmarks.retain(|b| b.id != del_id);
+            if remove_bookmark_by_id(&mut settings.bookmarks, &del_id) {
+                changed = true;
+            }
             *status_message = Some(t.bookmark_removed.to_string());
         }
 
@@ -391,16 +439,25 @@ impl BookmarksView {
         ui.horizontal(|ui| {
             let copy_all_btn = IconButton::new(Icon::Copy, t.copy_all_bookmarks)
                 .min_size(Vec2::new(ui.available_width(), 26.0));
-            if ui.add(copy_all_btn).clicked() {
-                let cur_bms: Vec<Bookmark> = settings
-                    .bookmarks
-                    .iter()
-                    .filter(|b| b.book_path == file_path)
-                    .cloned()
-                    .collect();
-                let conspectus = NotesFormat::Markdown.render(book_title, book_author, &cur_bms);
-                ui.ctx().copy_text(conspectus);
-                *status_message = Some(t.bookmarks_copied.to_string());
+            if ui
+                .add_enabled(can_copy, copy_all_btn)
+                .on_disabled_hover_text(t.extra.copy_restricted)
+                .clicked()
+            {
+                if !can_copy {
+                    *status_message = Some(t.extra.copy_restricted.to_string());
+                } else {
+                    let cur_bms: Vec<Bookmark> = settings
+                        .bookmarks
+                        .iter()
+                        .filter(|b| b.book_path == file_path)
+                        .cloned()
+                        .collect();
+                    let conspectus =
+                        NotesFormat::Markdown.render(book_title, book_author, &cur_bms);
+                    ui.ctx().copy_text(conspectus);
+                    *status_message = Some(t.bookmarks_copied.to_string());
+                }
             }
         });
 
@@ -466,10 +523,14 @@ impl BookmarksView {
                 .set_file_name(&safe_name)
                 .save_file()
             {
-                if std::fs::write(&save_path, conspectus).is_ok() {
-                    *status_message = Some(t.bookmarks_exported.to_string());
-                }
+                *status_message = Some(save_export_text(
+                    &save_path,
+                    &conspectus,
+                    t.bookmarks_exported,
+                    t.library_export_failed,
+                ));
             }
         }
+        changed
     }
 }

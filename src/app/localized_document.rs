@@ -87,6 +87,14 @@ impl Document for LocalizedDocument {
         self.inner.view_kind()
     }
 
+    fn can_copy(&self) -> bool {
+        self.inner.can_copy()
+    }
+
+    fn supports_search_highlight(&self) -> bool {
+        self.inner.supports_search_highlight()
+    }
+
     fn page_content(&self) -> Option<&dyn PageContent> {
         self.inner.page_content()
     }
@@ -139,16 +147,84 @@ fn localize_toc(
 }
 
 fn localize_paragraph(paragraph: &str, lang: UiLanguage, page_based: bool) -> String {
-    if paragraph == "Документ не содержит текста." || page_based {
+    if paragraph == "Документ не содержит текста."
+        || paragraph == crate::document::errors::tokens::NO_TEXT
+        || page_based
+    {
         localize_text(paragraph, lang)
     } else {
         paragraph.to_string()
     }
 }
 
+fn localize_nested_title(raw: &str, lang: UiLanguage) -> String {
+    if let Some((code, args)) = crate::document::errors::decode_nested(raw)
+        && let Some(decoded) = decode_token(code, &args, lang)
+    {
+        return decoded;
+    }
+    localize_text(raw, lang)
+}
+
+fn decode_token(code: &str, args: &[&str], lang: UiLanguage) -> Option<String> {
+    let t = lang.t();
+    let a = |i: usize| -> &str { args.get(i).copied().unwrap_or("") };
+    match code {
+        "@title:untitled" => Some(t.extra.default_untitled.to_string()),
+        "@author:unknown" => Some(t.extra.default_unknown_author.to_string()),
+        "@doc:notes" => Some(t.notes_section.to_string()),
+        "@doc:no_text" => Some(t.extra.default_no_text.to_string()),
+        "@sec:plain" => Some(t.extra.default_section_plain.to_string()),
+        "@title:comic" => Some(t.extra.default_comic_title.to_string()),
+        "@title:word" => Some(t.extra.default_word_document.to_string()),
+        "@title:pdf" => Some(t.extra.default_pdf_document.to_string()),
+        "@title:djvu" => Some(t.extra.default_djvu_document.to_string()),
+        "@title:mobi" => Some(t.extra.default_mobi_document.to_string()),
+        "@title:rtf" => Some(t.extra.default_rtf_document.to_string()),
+        "@title:text" => Some(t.extra.default_text_document.to_string()),
+        "@title:html" => Some(t.extra.default_html_document.to_string()),
+        "@sec" => Some(crate::i18n::fill(t.extra.default_section, &[("{n}", a(0))])),
+        "@page" => Some(crate::i18n::fill(t.extra.default_page, &[("{n}", a(0))])),
+        "@chap" => Some(crate::i18n::fill(t.extra.default_chapter, &[("{n}", a(0))])),
+        "@sec_page" => Some(crate::i18n::fill(
+            t.extra.default_section_page,
+            &[("{section}", a(0)), ("{page}", a(1))],
+        )),
+        "@chap_part" => {
+            let inner = localize_nested_title(a(0), lang);
+            Some(crate::i18n::fill(
+                t.extra.default_chapter_part_suffix,
+                &[("{title}", &inner), ("{part}", a(1))],
+            ))
+        }
+        "@lines" => {
+            let inner = localize_nested_title(a(0), lang);
+            Some(crate::i18n::fill(
+                t.extra.default_lines_range,
+                &[("{title}", &inner), ("{start}", a(1)), ("{end}", a(2))],
+            ))
+        }
+        "@comic_total" => Some(crate::i18n::fill(
+            t.extra.comic_total_pages,
+            &[("{n}", a(0))],
+        )),
+        "@comic_range" => Some(crate::i18n::fill(
+            t.extra.comic_pages_range,
+            &[("{start}", a(0)), ("{end}", a(1)), ("{count}", a(2))],
+        )),
+        _ => None,
+    }
+}
+
 fn localize_text(value: &str, lang: UiLanguage) -> String {
     let t = lang.t();
     let text = value.trim();
+    if let Some((code, args)) = crate::document::errors::decode(text)
+        && let Some(decoded) = decode_token(code, &args, lang)
+    {
+        return decoded;
+    }
+
     match text {
         "Без названия" => return t.extra.default_untitled.to_string(),
         "Неизвестный автор" => return t.extra.default_unknown_author.to_string(),

@@ -12,6 +12,14 @@ pub enum CliAction {
 }
 
 pub fn parse_args(args: impl Iterator<Item = OsString>) -> CliAction {
+    parse_args_with_lang(args, crate::i18n::UiLanguage::Auto)
+}
+
+pub fn parse_args_with_lang(
+    args: impl Iterator<Item = OsString>,
+    lang: crate::i18n::UiLanguage,
+) -> CliAction {
+    let t = lang.t();
     let mut files = Vec::new();
     for arg in args {
         let text = arg.to_string_lossy();
@@ -22,7 +30,10 @@ pub fn parse_args(args: impl Iterator<Item = OsString>) -> CliAction {
                 crate::settings::AppSettings::set_portable(true);
             }
             _ if text.starts_with('-') && text.len() > 1 => {
-                return CliAction::Error(format!("unknown option: {text}"));
+                return CliAction::Error(crate::i18n::fill(
+                    t.extra.cli_unknown_option,
+                    &[("{option}", &text)],
+                ));
             }
             _ => {
                 let path = PathBuf::from(&arg);
@@ -30,10 +41,16 @@ pub fn parse_args(args: impl Iterator<Item = OsString>) -> CliAction {
                     continue;
                 }
                 if !path.exists() {
-                    return CliAction::Error(format!("file not found: {}", path.display()));
+                    return CliAction::Error(crate::i18n::fill(
+                        t.extra.cli_file_not_found,
+                        &[("{path}", &path.display().to_string())],
+                    ));
                 }
                 if files.len() >= MAX_FILES {
-                    return CliAction::Error(format!("too many files (limit {MAX_FILES})"));
+                    return CliAction::Error(crate::i18n::fill(
+                        t.extra.cli_too_many_files,
+                        &[("{limit}", &MAX_FILES.to_string())],
+                    ));
                 }
                 files.push(path);
             }

@@ -98,11 +98,12 @@ fn read_zip_entry_bytes<R: Read + std::io::Seek>(
             crate::document::MAX_TOTAL_UNPACK_BYTES,
         );
     }
-    Err(DocumentError::Corrupted(format!(
-        "Изображение не найдено в EPUB: {path}"
-    )))
+    Err(DocumentError::Corrupted(
+        crate::document::errors::archive_entry_not_found("EPUB", path),
+    ))
 }
 
+pub(crate) mod entities;
 pub mod html;
 pub mod toc;
 
@@ -129,22 +130,22 @@ impl EpubDocument {
 
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
-        let meta = std::fs::metadata(path_ref).map_err(|e| {
-            DocumentError::Io(format!("Не удалось получить метаданные EPUB файла: {e}"))
-        })?;
+        let meta = std::fs::metadata(path_ref)
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_metadata("EPUB", &e)))?;
         if meta.len() > Self::MAX_EPUB_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер файла EPUB превышает допустимый лимит (200 МБ)".to_string(),
+                crate::document::errors::file_too_large_mb("EPUB", 200),
             ));
         }
 
         let file = std::fs::File::open(path_ref)
-            .map_err(|e| DocumentError::Io(format!("Не удалось открыть файл EPUB: {e}")))?;
-        let mut archive = ZipArchive::new(file)
-            .map_err(|e| DocumentError::Corrupted(format!("Неверный ZIP-архив EPUB: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_open("EPUB", &e)))?;
+        let mut archive = ZipArchive::new(file).map_err(|e| {
+            DocumentError::Corrupted(crate::document::errors::archive_parse("EPUB", &e))
+        })?;
         if archive.len() > Self::MAX_ENTRIES {
             return Err(DocumentError::LimitExceeded(
-                "Архив EPUB содержит слишком много файлов (превышен лимит 10 000)".to_string(),
+                crate::document::errors::archive_too_many_files("EPUB", Self::MAX_ENTRIES),
             ));
         }
         Self::from_archive(&mut archive, EpubSource::File(path_ref.to_path_buf()))
@@ -154,15 +155,16 @@ impl EpubDocument {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > Self::MAX_EPUB_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер данных EPUB превышает допустимый лимит (200 МБ)".to_string(),
+                crate::document::errors::data_too_large_mb("EPUB", 200),
             ));
         }
         let cursor = std::io::Cursor::new(bytes);
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| DocumentError::Corrupted(format!("Неверный ZIP-архив EPUB: {e}")))?;
+        let mut archive = ZipArchive::new(cursor).map_err(|e| {
+            DocumentError::Corrupted(crate::document::errors::archive_parse("EPUB", &e))
+        })?;
         if archive.len() > Self::MAX_ENTRIES {
             return Err(DocumentError::LimitExceeded(
-                "Архив EPUB содержит слишком много файлов (превышен лимит 10 000)".to_string(),
+                crate::document::errors::archive_too_many_files("EPUB", Self::MAX_ENTRIES),
             ));
         }
         Self::from_archive(&mut archive, EpubSource::Bytes(bytes.to_vec()))
@@ -175,9 +177,9 @@ impl EpubDocument {
     ) -> Result<String, DocumentError> {
         let normalized = entry_name.replace('\\', "/");
         if !crate::document::is_safe_archive_path(&normalized) {
-            return Err(DocumentError::Corrupted(format!(
-                "Небезопасный путь в EPUB: '{entry_name}'"
-            )));
+            return Err(DocumentError::Corrupted(
+                crate::document::errors::archive_unsafe_path("EPUB", entry_name),
+            ));
         }
         let decoded = percent_decode_str(&normalized);
         let mut matched = None;
@@ -185,7 +187,9 @@ impl EpubDocument {
             if let Ok(file) = archive.by_index(i) {
                 let name = file
                     .name()
-                    .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?
+                    .map_err(|e| {
+                        DocumentError::Corrupted(crate::document::errors::archive_read("ZIP", &e))
+                    })?
                     .replace('\\', "/");
                 if name == normalized || name == decoded {
                     matched = Some(i);
@@ -199,32 +203,37 @@ impl EpubDocument {
             }
         }
 
-        let index = matched
-            .ok_or_else(|| DocumentError::Corrupted(format!("Файл '{entry_name}' не найден")))?;
-        let file = archive
-            .by_index(index)
-            .map_err(|e| DocumentError::Corrupted(format!("Ошибка '{entry_name}': {e}")))?;
+        let index = matched.ok_or_else(|| {
+            DocumentError::Corrupted(crate::document::errors::archive_entry_not_found(
+                "EPUB", entry_name,
+            ))
+        })?;
+        let file = archive.by_index(index).map_err(|e| {
+            DocumentError::Corrupted(crate::document::errors::archive_entry_error(entry_name, &e))
+        })?;
         if file.size() > Self::MAX_ENTRY_BYTES {
-            return Err(DocumentError::LimitExceeded(format!(
-                "Файл '{entry_name}' превышает лимит"
-            )));
+            return Err(DocumentError::LimitExceeded(
+                crate::document::errors::archive_entry_too_large(entry_name),
+            ));
         }
 
         let mut bytes = Vec::new();
         file.take(Self::MAX_ENTRY_BYTES.saturating_add(1))
             .read_to_end(&mut bytes)
-            .map_err(|e| DocumentError::Io(format!("Ошибка чтения '{entry_name}': {e}")))?;
+            .map_err(|e| {
+                DocumentError::Io(crate::document::errors::archive_entry_read(entry_name, &e))
+            })?;
 
         if bytes.len() as u64 > Self::MAX_ENTRY_BYTES {
-            return Err(DocumentError::LimitExceeded(format!(
-                "Файл '{entry_name}' превышает лимит"
-            )));
+            return Err(DocumentError::LimitExceeded(
+                crate::document::errors::archive_entry_too_large(entry_name),
+            ));
         }
 
         *running_unpacked = running_unpacked.saturating_add(bytes.len() as u64);
         if *running_unpacked > crate::document::MAX_TOTAL_UNPACK_BYTES {
             return Err(DocumentError::LimitExceeded(
-                "Превышен общий лимит распаковки EPUB (500 МБ)".to_string(),
+                crate::document::errors::archive_total_too_large_mb("EPUB", 500),
             ));
         }
 
@@ -255,7 +264,10 @@ impl EpubDocument {
                         }
                     }
                     return Err(DocumentError::Corrupted(
-                        "META-INF/container.xml не найден".to_string(),
+                        crate::document::errors::archive_entry_not_found(
+                            "EPUB",
+                            "META-INF/container.xml",
+                        ),
                     ));
                 }
             };
@@ -277,9 +289,9 @@ impl EpubDocument {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    return Err(DocumentError::Corrupted(format!(
-                        "Ошибка container.xml: {e}"
-                    )));
+                    return Err(DocumentError::Corrupted(
+                        crate::document::errors::epub_parse_container(&e),
+                    ));
                 }
                 _ => {}
             }
@@ -295,7 +307,7 @@ impl EpubDocument {
             }
         }
         Err(DocumentError::Corrupted(
-            "Не найден rootfile (OPF)".to_string(),
+            crate::document::errors::epub_no_rootfile(),
         ))
     }
 
@@ -306,18 +318,18 @@ impl EpubDocument {
         let mut total_unpacked: u64 = 0;
         for i in 0..archive.len() {
             if let Ok(entry) = archive.by_index_raw(i) {
-                let name = entry
-                    .name()
-                    .map_err(|e| DocumentError::Corrupted(format!("Ошибка чтения ZIP: {e}")))?;
+                let name = entry.name().map_err(|e| {
+                    DocumentError::Corrupted(crate::document::errors::archive_read("ZIP", &e))
+                })?;
                 if !crate::document::is_safe_archive_path(&name) {
-                    return Err(DocumentError::Corrupted(format!(
-                        "Небезопасный путь: {name}"
-                    )));
+                    return Err(DocumentError::Corrupted(
+                        crate::document::errors::archive_unsafe_path("EPUB", &name),
+                    ));
                 }
                 total_unpacked = total_unpacked.saturating_add(entry.size());
                 if total_unpacked > crate::document::MAX_TOTAL_UNPACK_BYTES {
                     return Err(DocumentError::LimitExceeded(
-                        "Превышен общий лимит архива EPUB".to_string(),
+                        crate::document::errors::archive_total_too_large("EPUB"),
                     ));
                 }
             }
@@ -345,7 +357,7 @@ impl EpubDocument {
         }
         if spine_files.is_empty() {
             return Err(DocumentError::Corrupted(
-                "EPUB spine не содержит разделов".to_string(),
+                crate::document::errors::epub_empty_spine(),
             ));
         }
 
@@ -393,7 +405,7 @@ impl EpubDocument {
             let final_title = if !parsed_title.is_empty() {
                 parsed_title
             } else {
-                format!("Раздел {}", ch_idx + 1)
+                crate::document::errors::tokens::section(ch_idx + 1)
             };
 
             let norm_path = normalize_zip_path(path);
@@ -500,9 +512,10 @@ impl EpubDocument {
             if let Ok(ncx_content) =
                 Self::read_zip_entry(archive, &ncx_full_path, &mut running_unpacked)
             {
+                let ncx_dir = parent_dir_str(&ncx_full_path);
                 toc = parse_ncx_toc(
                     &ncx_content,
-                    &opf_dir,
+                    &ncx_dir,
                     &chapter_path_to_index,
                     &anchor_to_chapter,
                 );
@@ -517,10 +530,7 @@ impl EpubDocument {
             if let Ok(nav_content) =
                 Self::read_zip_entry(archive, &nav_full_path, &mut running_unpacked)
             {
-                let nav_dir = Path::new(&nav_full_path)
-                    .parent()
-                    .map(|p| p.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_default();
+                let nav_dir = parent_dir_str(&nav_full_path);
                 toc = parse_epub3_nav_toc(
                     &nav_content,
                     &nav_dir,
@@ -576,7 +586,10 @@ impl EpubDocument {
         let mut ncx_id = None;
         let mut nav_id = None;
         let mut buf = Vec::new();
-        let mut current_tag = String::new();
+        reader.config_mut().trim_text(false);
+        let mut active_meta_tag: Option<(&'static str, usize)> = None;
+        let mut current_depth: usize = 0;
+        let mut meta_buf = String::new();
 
         loop {
             match reader.read_event_into(&mut buf) {
@@ -586,21 +599,25 @@ impl EpubDocument {
                         Ok(Event::Empty(e)) => (e, false),
                         _ => unreachable!(),
                     };
+                    if is_start {
+                        current_depth = current_depth.saturating_add(1);
+                    }
                     let tag_name = local_name(e.name().as_ref()).to_ascii_lowercase();
                     if tag_name == "spine" {
                         for attr in e.attributes().flatten() {
                             if local_name(attr.key.as_ref()).eq_ignore_ascii_case("toc") {
-                                ncx_id = Some(attr.value.to_string());
+                                ncx_id = Some(entities::decode_attr_value(&attr));
                             }
                         }
                     } else if tag_name == "item" {
                         let mut item = ManifestItem::default();
                         for attr in e.attributes().flatten() {
+                            let val = entities::decode_attr_value(&attr);
                             match local_name(attr.key.as_ref()).to_ascii_lowercase().as_str() {
-                                "id" => item.id = attr.value.to_string(),
-                                "href" => item.href = attr.value.to_string(),
-                                "media-type" => item.media_type = attr.value.to_string(),
-                                "properties" => item.properties = attr.value.to_string(),
+                                "id" => item.id = val,
+                                "href" => item.href = val,
+                                "media-type" => item.media_type = val,
+                                "properties" => item.properties = val,
                                 _ => {}
                             }
                         }
@@ -618,34 +635,73 @@ impl EpubDocument {
                     } else if tag_name == "itemref" {
                         for attr in e.attributes().flatten() {
                             if local_name(attr.key.as_ref()).eq_ignore_ascii_case("idref") {
-                                spine_idrefs.push(attr.value.to_string());
+                                spine_idrefs.push(entities::decode_attr_value(&attr));
                             }
                         }
                     }
-                    if is_start {
-                        current_tag = tag_name;
-                    }
-                }
-                Ok(Event::Text(ref e)) => {
-                    let raw_str = e.as_ref();
-                    let text = quick_xml::escape::unescape(raw_str)
-                        .map(|c| c.into_owned())
-                        .unwrap_or_else(|_| raw_str.to_string());
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        match current_tag.as_str() {
-                            "title" if title.is_empty() => title = trimmed.to_string(),
-                            "creator" if author.is_empty() => author = trimmed.to_string(),
+                    if is_start && active_meta_tag.is_none() {
+                        match tag_name.as_str() {
+                            "title" if title.is_empty() => {
+                                active_meta_tag = Some(("title", current_depth));
+                                meta_buf.clear();
+                            }
+                            "creator" if author.is_empty() => {
+                                active_meta_tag = Some(("creator", current_depth));
+                                meta_buf.clear();
+                            }
                             _ => {}
                         }
                     }
                 }
-                Ok(Event::End(_)) => current_tag.clear(),
-                Ok(Event::Eof) => break,
+                Ok(Event::Text(ref e)) if active_meta_tag.is_some() => {
+                    let raw_str = e.as_ref();
+                    let text = quick_xml::escape::unescape(raw_str)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_else(|_| raw_str.to_string());
+                    meta_buf.push_str(&text);
+                }
+                Ok(Event::CData(ref e)) if active_meta_tag.is_some() => {
+                    meta_buf.push_str(e.as_ref());
+                }
+                Ok(Event::GeneralRef(ref e)) if active_meta_tag.is_some() => {
+                    if let Some(decoded) = entities::decode_xml_ref(e.as_ref()) {
+                        meta_buf.push_str(&decoded);
+                    }
+                }
+                Ok(Event::End(_)) => {
+                    if let Some((kind, start_depth)) = active_meta_tag
+                        && current_depth == start_depth
+                    {
+                        let collapsed = meta_buf.split_whitespace().collect::<Vec<_>>().join(" ");
+                        if !collapsed.is_empty() {
+                            match kind {
+                                "title" if title.is_empty() => title = collapsed,
+                                "creator" if author.is_empty() => author = collapsed,
+                                _ => {}
+                            }
+                        }
+                        active_meta_tag = None;
+                        meta_buf.clear();
+                    }
+                    current_depth = current_depth.saturating_sub(1);
+                }
+                Ok(Event::Eof) => {
+                    if let Some((kind, _)) = active_meta_tag.take() {
+                        let collapsed = meta_buf.split_whitespace().collect::<Vec<_>>().join(" ");
+                        if !collapsed.is_empty() {
+                            match kind {
+                                "title" if title.is_empty() => title = collapsed,
+                                "creator" if author.is_empty() => author = collapsed,
+                                _ => {}
+                            }
+                        }
+                    }
+                    break;
+                }
                 Err(e) => {
-                    return Err(DocumentError::Corrupted(format!(
-                        "Ошибка парсинга OPF: {e}"
-                    )));
+                    return Err(DocumentError::Corrupted(
+                        crate::document::errors::epub_parse_opf(&e),
+                    ));
                 }
                 _ => {}
             }
@@ -653,7 +709,7 @@ impl EpubDocument {
         }
 
         if title.is_empty() {
-            title = "Без названия".to_string();
+            title = crate::document::errors::tokens::UNTITLED.to_string();
         }
         let metadata = BookMetadata { title, author };
         Ok((metadata, manifest, spine_idrefs, ncx_id, nav_id))
@@ -709,15 +765,52 @@ fn note_text_paragraph(chapter: Option<&BookChapter>, anchor_index: usize) -> us
     }
 }
 
+fn parent_dir_str(path: &str) -> String {
+    Path::new(path)
+        .parent()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
+}
+
+fn is_external_uri(href: &str) -> bool {
+    let lower = href.to_ascii_lowercase();
+    [
+        "http://", "https://", "mailto:", "data:", "ftp://", "tel:", "urn:",
+    ]
+    .iter()
+    .any(|scheme| lower.starts_with(scheme))
+}
+
+fn is_drive_or_file_uri(href: &str) -> bool {
+    let lower = href.to_ascii_lowercase();
+    if lower.starts_with("file:") {
+        return true;
+    }
+    let bytes = href.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
+}
+
 pub fn resolve_path(base_dir: &str, href: &str) -> String {
-    let clean_href = href.split('#').next().unwrap_or(href);
-    if clean_href.contains(':') || clean_href.starts_with('/') || clean_href.starts_with('\\') {
+    let clean_href = href.split('#').next().unwrap_or(href).trim();
+    if clean_href.is_empty() || is_drive_or_file_uri(clean_href) {
+        return String::new();
+    }
+    if is_external_uri(clean_href) {
         return clean_href.to_string();
     }
-    let combined = if base_dir.is_empty() {
-        clean_href.to_string()
+    let norm_href = clean_href.replace('\\', "/");
+    let combined = if let Some(rooted) = norm_href.strip_prefix('/') {
+        rooted.to_string()
     } else {
-        format!("{base_dir}/{clean_href}")
+        let norm_base = base_dir.replace('\\', "/");
+        if norm_base.is_empty() {
+            norm_href
+        } else {
+            format!("{norm_base}/{norm_href}")
+        }
     };
     let mut parts: Vec<&str> = Vec::new();
     for seg in combined.split('/') {

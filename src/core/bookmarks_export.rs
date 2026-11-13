@@ -119,7 +119,10 @@ pub fn bookmarks_to_csv(book_title: &str, book_author: &str, bookmarks: &[Bookma
             bookmark.text.trim().to_string(),
             bookmark.note.trim().to_string(),
         ];
-        let row: Vec<String> = fields.iter().map(|field| csv_field(field)).collect();
+        let row: Vec<String> = fields
+            .iter()
+            .map(|field| crate::core::csv_field(field))
+            .collect();
         csv.push_str(&row.join(","));
         csv.push('\n');
     }
@@ -220,14 +223,6 @@ pub fn bookmarks_to_text(book_title: &str, book_author: &str, bookmarks: &[Bookm
         text.push('\n');
     }
     text
-}
-
-fn csv_field(value: &str) -> String {
-    if value.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
-    }
 }
 
 fn escape_html(value: &str) -> String {

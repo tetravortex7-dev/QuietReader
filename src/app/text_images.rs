@@ -73,7 +73,9 @@ fn spawn_image_worker() -> (Sender<ImageRequest>, Receiver<ImageResponse>) {
                 let result = req
                     .doc
                     .image_bytes(&req.id)
-                    .ok_or_else(|| DocumentError::Corrupted("Изображение не найдено".to_string()))
+                    .ok_or_else(|| {
+                        DocumentError::Corrupted(crate::document::errors::image_not_found())
+                    })
                     .and_then(|bytes| decode_image_bytes(&bytes));
                 let _ = resp_tx.send(ImageResponse {
                     generation: req.generation,
@@ -91,20 +93,20 @@ fn spawn_image_worker() -> (Sender<ImageRequest>, Receiver<ImageResponse>) {
 fn decode_image_bytes(bytes: &[u8]) -> Result<DecodedImage, DocumentError> {
     if bytes.is_empty() {
         return Err(DocumentError::Corrupted(
-            "Пустые данные изображения".to_string(),
+            crate::document::errors::image_empty(),
         ));
     }
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|e| DocumentError::Corrupted(format!("Ошибка формата изображения: {e}")))?;
+        .map_err(|e| DocumentError::Corrupted(crate::document::errors::image_format_error(&e)))?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_WIDTH);
     limits.max_image_height = Some(MAX_IMAGE_HEIGHT);
     limits.max_alloc = Some(MAX_IMAGE_ALLOC);
     reader.limits(limits);
-    let image = reader.decode().map_err(|e| {
-        DocumentError::Corrupted(format!("Не удалось декодировать изображение: {e}"))
-    })?;
+    let image = reader
+        .decode()
+        .map_err(|e| DocumentError::Corrupted(crate::document::errors::image_decode_failed(&e)))?;
     let image = if image.width() > MAX_RENDER_WIDTH || image.height() > MAX_RENDER_HEIGHT {
         image.thumbnail(MAX_RENDER_WIDTH, MAX_RENDER_HEIGHT)
     } else {

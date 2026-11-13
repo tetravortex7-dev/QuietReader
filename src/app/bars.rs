@@ -1,4 +1,4 @@
-use super::icons::{Icon, IconButton, IconLabel, icon_button};
+use super::icons::{Icon, IconButton, IconLabel, STATUS_ARROW_SEP, icon_button, paint_arrow_pair};
 use super::theme::ReaderTheme;
 use crate::core::library::{DEFAULT_READING_WPM, estimate_minutes_left_in_chapter};
 use crate::document::{Document, DocumentViewKind};
@@ -392,9 +392,11 @@ pub fn render_bottom_bar(
                 } else if let Some(msg) = status_message {
                     if status_opacity > 0.01 {
                         ui.separator();
-                        ui.label(
-                            RichText::new(msg)
-                                .color(theme.accent_color().gamma_multiply(status_opacity)),
+                        render_status_text(
+                            ui,
+                            msg,
+                            theme.accent_color().gamma_multiply(status_opacity),
+                            is_rtl,
                         );
                     }
                 }
@@ -407,8 +409,11 @@ pub fn render_bottom_bar(
                 );
             } else if let Some(msg) = status_message {
                 if status_opacity > 0.01 {
-                    ui.label(
-                        RichText::new(msg).color(theme.text_color().gamma_multiply(status_opacity)),
+                    render_status_text(
+                        ui,
+                        msg,
+                        theme.text_color().gamma_multiply(status_opacity),
+                        is_rtl,
                     );
                 } else {
                     ui.label(t.ready_to_read);
@@ -488,6 +493,14 @@ pub fn calculate_text_pages(
         0.0
     };
     (cur_page, total_pages, pct)
+}
+
+fn render_status_text(ui: &mut egui::Ui, msg: &str, color: egui::Color32, is_rtl: bool) {
+    if let Some((left, right)) = msg.split_once(STATUS_ARROW_SEP) {
+        paint_arrow_pair(ui, left, right, color, is_rtl);
+    } else {
+        ui.label(RichText::new(msg).color(color));
+    }
 }
 
 fn chapter_char_count(chapter: &crate::document::BookChapter) -> usize {

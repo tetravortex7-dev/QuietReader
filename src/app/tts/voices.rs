@@ -51,26 +51,51 @@ pub(super) fn format_voice_name(name: &str) -> String {
     s.trim().to_string()
 }
 
+fn canonical_lang_alias(token: &str) -> Option<&'static str> {
+    match token {
+        "ru" | "rus" | "russian" | "русский" => Some("ru"),
+        "en" | "eng" | "english" => Some("en"),
+        "uk" | "ukr" | "ukrainian" | "українська" | "украинский" => Some("uk"),
+        "de" | "ger" | "deu" | "german" | "deutsch" => Some("de"),
+        "fr" | "fre" | "fra" | "french" | "français" | "francais" => Some("fr"),
+        "es" | "spa" | "spanish" | "español" | "espanol" => Some("es"),
+        "it" | "ita" | "italian" | "italiano" => Some("it"),
+        "pt" | "por" | "portuguese" | "português" | "portugues" => Some("pt"),
+        "tr" | "tur" | "turkish" | "türkçe" | "turkce" => Some("tr"),
+        "zh" | "chi" | "cmn" | "zho" | "chinese" => Some("zh"),
+        "ja" | "jpn" | "jap" | "japanese" => Some("ja"),
+        "ar" | "ara" | "arabic" => Some("ar"),
+        "id" | "ind" | "indonesian" => Some("id"),
+        _ => None,
+    }
+}
+
 pub fn voice_matches_lang(voice_lang: &str, book_lang: &str) -> bool {
-    let vl = voice_lang.to_ascii_lowercase();
-    let bl = book_lang.to_ascii_lowercase();
-    if vl.starts_with(&bl) || bl.starts_with(&vl) {
-        return true;
+    let voice_tokens: Vec<String> = voice_lang
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_lowercase())
+        .collect();
+    let book_tokens: Vec<String> = book_lang
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_lowercase())
+        .collect();
+
+    let (Some(voice_primary), Some(book_primary)) = (voice_tokens.first(), book_tokens.first())
+    else {
+        return false;
+    };
+
+    if let Some(book_canon) = canonical_lang_alias(book_primary) {
+        if canonical_lang_alias(voice_primary) == Some(book_canon) {
+            return true;
+        }
+        return voice_tokens
+            .iter()
+            .skip(1)
+            .any(|tok| tok.chars().count() >= 3 && canonical_lang_alias(tok) == Some(book_canon));
     }
-    match bl.as_str() {
-        "ru" => vl.contains("ru") || vl.contains("rus"),
-        "en" => vl.contains("en") || vl.contains("eng"),
-        "uk" => vl.contains("uk") || vl.contains("ukr"),
-        "de" => vl.contains("de") || vl.contains("ger") || vl.contains("deu"),
-        "fr" => vl.contains("fr") || vl.contains("fre") || vl.contains("fra"),
-        "es" => vl.contains("es") || vl.contains("spa"),
-        "it" => vl.contains("it") || vl.contains("ita"),
-        "pt" => vl.contains("pt") || vl.contains("por"),
-        "tr" => vl.contains("tr") || vl.contains("tur"),
-        "zh" => vl.contains("zh") || vl.contains("chi") || vl.contains("cmn") || vl.contains("zho"),
-        "ja" => vl.contains("ja") || vl.contains("jpn") || vl.contains("jap"),
-        "ar" => vl.contains("ar") || vl.contains("ara"),
-        "id" => vl.contains("id") || vl.contains("ind"),
-        _ => false,
-    }
+
+    voice_primary == book_primary
 }

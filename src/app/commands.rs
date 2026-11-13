@@ -3,6 +3,21 @@ use crate::core::{Command, ReaderCore};
 use crate::document::DocumentViewKind;
 use eframe::egui;
 
+pub(crate) fn next_unique_bookmark_id(
+    existing: &[crate::core::Bookmark],
+    timestamp: u64,
+    chapter: usize,
+) -> String {
+    let mut seq = existing.len();
+    loop {
+        let candidate = format!("{timestamp}_{chapter}_{seq}");
+        if !existing.iter().any(|b| b.id == candidate) {
+            return candidate;
+        }
+        seq += 1;
+    }
+}
+
 impl QuietReaderApp {
     pub(crate) fn execute_command(
         &mut self,
@@ -45,11 +60,45 @@ impl QuietReaderApp {
                 }
             }
             Command::ZoomIn | Command::ZoomOut | Command::ResetZoom => {
-                self.font_size = match cmd {
-                    Command::ZoomIn => (self.font_size + 1.0).clamp(12.0, 36.0),
-                    Command::ZoomOut => (self.font_size - 1.0).clamp(12.0, 36.0),
-                    _ => 19.0,
-                };
+                match view_kind {
+                    DocumentViewKind::Pdf => match cmd {
+                        Command::ZoomIn => super::paged_common::zoom_in(
+                            &mut self.settings.pdf.zoom_percent,
+                            &mut self.settings.pdf.fit_mode,
+                        ),
+                        Command::ZoomOut => super::paged_common::zoom_out(
+                            &mut self.settings.pdf.zoom_percent,
+                            &mut self.settings.pdf.fit_mode,
+                        ),
+                        _ => super::paged_common::zoom_reset(
+                            &mut self.settings.pdf.zoom_percent,
+                            &mut self.settings.pdf.fit_mode,
+                            &mut self.pdf_view.pan_offset,
+                        ),
+                    },
+                    DocumentViewKind::Comic => match cmd {
+                        Command::ZoomIn => super::paged_common::zoom_in(
+                            &mut self.settings.comic.zoom_percent,
+                            &mut self.settings.comic.fit_mode,
+                        ),
+                        Command::ZoomOut => super::paged_common::zoom_out(
+                            &mut self.settings.comic.zoom_percent,
+                            &mut self.settings.comic.fit_mode,
+                        ),
+                        _ => super::paged_common::zoom_reset(
+                            &mut self.settings.comic.zoom_percent,
+                            &mut self.settings.comic.fit_mode,
+                            &mut self.comic_view.pan_offset,
+                        ),
+                    },
+                    DocumentViewKind::Text => {
+                        self.font_size = match cmd {
+                            Command::ZoomIn => (self.font_size + 1.0).clamp(12.0, 36.0),
+                            Command::ZoomOut => (self.font_size - 1.0).clamp(12.0, 36.0),
+                            _ => 19.0,
+                        };
+                    }
+                }
                 self.mark_settings_dirty();
             }
             Command::ToggleAutoscroll => {
@@ -274,14 +323,29 @@ impl QuietReaderApp {
                                 }
                                 self.mark_settings_dirty();
                             }
+                            Command::Home => {
+                                self.pdf_view.go_to_page(0);
+                                if self.settings.pdf.layout == "Continuous" {
+                                    self.pending_scroll_y = Some(0.0);
+                                }
+                                self.mark_settings_dirty();
+                            }
+                            Command::End => {
+                                if total_pages > 0 {
+                                    self.pdf_view.go_to_page(total_pages.saturating_sub(1));
+                                }
+                                self.mark_settings_dirty();
+                            }
                             _ => {}
                         }
                     }
                     DocumentViewKind::Comic => {
+                        let is_webtoon = self.settings.comic.reading_mode == "Webtoon";
+                        let prev_page = self.comic_view.current_page;
                         if ReaderCore::apply_paged_command(
                             nav_cmd,
                             &self.document,
-                            self.settings.comic.reading_mode == "Webtoon",
+                            is_webtoon,
                             self.settings.comic.page_layout == "Double",
                             &mut self.comic_view.current_page,
                             self.current_scroll_y,
@@ -289,6 +353,9 @@ impl QuietReaderApp {
                             self.viewport_height,
                             &mut self.pending_scroll_y,
                         ) {
+                            if !is_webtoon && self.comic_view.current_page != prev_page {
+                                self.comic_view.pan_offset = egui::Vec2::ZERO;
+                            }
                             self.mark_settings_dirty();
                         }
                     }
@@ -421,12 +488,8 @@ impl QuietReaderApp {
             self.settings.bookmarks.remove(idx);
             self.status_message = Some(t.bookmark_removed.to_string());
         } else {
-            let id = format!(
-                "{}_{}_{}",
-                timestamp,
-                self.current_chapter,
-                self.settings.bookmarks.len()
-            );
+            let id =
+                next_unique_bookmark_id(&self.settings.bookmarks, timestamp, self.current_chapter);
             let bm = crate::core::Bookmark {
                 id,
                 book_path: file_path,
@@ -478,12 +541,7 @@ impl QuietReaderApp {
         };
         let pct = ((ch_frac + (scroll_frac / total_ch as f32)) * 100.0).clamp(0.0, 100.0);
 
-        let id = format!(
-            "{}_{}_{}",
-            timestamp,
-            self.current_chapter,
-            self.settings.bookmarks.len()
-        );
+        let id = next_unique_bookmark_id(&self.settings.bookmarks, timestamp, self.current_chapter);
         let bm = crate::core::Bookmark {
             id,
             book_path: file_path,

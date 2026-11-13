@@ -75,6 +75,10 @@ pub(crate) fn read_provider_body(
     String::from_utf8(bytes).map_err(|e| TranslationError::Provider(e.to_string()))
 }
 
+pub(crate) fn translation_user_agent() -> String {
+    crate::net::user_agent(Some("Translator"))
+}
+
 fn fetch_google_translation(
     text: &str,
     target_lang: &str,
@@ -87,11 +91,12 @@ fn fetch_google_translation(
     );
 
     let agent = crate::net::agent(Duration::from_secs(10));
+    let ua = translation_user_agent();
 
     let mut resp = agent
         .post("https://translate.googleapis.com/translate_a/single")
         .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        .header("User-Agent", &ua)
         .send(payload.as_bytes())
         .map_err(|e| TranslationError::Provider(e.to_string()))?;
 
@@ -173,11 +178,15 @@ fn fetch_deepl_translation(
     let payload_bytes =
         serde_json::to_vec(&payload).map_err(|e| TranslationError::Provider(e.to_string()))?;
 
+    let ua = translation_user_agent();
     let mut resp = agent
         .post(endpoint)
+        .config()
+        .http_status_as_error(false)
+        .build()
         .header("Authorization", &format!("DeepL-Auth-Key {key}"))
         .header("Content-Type", "application/json")
-        .header("User-Agent", crate::net::APP_USER_AGENT)
+        .header("User-Agent", &ua)
         .send(&payload_bytes)
         .map_err(|e| TranslationError::Provider(e.to_string()))?;
 
@@ -239,17 +248,36 @@ fn fetch_deepl_translation(
     Ok((translated_text, detected_lang))
 }
 
-struct WorkerTask {
+const MAX_TRANSLATION_CACHE_ENTRIES: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TranslationCacheKey {
     text: String,
     target_lang: String,
     provider: TranslationProvider,
-    deepl_api_key: String,
 }
 
-struct WorkerResponse {
-    original: String,
-    _target_lang: String,
-    result: Result<(String, String), TranslationError>,
+#[derive(Debug, Clone)]
+struct CachedTranslation {
+    key: TranslationCacheKey,
+    translated_text: String,
+    detected_lang: String,
+}
+
+pub(crate) struct WorkerTask {
+    pub(crate) request_id: u64,
+    pub(crate) text: String,
+    pub(crate) target_lang: String,
+    pub(crate) provider: TranslationProvider,
+    pub(crate) deepl_api_key: String,
+}
+
+pub(crate) struct WorkerResponse {
+    pub(crate) request_id: u64,
+    pub(crate) original: String,
+    pub(crate) target_lang: String,
+    pub(crate) provider: TranslationProvider,
+    pub(crate) result: Result<(String, String), TranslationError>,
 }
 
 pub struct TranslateState {
@@ -264,6 +292,10 @@ pub struct TranslateState {
     pub copy_feedback_timer: Option<std::time::Instant>,
     pub editing_api_key: bool,
     pub temp_api_key: String,
+    next_request_id: u64,
+    pending_request_id: Option<u64>,
+    active_result_key: Option<TranslationCacheKey>,
+    cache: Vec<CachedTranslation>,
     task_tx: Option<Sender<WorkerTask>>,
     resp_rx: Option<Receiver<WorkerResponse>>,
 }
@@ -290,14 +322,23 @@ impl TranslateState {
                     }
                 };
                 let resp = WorkerResponse {
+                    request_id: task.request_id,
                     original: task.text,
-                    _target_lang: task.target_lang,
+                    target_lang: task.target_lang,
+                    provider: task.provider,
                     result: res,
                 };
                 let _ = resp_tx.send(resp);
             }
         });
 
+        Self::with_channels(Some(task_tx), Some(resp_rx))
+    }
+
+    fn with_channels(
+        task_tx: Option<Sender<WorkerTask>>,
+        resp_rx: Option<Receiver<WorkerResponse>>,
+    ) -> Self {
         Self {
             is_open: false,
             original_text: String::new(),
@@ -310,9 +351,130 @@ impl TranslateState {
             copy_feedback_timer: None,
             editing_api_key: false,
             temp_api_key: String::new(),
-            task_tx: Some(task_tx),
-            resp_rx: Some(resp_rx),
+            next_request_id: 1,
+            pending_request_id: None,
+            active_result_key: None,
+            cache: Vec::new(),
+            task_tx,
+            resp_rx,
         }
+    }
+
+    #[cfg(all(test, feature = "enable_tests"))]
+    pub(crate) fn new_offline() -> (Self, Sender<WorkerResponse>, Receiver<WorkerTask>) {
+        let (task_tx, task_rx) = channel::<WorkerTask>();
+        let (resp_tx, resp_rx) = channel::<WorkerResponse>();
+        (
+            Self::with_channels(Some(task_tx), Some(resp_rx)),
+            resp_tx,
+            task_rx,
+        )
+    }
+
+    fn current_key(&self) -> TranslationCacheKey {
+        TranslationCacheKey {
+            text: self.original_text.clone(),
+            target_lang: self.target_lang.clone(),
+            provider: self.provider,
+        }
+    }
+
+    fn lookup_cache(&mut self, key: &TranslationCacheKey) -> Option<(String, String)> {
+        let pos = self.cache.iter().position(|entry| &entry.key == key)?;
+        let entry = self.cache.remove(pos);
+        let result = (entry.translated_text.clone(), entry.detected_lang.clone());
+        self.cache.push(entry);
+        Some(result)
+    }
+
+    fn remove_cache_entry(&mut self, key: &TranslationCacheKey) {
+        self.cache.retain(|entry| &entry.key != key);
+    }
+
+    fn store_cache(
+        &mut self,
+        key: TranslationCacheKey,
+        translated_text: &str,
+        detected_lang: &str,
+    ) {
+        self.cache.retain(|entry| entry.key != key);
+        if self.cache.len() >= MAX_TRANSLATION_CACHE_ENTRIES {
+            self.cache.remove(0);
+        }
+        self.cache.push(CachedTranslation {
+            key,
+            translated_text: translated_text.to_string(),
+            detected_lang: detected_lang.to_string(),
+        });
+    }
+
+    fn clear_active_result(&mut self) {
+        self.translated_text = None;
+        self.error = None;
+        self.active_result_key = None;
+    }
+
+    pub fn ensure_result_matches_current(&mut self) {
+        let expected = self.current_key();
+        if self.active_result_key.as_ref() != Some(&expected) {
+            self.clear_active_result();
+        }
+    }
+
+    fn dispatch_worker(&mut self, deepl_key: &str) {
+        self.clear_active_result();
+        let request_id = self.next_request_id;
+        self.next_request_id = self.next_request_id.saturating_add(1);
+        self.pending_request_id = Some(request_id);
+        self.is_loading = true;
+
+        if let Some(tx) = &self.task_tx {
+            let _ = tx.send(WorkerTask {
+                request_id,
+                text: self.original_text.clone(),
+                target_lang: self.target_lang.clone(),
+                provider: self.provider,
+                deepl_api_key: deepl_key.to_string(),
+            });
+        }
+    }
+
+    fn start_or_use_cache(&mut self, deepl_key: &str, force_refresh: bool) {
+        if self.original_text.trim().is_empty() {
+            self.clear_active_result();
+            self.is_loading = false;
+            self.pending_request_id = None;
+            return;
+        }
+
+        let needs_key = self.provider == TranslationProvider::DeepL && deepl_key.trim().is_empty();
+        self.editing_api_key = needs_key;
+
+        let key = self.current_key();
+        if force_refresh {
+            self.remove_cache_entry(&key);
+        } else if let Some((trans, detected)) = self.lookup_cache(&key) {
+            self.translated_text = Some(trans);
+            self.detected_lang = detected;
+            self.error = None;
+            self.active_result_key = Some(key);
+            self.is_loading = false;
+            self.pending_request_id = None;
+            self.editing_api_key = false;
+            return;
+        }
+
+        if needs_key {
+            self.clear_active_result();
+            self.is_loading = false;
+            self.pending_request_id = None;
+            self.temp_api_key.clear();
+            self.error = Some(TranslationError::MissingApiKey);
+            self.active_result_key = Some(key);
+            return;
+        }
+
+        self.dispatch_worker(deepl_key);
     }
 
     pub fn translate(
@@ -326,69 +488,121 @@ impl TranslateState {
         if trimmed.is_empty() {
             return;
         }
+        if self.original_text != trimmed {
+            self.detected_lang = "auto".to_string();
+        }
         self.original_text = trimmed.to_string();
-        self.translated_text = None;
-        self.error = None;
-        self.is_loading = true;
         self.target_lang = target_lang.to_string();
         self.provider = provider;
         self.temp_api_key = deepl_key.to_string();
-        self.editing_api_key =
-            provider == TranslationProvider::DeepL && deepl_key.trim().is_empty();
         self.is_open = true;
-
-        if let Some(tx) = &self.task_tx {
-            let _ = tx.send(WorkerTask {
-                text: self.original_text.clone(),
-                target_lang: self.target_lang.clone(),
-                provider,
-                deepl_api_key: deepl_key.to_string(),
-            });
-        }
+        self.start_or_use_cache(deepl_key, false);
     }
 
     pub fn retranslate(&mut self, deepl_key: &str) {
-        if self.original_text.trim().is_empty() {
+        self.start_or_use_cache(deepl_key, true);
+    }
+
+    pub fn set_target_lang(&mut self, target_lang: &str, deepl_key: &str) {
+        if self.target_lang == target_lang {
             return;
         }
-        self.translated_text = None;
-        self.error = None;
-        self.is_loading = true;
+        self.target_lang = target_lang.to_string();
+        self.start_or_use_cache(deepl_key, false);
+    }
 
-        if let Some(tx) = &self.task_tx {
-            let _ = tx.send(WorkerTask {
-                text: self.original_text.clone(),
-                target_lang: self.target_lang.clone(),
-                provider: self.provider,
-                deepl_api_key: deepl_key.to_string(),
-            });
+    pub fn set_provider(&mut self, provider: TranslationProvider, deepl_key: &str) {
+        if self.provider == provider {
+            return;
+        }
+        self.provider = provider;
+        self.temp_api_key = if provider == TranslationProvider::DeepL {
+            deepl_key.to_string()
+        } else {
+            String::new()
+        };
+        self.start_or_use_cache(deepl_key, false);
+    }
+
+    pub fn sync_with_settings(
+        &mut self,
+        provider: TranslationProvider,
+        deepl_key: &str,
+        translation_allowed: bool,
+    ) {
+        if self.provider != provider {
+            if translation_allowed {
+                self.set_provider(provider, deepl_key);
+            } else {
+                self.provider = provider;
+                self.editing_api_key = false;
+                self.is_loading = false;
+                self.pending_request_id = None;
+                self.clear_active_result();
+            }
+        } else {
+            self.ensure_result_matches_current();
         }
     }
 
-    pub fn poll(&mut self) {
-        if let Some(rx) = &self.resp_rx {
-            while let Ok(resp) = rx.try_recv() {
-                if resp.original == self.original_text {
-                    self.is_loading = false;
-                    match resp.result {
-                        Ok((trans, detected)) => {
-                            self.translated_text = Some(trans);
-                            self.detected_lang = detected;
-                            self.error = None;
-                        }
-                        Err(e) => {
-                            self.error = Some(e);
-                        }
-                    }
-                }
+    pub(crate) fn apply_worker_response(&mut self, resp: WorkerResponse) {
+        if self.pending_request_id != Some(resp.request_id)
+            || resp.original != self.original_text
+            || resp.target_lang != self.target_lang
+            || resp.provider != self.provider
+        {
+            return;
+        }
+
+        self.pending_request_id = None;
+        self.is_loading = false;
+        let key = TranslationCacheKey {
+            text: resp.original,
+            target_lang: resp.target_lang,
+            provider: resp.provider,
+        };
+        match resp.result {
+            Ok((trans, detected)) => {
+                self.store_cache(key.clone(), &trans, &detected);
+                self.translated_text = Some(trans);
+                self.detected_lang = detected;
+                self.error = None;
+                self.active_result_key = Some(key);
+            }
+            Err(e) => {
+                self.translated_text = None;
+                self.error = Some(e);
+                self.active_result_key = Some(key);
             }
         }
     }
 
-    #[allow(dead_code)]
+    pub fn poll(&mut self) {
+        let mut drained = Vec::new();
+        if let Some(rx) = &self.resp_rx {
+            while let Ok(resp) = rx.try_recv() {
+                drained.push(resp);
+            }
+        }
+        for resp in drained {
+            self.apply_worker_response(resp);
+        }
+    }
+
     pub fn close(&mut self) {
         self.is_open = false;
         self.is_loading = false;
+        self.pending_request_id = None;
+    }
+
+    #[cfg(all(test, feature = "enable_tests"))]
+    pub(crate) fn cache_len(&self) -> usize {
+        self.cache.len()
+    }
+
+    #[cfg(all(test, feature = "enable_tests"))]
+    pub(crate) fn pending_request_id(&self) -> Option<u64> {
+        self.pending_request_id
     }
 }
 
@@ -411,10 +625,17 @@ impl TranslateView {
             return;
         }
 
+        state.sync_with_settings(
+            settings.translation.provider,
+            &settings.translation.deepl_api_key,
+            translation_allowed,
+        );
+
         let t = settings.ui_language.t();
         let is_rtl = settings.ui_language.is_rtl();
 
         let mut is_open = state.is_open;
+        let mut close_clicked = false;
 
         egui::Window::new(t.translate_title)
             .open(&mut is_open)
@@ -464,8 +685,10 @@ impl TranslateView {
                                     && !is_sel
                                 {
                                     if translation_allowed {
-                                        state.target_lang = code.to_string();
-                                        state.retranslate(&settings.translation.deepl_api_key);
+                                        state.set_target_lang(
+                                            code,
+                                            &settings.translation.deepl_api_key,
+                                        );
                                     } else {
                                         *on_pro_required = Some(ProFeature::Translation);
                                     }
@@ -478,9 +701,8 @@ impl TranslateView {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let is_deepl = settings.translation.provider == TranslationProvider::DeepL;
-                        let is_google =
-                            settings.translation.provider == TranslationProvider::Google;
+                        let is_deepl = state.provider == TranslationProvider::DeepL;
+                        let is_google = state.provider == TranslationProvider::Google;
 
                         if is_deepl {
                             let key_icon = if state.editing_api_key {
@@ -508,13 +730,10 @@ impl TranslateView {
                             if translation_allowed {
                                 settings.translation.provider = TranslationProvider::DeepL;
                                 *on_save_settings = true;
-                                state.provider = TranslationProvider::DeepL;
-                                if settings.translation.deepl_api_key.trim().is_empty() {
-                                    state.editing_api_key = true;
-                                    state.temp_api_key = String::new();
-                                } else {
-                                    state.retranslate(&settings.translation.deepl_api_key);
-                                }
+                                state.set_provider(
+                                    TranslationProvider::DeepL,
+                                    &settings.translation.deepl_api_key,
+                                );
                             } else {
                                 *on_pro_required = Some(ProFeature::Translation);
                             }
@@ -524,8 +743,7 @@ impl TranslateView {
                             if translation_allowed {
                                 settings.translation.provider = TranslationProvider::Google;
                                 *on_save_settings = true;
-                                state.provider = TranslationProvider::Google;
-                                state.retranslate("");
+                                state.set_provider(TranslationProvider::Google, "");
                             } else {
                                 *on_pro_required = Some(ProFeature::Translation);
                             }
@@ -722,12 +940,14 @@ impl TranslateView {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(t.close_tab).clicked() {
-                            state.is_open = false;
+                            close_clicked = true;
                         }
                     });
                 });
             });
 
-        state.is_open = is_open;
+        if !is_open || close_clicked {
+            state.close();
+        }
     }
 }

@@ -50,29 +50,24 @@ struct Heading {
 impl HtmlDocument {
     pub const MAX_HTML_SIZE: u64 = 100 * 1024 * 1024;
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
-        Self::from_file_with_encoding(path, None)
-    }
-
     pub fn from_file_with_encoding<P: AsRef<Path>>(
         path: P,
         encoding: Option<&str>,
     ) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
-        let meta = std::fs::metadata(path_ref).map_err(|e| {
-            DocumentError::Io(format!("Не удалось прочитать метаданные HTML-файла: {e}"))
-        })?;
+        let meta = std::fs::metadata(path_ref)
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_metadata("HTML", &e)))?;
         if meta.len() > Self::MAX_HTML_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер HTML-файла превышает допустимый лимит (100 МБ)".to_string(),
+                crate::document::errors::file_too_large_mb("HTML", 100),
             ));
         }
         let bytes = std::fs::read(path_ref)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать HTML-файл: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_read("HTML", &e)))?;
         let default_title = path_ref
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("HTML-документ")
+            .unwrap_or(crate::document::errors::tokens::TITLE_HTML)
             .to_string();
         Self::from_bytes(&bytes, &default_title, encoding)
     }
@@ -84,13 +79,13 @@ impl HtmlDocument {
     ) -> Result<Self, DocumentError> {
         if bytes.len() as u64 > Self::MAX_HTML_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер HTML-данных превышает допустимый лимит (100 МБ)".to_string(),
+                crate::document::errors::data_too_large_mb("HTML", 100),
             ));
         }
         let text = decode_text_bytes_with(bytes, encoding);
         if text.trim().is_empty() {
             return Err(DocumentError::Corrupted(
-                "HTML-документ не содержит текста".to_string(),
+                crate::document::errors::empty_document("HTML"),
             ));
         }
 
@@ -149,7 +144,7 @@ impl HtmlDocument {
 
         if chapters.is_empty() {
             return Err(DocumentError::Corrupted(
-                "В HTML-документе не найдено читаемого текста".to_string(),
+                crate::document::errors::no_readable_text("HTML"),
             ));
         }
 
@@ -183,6 +178,29 @@ fn push_chapter(
         chapter_index: index,
         children: Vec::new(),
     });
+}
+
+fn find_next_h1_h2(lower: &str, from: usize) -> Option<usize> {
+    let bytes = lower.as_bytes();
+    let mut pos = from;
+    while pos + 3 < bytes.len() {
+        let h1 = lower[pos..].find("<h1").map(|offset| pos + offset);
+        let h2 = lower[pos..].find("<h2").map(|offset| pos + offset);
+        let next = match (h1, h2) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => return None,
+        };
+        let boundary = bytes.get(next + 3).copied();
+        if matches!(
+            boundary,
+            Some(b'>') | Some(b' ') | Some(b'\n') | Some(b'\r') | Some(b'\t') | Some(b'/')
+        ) {
+            return Some(next);
+        }
+        pos = next + 3;
+    }
+    None
 }
 
 fn find_headings(html: &str) -> Vec<Heading> {
@@ -221,9 +239,16 @@ fn find_headings(html: &str) -> Vec<Heading> {
             "</h2>"
         };
         let Some(close_offset) = lower[content_start..].find(close) else {
-            break;
+            position = content_start;
+            continue;
         };
         let content_end = content_start + close_offset;
+        if let Some(nested) = find_next_h1_h2(&lower, content_start)
+            && nested < content_end
+        {
+            position = content_start;
+            continue;
+        }
         let end = content_end + close.len();
         let title = strip_tags(&html[content_start..content_end]);
         if !title.is_empty() {

@@ -12,6 +12,130 @@ pub fn normalize_search_text(text: &str) -> String {
     text.to_lowercase().replace('ё', "е")
 }
 
+pub struct NormalizedSearchIndex {
+    normalized: String,
+    byte_to_orig: Vec<(usize, usize)>,
+}
+
+impl NormalizedSearchIndex {
+    #[cfg(all(test, feature = "enable_tests"))]
+    pub fn new(text: &str) -> Self {
+        Self::from_normalized(text, normalize_search_text(text))
+    }
+
+    pub fn from_normalized(text: &str, normalized: String) -> Self {
+        let mut byte_to_orig = Vec::with_capacity(normalized.len());
+        let mut norm_cursor = 0usize;
+        let norm_bytes = normalized.as_bytes();
+        let mut aligned = true;
+
+        for (orig_start, ch) in text.char_indices() {
+            let orig_end = orig_start + ch.len_utf8();
+            if ch == 'Σ' {
+                if let Some(next_ch) = normalized[norm_cursor..].chars().next()
+                    && (next_ch == 'σ' || next_ch == 'ς')
+                {
+                    let len = next_ch.len_utf8();
+                    byte_to_orig.resize(byte_to_orig.len() + len, (orig_start, orig_end));
+                    norm_cursor += len;
+                    continue;
+                }
+                aligned = false;
+                break;
+            }
+            for lc in ch.to_lowercase() {
+                let mapped = if lc == 'ё' { 'е' } else { lc };
+                let mut buf = [0u8; 4];
+                let expected = mapped.encode_utf8(&mut buf).as_bytes();
+                if norm_cursor + expected.len() <= norm_bytes.len()
+                    && &norm_bytes[norm_cursor..norm_cursor + expected.len()] == expected
+                {
+                    byte_to_orig
+                        .resize(byte_to_orig.len() + expected.len(), (orig_start, orig_end));
+                    norm_cursor += expected.len();
+                } else {
+                    aligned = false;
+                    break;
+                }
+            }
+            if !aligned {
+                break;
+            }
+        }
+
+        if aligned && norm_cursor == normalized.len() {
+            return Self {
+                normalized,
+                byte_to_orig,
+            };
+        }
+
+        Self::build_per_char(text)
+    }
+
+    fn build_per_char(text: &str) -> Self {
+        let mut normalized = String::with_capacity(text.len());
+        let mut byte_to_orig = Vec::with_capacity(text.len());
+        for (orig_start, ch) in text.char_indices() {
+            let orig_end = orig_start + ch.len_utf8();
+            for lc in ch.to_lowercase() {
+                let mapped = if lc == 'ё' { 'е' } else { lc };
+                let before = normalized.len();
+                normalized.push(mapped);
+                let added = normalized.len() - before;
+                byte_to_orig.resize(byte_to_orig.len() + added, (orig_start, orig_end));
+            }
+        }
+        Self {
+            normalized,
+            byte_to_orig,
+        }
+    }
+
+    #[cfg(all(test, feature = "enable_tests"))]
+    pub fn find_ranges(&self, query: &str) -> Vec<(usize, usize)> {
+        let norm_q = normalize_search_text(query.trim());
+        self.find_normalized_ranges(&norm_q)
+    }
+
+    pub fn find_normalized_ranges(&self, normalized_query: &str) -> Vec<(usize, usize)> {
+        if normalized_query.is_empty() || self.normalized.is_empty() {
+            return Vec::new();
+        }
+        let mut ranges = Vec::new();
+        let mut search_from = 0usize;
+        while let Some(found) = self.normalized[search_from..].find(normalized_query) {
+            let norm_start = search_from + found;
+            let norm_end = norm_start + normalized_query.len();
+            let orig_start = self.byte_to_orig[norm_start].0;
+            let orig_end = self.byte_to_orig[norm_end - 1].1;
+            if orig_start < orig_end {
+                ranges.push((orig_start, orig_end));
+            }
+            search_from = norm_end;
+            if search_from >= self.normalized.len() {
+                break;
+            }
+        }
+        ranges
+    }
+}
+
+pub fn csv_field(value: &str) -> String {
+    let neutralized = if value.starts_with(['=', '+', '-', '@', '\t', '\r'])
+        || value.trim_start().starts_with(['=', '+', '-', '@'])
+    {
+        std::borrow::Cow::Owned(format!("'{value}"))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    };
+    if neutralized.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", neutralized.replace('"', "\"\""))
+    } else {
+        neutralized.into_owned()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     NextPage,
@@ -158,7 +282,12 @@ impl ReaderCore {
     pub fn make_safe_snippet(text: &str, byte_pos: usize, match_len: usize) -> String {
         let safe_pos = text.floor_char_boundary(byte_pos.min(text.len()));
         let start = text.floor_char_boundary(safe_pos.saturating_sub(30));
-        let end = text.ceil_char_boundary((safe_pos + match_len + 30).min(text.len()));
+        let end = text.ceil_char_boundary(
+            safe_pos
+                .saturating_add(match_len)
+                .saturating_add(30)
+                .min(text.len()),
+        );
         let slice = text[start..end].trim().replace('\n', " ");
         let mut snippet = String::new();
         if start > 0 {
@@ -211,24 +340,8 @@ impl ReaderCore {
                     return Vec::new();
                 }
                 let clean = crate::document::strip_formatting_tags(para);
-                let lower_para = normalize_search_text(&clean);
-                let mut search_from = 0;
-                while let Some(found_idx) = lower_para[search_from..].find(&q) {
-                    let abs_pos = search_from + found_idx;
-                    let snippet = Self::make_safe_snippet(&clean, abs_pos, q.len());
-                    hits.push(SearchHit {
-                        chapter_index: ch_idx,
-                        paragraph_index: Some(p_idx),
-                        page_index: None,
-                        snippet,
-                    });
-                    if hits.len() >= 200 {
-                        return hits;
-                    }
-                    search_from = abs_pos + q.len().max(1);
-                    if search_from >= lower_para.len() {
-                        break;
-                    }
+                if Self::push_text_search_hits(&clean, &q, ch_idx, Some(p_idx), None, &mut hits) {
+                    return hits;
                 }
             }
         }
@@ -256,27 +369,39 @@ impl ReaderCore {
             let Some(text) = pages.extract_page_text(page_idx) else {
                 continue;
             };
-            let lower_text = normalize_search_text(&text);
-            let mut search_from = 0;
-            while let Some(found_idx) = lower_text[search_from..].find(&q) {
-                let abs_pos = search_from + found_idx;
-                let snippet = Self::make_safe_snippet(&text, abs_pos, q.len());
-                hits.push(SearchHit {
-                    chapter_index: 0,
-                    paragraph_index: None,
-                    page_index: Some(page_idx),
-                    snippet,
-                });
-                if hits.len() >= 200 {
-                    return hits;
-                }
-                search_from = abs_pos + q.len().max(1);
-                if search_from >= lower_text.len() {
-                    break;
-                }
+            if Self::push_text_search_hits(&text, &q, 0, None, Some(page_idx), &mut hits) {
+                return hits;
             }
         }
         hits
+    }
+
+    fn push_text_search_hits(
+        text: &str,
+        normalized_query: &str,
+        chapter_index: usize,
+        paragraph_index: Option<usize>,
+        page_index: Option<usize>,
+        hits: &mut Vec<SearchHit>,
+    ) -> bool {
+        let lower_text = normalize_search_text(text);
+        if !lower_text.contains(normalized_query) {
+            return false;
+        }
+        let index = NormalizedSearchIndex::from_normalized(text, lower_text);
+        for (orig_pos, orig_end) in index.find_normalized_ranges(normalized_query) {
+            let snippet = Self::make_safe_snippet(text, orig_pos, orig_end - orig_pos);
+            hits.push(SearchHit {
+                chapter_index,
+                paragraph_index,
+                page_index,
+                snippet,
+            });
+            if hits.len() >= 200 {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn estimate_paragraph_scroll_y(

@@ -222,8 +222,12 @@ pub const AVAILABLE_FONTS: [FontOptionInfo; 9] = [
 ];
 
 impl FontOptionInfo {
-    pub fn badge_for_lang(&self, lang: crate::i18n::UiLanguage) -> &'static str {
-        lang.t().fonts[self.index].badge
+    pub fn badge_parts_for_lang(
+        &self,
+        lang: crate::i18n::UiLanguage,
+    ) -> (&'static str, &'static str) {
+        let font = &lang.t().fonts[self.index];
+        (font.badge, font.badge_tag)
     }
 
     pub fn desc_for_lang(&self, lang: crate::i18n::UiLanguage) -> &'static str {

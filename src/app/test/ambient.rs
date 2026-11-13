@@ -1,9 +1,10 @@
 use crate::app::ambient::{AmbientController, AmbientSettings};
 use crate::app::ambient_synth::{AmbientSharedParams, AmbientSynth, AmbientSynthParams};
 use crate::app::input::process_keyboard_events;
+use crate::app::theme::ReaderTheme;
 use crate::core::Command;
 use crate::i18n::UiLanguage;
-use eframe::egui::{Key, Modifiers};
+use eframe::egui::{self, Key, Modifiers};
 use std::sync::Arc;
 
 #[test]
@@ -280,5 +281,145 @@ fn test_translations_coverage() {
         assert!(!t.ambient_resume_on_startup.is_empty());
         assert!(!t.ambient_audio_error.is_empty());
         assert!(!t.ambient_headphones_hint.is_empty());
+    }
+}
+
+#[test]
+fn test_ambient_select_timer_tracks_changes_and_preset_state() {
+    let mut ctrl = AmbientController::new(AmbientSettings::default());
+    assert!(ctrl.is_timer_off());
+    assert_eq!(ctrl.timer_preset_minutes(), None);
+    assert!(!ctrl.select_timer(None));
+
+    assert!(ctrl.select_timer(Some(15)));
+    assert!(!ctrl.is_timer_off());
+    assert!(ctrl.is_timer_preset_active(15));
+    assert!(!ctrl.is_timer_preset_active(30));
+    assert_eq!(ctrl.timer_preset_minutes(), Some(15));
+    assert!(ctrl.settings.timer_end_unix.is_some());
+
+    assert!(ctrl.select_timer(Some(30)));
+    assert!(!ctrl.is_timer_preset_active(15));
+    assert!(ctrl.is_timer_preset_active(30));
+    assert_eq!(ctrl.timer_preset_minutes(), Some(30));
+
+    assert!(ctrl.select_timer(None));
+    assert!(ctrl.is_timer_off());
+    assert_eq!(ctrl.timer_preset_minutes(), None);
+    assert_eq!(ctrl.settings.timer_end_unix, None);
+    assert!(!ctrl.select_timer(None));
+}
+
+#[test]
+fn test_ambient_restored_timer_state_and_expired_cleanup_on_init() {
+    let now = crate::core::license::unix_now();
+
+    let mut active_settings = AmbientSettings::default();
+    active_settings.timer_end_unix = Some(now + 600);
+    let active_ctrl = AmbientController::new(active_settings);
+    assert!(!active_ctrl.is_timer_off());
+    assert_eq!(active_ctrl.timer_preset_minutes(), None);
+    assert!(!active_ctrl.is_timer_preset_active(15));
+    assert!(active_ctrl.remaining_timer_seconds().unwrap() > 0);
+
+    let mut expired_settings = AmbientSettings::default();
+    expired_settings.timer_end_unix = Some(now.saturating_sub(10));
+    let expired_ctrl = AmbientController::new(expired_settings);
+    assert!(expired_ctrl.is_timer_off());
+    assert_eq!(expired_ctrl.settings.timer_end_unix, None);
+    assert_eq!(expired_ctrl.timer_preset_minutes(), None);
+}
+
+#[test]
+fn test_ambient_tick_clears_expired_timer_and_preset_when_paused() {
+    let mut ctrl = AmbientController::new(AmbientSettings::default());
+    let ctx = egui::Context::default();
+    ctrl.set_timer(Some(15));
+    assert_eq!(ctrl.timer_preset_minutes(), Some(15));
+
+    ctrl.settings.timer_end_unix = Some(crate::core::license::unix_now().saturating_sub(1));
+    let state_changed = ctrl.tick(&ctx);
+
+    assert!(state_changed);
+    assert_eq!(ctrl.settings.timer_end_unix, None);
+    assert_eq!(ctrl.timer_preset_minutes(), None);
+    assert!(ctrl.is_timer_off());
+    assert!(!ctrl.is_timer_preset_active(15));
+}
+
+fn render_ambient_frame(ctx: &egui::Context, ctrl: &mut AmbientController) -> bool {
+    let mut changed = false;
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        changed = ctrl.render(ui.ctx(), &ReaderTheme::Light, UiLanguage::En);
+    });
+    out.textures_delta.clear();
+    changed
+}
+
+#[test]
+fn test_ambient_render_changed_flag_on_idle_and_expired_timer() {
+    let mut ctrl = AmbientController::new(AmbientSettings::default());
+    ctrl.is_open = true;
+    let ctx = egui::Context::default();
+
+    assert!(!render_ambient_frame(&ctx, &mut ctrl));
+
+    ctrl.set_timer(Some(15));
+    ctrl.settings.timer_end_unix = Some(crate::core::license::unix_now().saturating_sub(1));
+    assert!(render_ambient_frame(&ctx, &mut ctrl));
+    assert_eq!(ctrl.settings.timer_end_unix, None);
+    assert_eq!(ctrl.timer_preset_minutes(), None);
+}
+
+#[test]
+fn test_ambient_responsive_layout_stays_within_viewport_across_resolutions() {
+    let cases = [
+        (320.0_f32, 340.0_f32, 1.5_f32),
+        (800.0, 600.0, 1.25),
+        (1366.0, 768.0, 1.25),
+        (3440.0, 1440.0, 2.0),
+    ];
+
+    for (w, h, ppp) in cases {
+        let mut ctrl = AmbientController::new(AmbientSettings::default());
+        ctrl.is_open = true;
+        ctrl.settings.binaural_vol = 0.5;
+        ctrl.settings.duck_during_tts = true;
+        ctrl.set_timer(Some(15));
+
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+        for _ in 0..2 {
+            let mut raw = egui::RawInput::default();
+            raw.screen_rect = Some(screen);
+            raw.viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .native_pixels_per_point = Some(ppp);
+            let mut out = ctx.run_ui(raw, |ui| {
+                ctrl.render(ui.ctx(), &ReaderTheme::Light, UiLanguage::Ru);
+            });
+            out.textures_delta.clear();
+        }
+
+        let rect = ctx
+            .memory(|m| m.area_rect(egui::Id::unique("ambient_sound_panel")))
+            .expect("ambient panel rect");
+        assert!(
+            rect.width() <= (w - 8.0).max(240.0),
+            "ambient {w}x{h}@{ppp}: rect={rect:?}"
+        );
+        assert!(
+            rect.width() <= 390.0,
+            "ambient {w}x{h}@{ppp}: rect={rect:?}"
+        );
+        assert!(
+            rect.left() >= -1.0 && rect.right() <= w + 1.0,
+            "ambient {w}x{h}@{ppp}: rect={rect:?}"
+        );
+        assert!(
+            rect.top() >= -1.0 && rect.bottom() <= h + 1.0,
+            "ambient {w}x{h}@{ppp}: rect={rect:?}"
+        );
     }
 }

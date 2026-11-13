@@ -362,6 +362,7 @@ impl LibraryViewState {
                                 library,
                                 theme,
                                 t,
+                                lang,
                                 &mut self.cover_loader,
                                 &mut actions.open_path,
                             );

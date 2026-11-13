@@ -149,3 +149,51 @@ fn test_all_languages_bookmark_translations() {
         assert!(!t.bookmark_kind_bookmark.is_empty());
     }
 }
+
+#[test]
+fn test_bookmark_mutations_track_dirty_state_and_export_errors() {
+    use crate::app::bookmarks_view::{
+        remove_bookmark_by_id, save_export_text, set_bookmark_color, set_bookmark_note,
+    };
+    use crate::test::util::unique_test_dir;
+
+    let mut bookmarks = vec![Bookmark {
+        id: "b1".to_string(),
+        book_path: PathBuf::from("book.epub"),
+        chapter: 0,
+        scroll_y: 0.0,
+        label: "Ch 1".to_string(),
+        text: "Quote".to_string(),
+        note: String::new(),
+        color: BookmarkColor::Yellow,
+        kind: BookmarkKind::Quote,
+        timestamp: 1,
+        progress_percent: 5.0,
+        page_number: None,
+    }];
+
+    assert!(!set_bookmark_color(
+        &mut bookmarks[0],
+        BookmarkColor::Yellow
+    ));
+    assert!(set_bookmark_color(&mut bookmarks[0], BookmarkColor::Green));
+    assert_eq!(bookmarks[0].color, BookmarkColor::Green);
+
+    assert!(!set_bookmark_note(&mut bookmarks, "b1", String::new()));
+    assert!(set_bookmark_note(&mut bookmarks, "b1", "Note".to_string()));
+    assert!(!set_bookmark_note(
+        &mut bookmarks,
+        "missing",
+        "X".to_string()
+    ));
+    assert_eq!(bookmarks[0].note, "Note");
+
+    assert!(!remove_bookmark_by_id(&mut bookmarks, "missing"));
+    assert!(remove_bookmark_by_id(&mut bookmarks, "b1"));
+    assert!(bookmarks.is_empty());
+
+    let dir = unique_test_dir("bm_export_error");
+    let err = save_export_text(&dir, "notes", "Saved", "Export failed: {}");
+    assert!(err.starts_with("Export failed: "));
+    let _ = std::fs::remove_dir_all(&dir);
+}

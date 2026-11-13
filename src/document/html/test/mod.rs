@@ -105,3 +105,35 @@ fn test_html_registry_probe_and_open() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_html_unclosed_heading_does_not_abort_subsequent_headings() {
+    let html_no_close = "<html><body><h1>Незакрытый заголовок<p>Первый текст.</p><h2>Вторая глава</h2><p>Второй текст.</p><h1>Третья глава</h1><p>Третий текст.</p></body></html>";
+    let doc = HtmlDocument::from_bytes(html_no_close.as_bytes(), "fallback", None).unwrap();
+    assert_eq!(doc.toc().len(), 3);
+    assert_eq!(doc.toc()[1].title, "Вторая глава");
+    assert_eq!(doc.toc()[2].title, "Третья глава");
+    assert!(
+        doc.chapters()[1]
+            .paragraphs
+            .join(" ")
+            .contains("Второй текст.")
+    );
+    assert!(
+        doc.chapters()[2]
+            .paragraphs
+            .join(" ")
+            .contains("Третий текст.")
+    );
+
+    let html_eof_unclosed =
+        "<html><body><h1>Без закрытия<p>Начало.</p><h2>Финал</h2><p>Конец.</p></body></html>";
+    let doc2 = HtmlDocument::from_bytes(html_eof_unclosed.as_bytes(), "fallback", None).unwrap();
+    assert!(doc2.toc().iter().any(|item| item.title == "Финал"));
+    assert!(
+        doc2.chapters()
+            .iter()
+            .flat_map(|ch| ch.paragraphs.iter())
+            .any(|p| p.contains("Конец."))
+    );
+}

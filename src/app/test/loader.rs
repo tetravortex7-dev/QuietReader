@@ -120,18 +120,153 @@ fn test_obsolete_response_discard_on_tab_close_and_reopen() {
 
 #[test]
 fn test_document_load_error_formatting_variants() {
-    use crate::app::document_loader::format_document_error;
+    use crate::app::document_loader::format_document_error_with_lang;
     use crate::document::DocumentError;
+    use crate::document::errors;
+    use crate::i18n::UiLanguage;
 
-    let io_err = format_document_error(&DocumentError::Io("file missing".to_string()));
+    let io_err = format_document_error_with_lang(
+        &DocumentError::Io("file missing".to_string()),
+        UiLanguage::Ru,
+    );
     assert!(io_err.contains("Ошибка ввода-вывода"));
 
-    let unsup_err = format_document_error(&DocumentError::Unsupported("raw".to_string()));
+    let unsup_err = format_document_error_with_lang(
+        &DocumentError::Unsupported("raw".to_string()),
+        UiLanguage::Ru,
+    );
     assert!(unsup_err.contains("Неподдерживаемый формат"));
 
-    let corr_err = format_document_error(&DocumentError::Corrupted("invalid header".to_string()));
+    let corr_err = format_document_error_with_lang(
+        &DocumentError::Corrupted("invalid header".to_string()),
+        UiLanguage::Ru,
+    );
     assert!(corr_err.contains("Повреждённый документ"));
 
-    let lim_err = format_document_error(&DocumentError::LimitExceeded("size limit".to_string()));
+    let lim_err = format_document_error_with_lang(
+        &DocumentError::LimitExceeded("size limit".to_string()),
+        UiLanguage::Ru,
+    );
     assert!(lim_err.contains("Превышен лимит безопасности"));
+
+    let structured_fr = format_document_error_with_lang(
+        &DocumentError::Corrupted(errors::epub_empty_spine()),
+        UiLanguage::Fr,
+    );
+    assert!(structured_fr.contains("spine EPUB"));
+}
+
+#[test]
+fn test_localized_document_wrap_decodes_tokens_and_legacy_fallbacks() {
+    use crate::app::localized_document::LocalizedDocument;
+    use crate::document::{BookChapter, BookMetadata, Document, TocItem, errors};
+    use crate::i18n::UiLanguage;
+    use std::sync::Arc;
+
+    struct StubDoc {
+        metadata: BookMetadata,
+        chapters: Vec<BookChapter>,
+        toc: Vec<TocItem>,
+    }
+
+    impl Document for StubDoc {
+        fn metadata(&self) -> &BookMetadata {
+            &self.metadata
+        }
+        fn chapters(&self) -> &[BookChapter] {
+            &self.chapters
+        }
+        fn toc(&self) -> &[TocItem] {
+            &self.toc
+        }
+    }
+
+    let raw: Arc<dyn Document> = Arc::new(StubDoc {
+        metadata: BookMetadata {
+            title: errors::tokens::UNTITLED.to_string(),
+            author: errors::tokens::UNKNOWN_AUTHOR.to_string(),
+        },
+        chapters: vec![
+            BookChapter {
+                id: None,
+                title: errors::tokens::chapter_part(errors::tokens::TITLE_HTML, 2),
+                paragraphs: vec![errors::tokens::NO_TEXT.to_string()],
+            },
+            BookChapter {
+                id: None,
+                title: errors::tokens::lines_range(errors::tokens::TITLE_TEXT, 1, 50),
+                paragraphs: vec!["Body text".to_string()],
+            },
+            BookChapter {
+                id: None,
+                title: "Раздел 4".to_string(),
+                paragraphs: vec![],
+            },
+            BookChapter {
+                id: None,
+                title: errors::tokens::chapter_part(&errors::tokens::chapter(3), 7),
+                paragraphs: vec![],
+            },
+            BookChapter {
+                id: None,
+                title: "\x1c@title:html".to_string(),
+                paragraphs: vec![],
+            },
+        ],
+        toc: vec![
+            TocItem {
+                id: None,
+                title: errors::tokens::section_page(1, 3),
+                chapter_index: 0,
+                children: vec![],
+            },
+            TocItem {
+                id: None,
+                title: "Страница 5".to_string(),
+                chapter_index: 1,
+                children: vec![],
+            },
+        ],
+    });
+
+    for lang in [UiLanguage::En, UiLanguage::Fr, UiLanguage::Ar] {
+        let t = lang.t();
+        let localized = LocalizedDocument::wrap(Arc::clone(&raw), lang);
+        assert_eq!(localized.metadata().title, t.extra.default_untitled);
+        assert_eq!(localized.metadata().author, t.extra.default_unknown_author);
+        assert!(
+            localized.chapters()[0]
+                .title
+                .contains(t.extra.default_html_document)
+        );
+        assert!(localized.chapters()[0].title.contains('2'));
+        assert_eq!(
+            localized.chapters()[0].paragraphs,
+            vec![t.extra.default_no_text]
+        );
+        assert!(
+            localized.chapters()[1]
+                .title
+                .contains(t.extra.default_text_document)
+        );
+        assert!(localized.chapters()[1].title.contains("50"));
+        assert!(!localized.chapters()[2].title.contains('\x1e'));
+        assert!(localized.chapters()[2].title.contains('4'));
+        let expected_ch3 = crate::i18n::fill(t.extra.default_chapter, &[("{n}", "3")]);
+        assert!(localized.chapters()[3].title.contains(&expected_ch3));
+        assert!(localized.chapters()[3].title.contains('7'));
+        assert_eq!(localized.chapters()[4].title, "\x1c@title:html");
+        assert!(
+            !localized.toc()[0]
+                .title
+                .chars()
+                .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
+        );
+        assert!(
+            !localized.toc()[1]
+                .title
+                .chars()
+                .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
+        );
+    }
 }

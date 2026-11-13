@@ -53,9 +53,9 @@ impl PdfDocument {
     ) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
         let file = File::open(path_ref).map_err(|e| {
-            DocumentError::Io(format!(
-                "Не удалось открыть PDF файл {}: {e}",
-                path_ref.display()
+            DocumentError::Io(crate::document::errors::io_open(
+                &path_ref.display().to_string(),
+                &e,
             ))
         })?;
 
@@ -63,12 +63,12 @@ impl PdfDocument {
         const MAX_PDF_SIZE: u64 = 300 * 1024 * 1024;
         if file_len > MAX_PDF_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер PDF файла превышает максимально допустимый лимит 300 МБ".to_string(),
+                crate::document::errors::file_too_large_mb("PDF", 300),
             ));
         }
         if file_len == 0 {
             return Err(DocumentError::Corrupted(
-                "Файл не является валидным PDF документом (файл пуст)".to_string(),
+                crate::document::errors::file_empty("PDF"),
             ));
         }
 
@@ -77,14 +77,14 @@ impl PdfDocument {
             .take(MAX_PDF_SIZE.saturating_add(1))
             .read_to_end(&mut bytes)
             .map_err(|e| {
-                DocumentError::Io(format!(
-                    "Не удалось прочитать PDF файл {}: {e}",
-                    path_ref.display()
+                DocumentError::Io(crate::document::errors::io_read(
+                    &path_ref.display().to_string(),
+                    &e,
                 ))
             })?;
         if read as u64 > MAX_PDF_SIZE {
             return Err(DocumentError::LimitExceeded(
-                "Размер PDF файла превышает максимально допустимый лимит 300 МБ".to_string(),
+                crate::document::errors::file_too_large_mb("PDF", 300),
             ));
         }
 
@@ -120,13 +120,10 @@ impl PdfDocument {
                 let _ = pos;
             } else {
                 return Err(DocumentError::Corrupted(
-                    "Файл не является валидным PDF документом (отсутствует заголовок %PDF)"
-                        .to_string(),
+                    crate::document::errors::invalid_header("PDF", "%PDF"),
                 ));
             }
         }
-
-        let permissions = extract_pdf_permissions(bytes);
 
         let pass = password.unwrap_or("");
         let pdf = match hayro::hayro_syntax::Pdf::new_with_password(data, pass) {
@@ -137,23 +134,25 @@ impl PdfDocument {
                 }
                 hayro::hayro_syntax::LoadPdfError::Invalid => {
                     return Err(DocumentError::Corrupted(
-                        "Ошибка парсинга PDF документа: поврежденный файл".to_string(),
+                        crate::document::errors::parse_corrupted("PDF"),
                     ));
                 }
             },
         };
 
+        let permissions = extract_pdf_permissions_with_xref(pdf.data().as_ref(), Some(pdf.xref()));
+
         let page_count = pdf.pages().len();
         if page_count == 0 {
-            return Err(DocumentError::Corrupted(
-                "PDF документ не содержит ни одной страницы".to_string(),
-            ));
+            return Err(DocumentError::Corrupted(crate::document::errors::no_pages(
+                "PDF",
+            )));
         }
 
         let default_title = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Документ PDF")
+            .unwrap_or(crate::document::errors::tokens::TITLE_PDF)
             .to_string();
 
         let meta = pdf.metadata();
@@ -169,7 +168,7 @@ impl PdfDocument {
             .as_ref()
             .map(|a| outline::decode_pdf_string(a))
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "Неизвестный автор".to_string());
+            .unwrap_or_else(|| crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string());
 
         let toc = outline::extract_pdf_toc(&pdf, page_count);
         let links = links::extract_pdf_links(&pdf, page_count);
@@ -179,10 +178,9 @@ impl PdfDocument {
             chapters.push(BookChapter {
                 id: item.id.clone(),
                 title: item.title.clone(),
-                paragraphs: vec![format!(
-                    "Раздел {} (страница {})",
+                paragraphs: vec![crate::document::errors::tokens::section_page(
                     i + 1,
-                    item.chapter_index + 1
+                    item.chapter_index + 1,
                 )],
             });
         }
@@ -262,15 +260,14 @@ impl PageContent for PdfDocument {
         scale: f32,
     ) -> Result<DecodedImage, DocumentError> {
         if index >= self.page_count {
-            return Err(DocumentError::Corrupted(format!(
-                "Страница {} выходит за пределы документа",
-                index + 1
-            )));
+            return Err(DocumentError::Corrupted(
+                crate::document::errors::page_out_of_bounds(index + 1),
+            ));
         }
 
         let pages = self.pdf.pages();
         let page = pages.get(index).ok_or_else(|| {
-            DocumentError::Corrupted(format!("Страница {} не найдена", index + 1))
+            DocumentError::Corrupted(crate::document::errors::page_not_found(index + 1))
         })?;
 
         let interp_settings = hayro::hayro_interpret::InterpreterSettings::default();
@@ -313,10 +310,9 @@ impl PageContent for PdfDocument {
         let height = pixmap.height() as u32;
 
         if width == 0 || height == 0 {
-            return Err(DocumentError::Corrupted(format!(
-                "Страница {} имеет нулевой размер",
-                index + 1
-            )));
+            return Err(DocumentError::Corrupted(
+                crate::document::errors::page_zero_size(index + 1),
+            ));
         }
 
         let raw_pixels = pixmap.data();
@@ -379,80 +375,277 @@ impl PageContent for PdfDocument {
     }
 }
 
+#[cfg(all(test, feature = "enable_tests"))]
 pub fn extract_pdf_permissions(data: &[u8]) -> PdfPermissions {
-    let mut pos = 0;
-    while let Some(idx) = find_subsequence(&data[pos..], b"/Filter") {
-        let filter_pos = pos + idx;
-        let window_start = filter_pos.saturating_sub(64);
-        let window_end = (filter_pos + 512).min(data.len());
-        let slice = &data[window_start..window_end];
+    extract_pdf_permissions_with_xref(data, None)
+}
 
-        if let Some(p_idx) = find_p_entry(slice) {
-            let p_slice = &slice[p_idx..];
-            if let Some(p_val) = parse_pdf_integer(p_slice) {
-                let p = if p_val < 0 {
-                    u32::from_be_bytes((p_val as i32).to_be_bytes())
-                } else {
-                    p_val as u32
-                };
-                return PdfPermissions {
-                    can_print: (p & 0x0004) != 0,
-                    can_modify: (p & 0x0008) != 0,
-                    can_copy: (p & 0x0010) != 0,
-                    can_annotate: (p & 0x0020) != 0,
-                };
+fn extract_pdf_permissions_with_xref(
+    data: &[u8],
+    xref: Option<&hayro::hayro_syntax::xref::XRef>,
+) -> PdfPermissions {
+    use hayro::hayro_syntax::object::{Dict, FromBytes, Name, Number};
+
+    if let Some((has_encrypt, perms)) = extract_from_trailer_or_xref(data, xref) {
+        if has_encrypt {
+            return perms.unwrap_or_default();
+        }
+        return PdfPermissions::default();
+    }
+
+    let mut pos = 0;
+    while let Some((dict_start, dict_end)) = find_next_dict(data, pos) {
+        if let Some(dict) = Dict::from_bytes(&data[dict_start..dict_end]) {
+            let is_standard_filter = dict
+                .get::<Name<'_>>(b"Filter")
+                .is_some_and(|name| name.as_str() == "Standard");
+            let looks_like_encrypt_dict = is_standard_filter
+                || (dict.contains_key(b"Filter")
+                    && dict.contains_key(b"V")
+                    && dict.contains_key(b"R"));
+            if looks_like_encrypt_dict && let Some(p_num) = dict.get::<Number>(b"P") {
+                return permissions_from_p_value(p_num.as_i64());
             }
         }
-        pos = filter_pos + 7;
+        pos = dict_start + 2;
     }
+
     PdfPermissions::default()
 }
 
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+fn permissions_from_p_value(p_val: i64) -> PdfPermissions {
+    let p = (p_val as i32) as u32;
+    PdfPermissions {
+        can_print: (p & 0x0004) != 0,
+        can_modify: (p & 0x0008) != 0,
+        can_copy: (p & 0x0010) != 0,
+        can_annotate: (p & 0x0020) != 0,
+    }
 }
 
-fn find_p_entry(slice: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    while i + 2 < slice.len() {
-        if slice[i] == b'/' && slice[i + 1] == b'P' {
-            let next = slice[i + 2];
-            if next.is_ascii_whitespace() || next == b'-' || next == b'+' {
-                return Some(i + 2);
+fn extract_from_trailer_or_xref(
+    data: &[u8],
+    xref: Option<&hayro::hayro_syntax::xref::XRef>,
+) -> Option<(bool, Option<PdfPermissions>)> {
+    use hayro::hayro_syntax::object::{Dict, FromBytes, Name};
+
+    let mut search_end = data.len();
+    while let Some(idx) = find_last_token(&data[..search_end], b"trailer") {
+        if let Some((dict_start, dict_end)) = extract_balanced_dict(data, idx + b"trailer".len())
+            && let Some(trailer_dict) = Dict::from_bytes(&data[dict_start..dict_end])
+        {
+            if let Some(result) = permissions_from_container_dict(data, &trailer_dict, xref) {
+                return Some(result);
             }
+        }
+        search_end = idx;
+    }
+
+    let mut pos = 0;
+    let mut last_xref_result = None;
+    while let Some((dict_start, dict_end)) = find_next_dict(data, pos) {
+        if let Some(dict) = Dict::from_bytes(&data[dict_start..dict_end])
+            && dict
+                .get::<Name<'_>>(b"Type")
+                .is_some_and(|t| t.as_str() == "XRef")
+        {
+            last_xref_result = permissions_from_container_dict(data, &dict, xref);
+        }
+        pos = dict_end;
+    }
+    if last_xref_result.is_some() {
+        return last_xref_result;
+    }
+
+    None
+}
+
+fn permissions_from_container_dict(
+    data: &[u8],
+    container: &hayro::hayro_syntax::object::Dict<'_>,
+    xref: Option<&hayro::hayro_syntax::xref::XRef>,
+) -> Option<(bool, Option<PdfPermissions>)> {
+    use hayro::hayro_syntax::object::{Dict, FromBytes, Number};
+
+    if !container.contains_key(b"Encrypt") {
+        if container.contains_key(b"Root") || container.contains_key(b"Size") {
+            return Some((false, None));
+        }
+        return None;
+    }
+
+    if let Some(inline_enc) = container.get::<Dict<'_>>(b"Encrypt") {
+        let perms = inline_enc
+            .get::<Number>(b"P")
+            .map(|n| permissions_from_p_value(n.as_i64()));
+        return Some((true, perms));
+    }
+
+    if let Some(enc_ref) = container.get_ref(b"Encrypt") {
+        if let Some(xr) = xref
+            && let Some(enc_dict) = xr.get::<Dict<'_>>(enc_ref.into())
+            && let Some(p_num) = enc_dict.get::<Number>(b"P")
+        {
+            return Some((true, Some(permissions_from_p_value(p_num.as_i64()))));
+        }
+        if let Some(obj_dict_slice) =
+            find_indirect_object_dict(data, enc_ref.obj_number, enc_ref.gen_number)
+            && let Some(enc_dict) = Dict::from_bytes(obj_dict_slice)
+            && let Some(p_num) = enc_dict.get::<Number>(b"P")
+        {
+            return Some((true, Some(permissions_from_p_value(p_num.as_i64()))));
+        }
+        return Some((true, None));
+    }
+
+    Some((true, None))
+}
+
+fn find_indirect_object_dict(data: &[u8], obj_num: u32, gen_num: i32) -> Option<&[u8]> {
+    let header = format!("{obj_num} {gen_num} obj");
+    let needle = header.as_bytes();
+    let mut pos = 0;
+    while pos + needle.len() <= data.len() {
+        let rel = find_subsequence(&data[pos..], needle)?;
+        let idx = pos + rel;
+        let left_ok = idx == 0 || is_pdf_delimiter_or_ws(data[idx - 1]);
+        let right_idx = idx + needle.len();
+        let right_ok = right_idx >= data.len() || is_pdf_delimiter_or_ws(data[right_idx]);
+        if left_ok
+            && right_ok
+            && let Some((dict_start, dict_end)) = extract_balanced_dict(data, right_idx)
+        {
+            return Some(&data[dict_start..dict_end]);
+        }
+        pos = idx + needle.len();
+    }
+    None
+}
+
+fn find_last_token(data: &[u8], token: &[u8]) -> Option<usize> {
+    if token.is_empty() || data.len() < token.len() {
+        return None;
+    }
+    let mut i = data.len() - token.len();
+    loop {
+        if &data[i..i + token.len()] == token {
+            let left_ok = i == 0 || is_pdf_delimiter_or_ws(data[i - 1]);
+            let right_idx = i + token.len();
+            let right_ok = right_idx >= data.len() || is_pdf_delimiter_or_ws(data[right_idx]);
+            if left_ok && right_ok {
+                return Some(i);
+            }
+        }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    None
+}
+
+fn is_pdf_delimiter_or_ws(b: u8) -> bool {
+    b.is_ascii_whitespace() || matches!(b, b'<' | b'>' | b'[' | b']' | b'(' | b')' | b'/' | b'%')
+}
+
+fn skip_pdf_ws_and_comments(data: &[u8], mut i: usize) -> usize {
+    while i < data.len() {
+        if data[i].is_ascii_whitespace() {
+            i += 1;
+        } else if data[i] == b'%' {
+            while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                i += 1;
+            }
+        } else {
+            break;
+        }
+    }
+    i
+}
+
+fn find_next_dict(data: &[u8], start: usize) -> Option<(usize, usize)> {
+    let mut i = start;
+    while i + 1 < data.len() {
+        if data[i] == b'%' {
+            while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                i += 1;
+            }
+            continue;
+        }
+        if data[i] == b'(' {
+            i = skip_pdf_literal_string(data, i);
+            continue;
+        }
+        if data[i] == b'<' && data[i + 1] == b'<' {
+            if let Some(bounds) = extract_balanced_dict(data, i) {
+                return Some(bounds);
+            }
+            i += 2;
+            continue;
         }
         i += 1;
     }
     None
 }
 
-fn parse_pdf_integer(slice: &[u8]) -> Option<i64> {
-    let mut i = 0;
-    while i < slice.len() && slice[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i >= slice.len() {
+fn extract_balanced_dict(data: &[u8], start: usize) -> Option<(usize, usize)> {
+    let dict_start = skip_pdf_ws_and_comments(data, start);
+    if dict_start + 1 >= data.len() || &data[dict_start..dict_start + 2] != b"<<" {
         return None;
     }
-    let mut is_negative = false;
-    if slice[i] == b'-' {
-        is_negative = true;
-        i += 1;
-    } else if slice[i] == b'+' {
+    let mut i = dict_start + 2;
+    let mut depth = 1usize;
+    while i < data.len() {
+        if data[i] == b'%' {
+            while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                i += 1;
+            }
+            continue;
+        }
+        if data[i] == b'(' {
+            i = skip_pdf_literal_string(data, i);
+            continue;
+        }
+        if i + 1 < data.len() && data[i] == b'<' && data[i + 1] == b'<' {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if i + 1 < data.len() && data[i] == b'>' && data[i + 1] == b'>' {
+            depth -= 1;
+            i += 2;
+            if depth == 0 {
+                return Some((dict_start, i));
+            }
+            continue;
+        }
         i += 1;
     }
-    let start = i;
-    while i < slice.len() && slice[i].is_ascii_digit() {
+    None
+}
+
+fn skip_pdf_literal_string(data: &[u8], start: usize) -> usize {
+    let mut i = start + 1;
+    let mut paren_depth = 1usize;
+    while i < data.len() && paren_depth > 0 {
+        if data[i] == b'\\' {
+            i = (i + 2).min(data.len());
+            continue;
+        }
+        if data[i] == b'(' {
+            paren_depth += 1;
+        } else if data[i] == b')' {
+            paren_depth -= 1;
+        }
         i += 1;
     }
-    if start == i {
-        return None;
-    }
-    let s = std::str::from_utf8(&slice[start..i]).ok()?;
-    let val: i64 = s.parse().ok()?;
-    Some(if is_negative { -val } else { val })
+    i
+}
+
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(all(test, feature = "enable_tests"))]

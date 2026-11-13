@@ -7,6 +7,25 @@ use eframe::egui::{self, RichText, Vec2};
 use std::time::Instant;
 
 impl PdfViewState {
+    fn copy_selected_pdf_text(
+        &mut self,
+        ctx: &egui::Context,
+        status_message: &mut Option<String>,
+        lang: crate::i18n::UiLanguage,
+        can_copy: bool,
+    ) {
+        let t = lang.t();
+        if !can_copy {
+            *status_message = Some(t.extra.copy_restricted.to_string());
+            return;
+        }
+        ctx.copy_text(self.selected_text.clone());
+        let preview = truncate_str(&self.selected_text, 35);
+        let copied = crate::i18n::fill(t.extra.pdf_copied_prefix, &[("{preview}", &preview)]);
+        *status_message = Some(copied.clone());
+        self.copy_notification = Some((copied, Instant::now()));
+    }
+
     pub fn render_toolbar(
         &mut self,
         ui: &mut egui::Ui,
@@ -17,13 +36,12 @@ impl PdfViewState {
         format_label: &str,
         lang: crate::i18n::UiLanguage,
         smart_scan_allowed: bool,
+        can_copy: bool,
         on_pro_required: &mut Option<ProFeature>,
     ) {
         let t = lang.t();
         let effective_smart_dark = settings.smart_dark && smart_scan_allowed;
         let effective_auto_crop = settings.auto_crop && smart_scan_allowed;
-        let copied_text =
-            |preview: &str| crate::i18n::fill(t.extra.pdf_copied_prefix, &[("{preview}", preview)]);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
 
@@ -212,16 +230,17 @@ impl PdfViewState {
             ui.separator();
 
             if !self.selected_text.is_empty() {
-                if ui
-                    .button(RichText::new(t.copy).strong().color(theme.accent_color()))
+                let copy_btn = ui
+                    .add_enabled(
+                        can_copy,
+                        egui::Button::new(
+                            RichText::new(t.copy).strong().color(theme.accent_color()),
+                        ),
+                    )
                     .on_hover_text(t.extra.pdf_copy_selected_tip)
-                    .clicked()
-                {
-                    ui.ctx().copy_text(self.selected_text.clone());
-                    let preview = truncate_str(&self.selected_text, 35);
-                    let copied = copied_text(&preview);
-                    *status_message = Some(copied.clone());
-                    self.copy_notification = Some((copied, Instant::now()));
+                    .on_disabled_hover_text(t.extra.copy_restricted);
+                if copy_btn.clicked() {
+                    self.copy_selected_pdf_text(ui.ctx(), status_message, lang, can_copy);
                 }
                 if ui
                     .add(
@@ -268,22 +287,12 @@ impl PdfViewState {
         can_copy: bool,
     ) {
         let t = lang.t();
-        let copied_text =
-            |preview: &str| crate::i18n::fill(t.extra.pdf_copied_prefix, &[("{preview}", preview)]);
         if !self.selected_text.is_empty() {
             let ctrl_c = ctx.input(|i| {
                 (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::C)
             });
             if ctrl_c {
-                if !can_copy {
-                    *status_message = Some(t.extra.copy_restricted.to_string());
-                } else {
-                    ctx.copy_text(self.selected_text.clone());
-                    let preview = truncate_str(&self.selected_text, 35);
-                    let copied = copied_text(&preview);
-                    *status_message = Some(copied.clone());
-                    self.copy_notification = Some((copied, Instant::now()));
-                }
+                self.copy_selected_pdf_text(ctx, status_message, lang, can_copy);
             }
         }
 
@@ -297,19 +306,16 @@ impl PdfViewState {
                 .show(ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            if ui
-                                .button(RichText::new(t.extra.pdf_copy_btn).size(12.0))
-                                .clicked()
-                            {
-                                if !can_copy {
-                                    *status_message = Some(t.extra.copy_restricted.to_string());
-                                } else {
-                                    ctx.copy_text(self.selected_text.clone());
-                                    let preview = truncate_str(&self.selected_text, 35);
-                                    let copied = copied_text(&preview);
-                                    *status_message = Some(copied.clone());
-                                    self.copy_notification = Some((copied, Instant::now()));
-                                }
+                            let popup_copy = ui
+                                .add_enabled(
+                                    can_copy,
+                                    egui::Button::new(
+                                        RichText::new(t.extra.pdf_copy_btn).size(12.0),
+                                    ),
+                                )
+                                .on_disabled_hover_text(t.extra.copy_restricted);
+                            if popup_copy.clicked() {
+                                self.copy_selected_pdf_text(ctx, status_message, lang, can_copy);
                             }
                             if ui
                                 .button(RichText::new(lang.t().translate_selection).size(12.0))

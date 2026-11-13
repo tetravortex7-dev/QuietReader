@@ -53,11 +53,14 @@ pub(super) fn render(
     {
         let t = app.settings.ui_language.t();
         app.status_message = Some(match export_library(&destination, &app.library.entries) {
-            Ok(report) => t
-                .library_export_done
-                .replace("{exported}", &report.exported.to_string())
-                .replace("{skipped}", &report.skipped.to_string())
-                .replace("{folder}", &report.destination.display().to_string()),
+            Ok(report) => format!(
+                "{}{}{}",
+                t.library_export_done
+                    .replace("{exported}", &report.exported.to_string())
+                    .replace("{skipped}", &report.skipped.to_string()),
+                crate::app::icons::STATUS_ARROW_SEP,
+                report.destination.display()
+            ),
             Err(error) => t.library_export_failed.replace("{}", &error),
         });
     }
@@ -294,19 +297,28 @@ pub(super) fn render(
                 app.password_prompt = Some(prompt_state);
             }
             Some(None) => {
+                let err_msg = app
+                    .settings
+                    .ui_language
+                    .t()
+                    .err_password_required
+                    .to_string();
                 if let Some(tab) = app
                     .tabs
                     .iter_mut()
                     .find(|t| t.file_path == prompt_state.path)
                 {
                     tab.is_loading = false;
-                    tab.load_error = Some(
-                        app.settings
-                            .ui_language
-                            .t()
-                            .err_password_required
-                            .to_string(),
-                    );
+                    tab.document = None;
+                    tab.load_error = Some(err_msg.clone());
+                }
+                if app
+                    .tabs
+                    .get(app.active_tab)
+                    .is_some_and(|t| t.file_path == prompt_state.path)
+                {
+                    app.document = None;
+                    app.status_message = Some(err_msg);
                 }
             }
             None => {

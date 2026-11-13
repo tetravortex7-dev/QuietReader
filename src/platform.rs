@@ -9,10 +9,9 @@ pub fn supports_file_association() -> bool {
     cfg!(windows)
 }
 
-pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "fb2", "epub", "mobi", "azw3", "txt", "doc", "docx", "rtf", "pdf", "djvu", "cbz", "cbr", "cb7",
-    "cbt", "md",
-];
+pub fn supported_extensions() -> &'static [&'static str] {
+    crate::document::registry::associable_extensions()
+}
 
 #[cfg(windows)]
 pub fn set_keep_screen_on(keep_on: bool) {
@@ -343,23 +342,7 @@ mod windows_registry {
             }
             let ext_dot = format!(".{ext}");
             let progid = format!("QuietReader.{ext}");
-            let content_type = match ext.as_str() {
-                "fb2" => "application/x-fictionbook+xml",
-                "epub" => "application/epub+zip",
-                "txt" => "text/plain",
-                "md" => "text/markdown",
-                "log" => "text/plain",
-                "pdf" => "application/pdf",
-                "djvu" | "djv" => "image/vnd.djvu",
-                "cbz" => "application/vnd.comicbook+zip",
-                "cbr" => "application/vnd.comicbook-rar",
-                "cb7" => "application/x-cb7",
-                "cbt" => "application/vnd.comicbook+tar",
-                "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "doc" => "application/msword",
-                "rtf" => "application/rtf",
-                _ => "application/octet-stream",
-            };
+            let content_type = crate::document::registry::mime_type_for_extension(&ext);
             let description = format_extension_description(&ext, lang);
             let friendly_name = if description.is_empty() {
                 t.extra.default_document_title

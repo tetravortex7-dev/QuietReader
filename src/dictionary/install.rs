@@ -12,19 +12,71 @@ const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 2000;
 
+pub fn sanitize_pack_id(id: &str) -> Option<String> {
+    if id.contains(['/', '\\', ':']) || id.contains("..") {
+        return None;
+    }
+    let safe: String = id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+        .collect();
+    if safe.is_empty() { None } else { Some(safe) }
+}
+
+struct LimitedWriter<W> {
+    inner: W,
+    written: u64,
+    limit: u64,
+}
+
+impl<W: Write> LimitedWriter<W> {
+    fn new(inner: W, limit: u64) -> Self {
+        Self {
+            inner,
+            written: 0,
+            limit,
+        }
+    }
+}
+
+impl<W: Write> Write for LimitedWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.written.saturating_add(buf.len() as u64) > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "dictionary archive is too large",
+            ));
+        }
+        let n = self.inner.write(buf)?;
+        self.written = self.written.saturating_add(n as u64);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+pub(crate) fn decompress_xz_limited<R: std::io::BufRead, W: Write>(
+    reader: &mut R,
+    writer: W,
+    limit: u64,
+) -> Result<u64, String> {
+    let mut limited = LimitedWriter::new(writer, limit);
+    lzma_rs::xz_decompress(reader, &mut limited)
+        .map_err(|error| format!("dictionary archive: {error}"))?;
+    limited.flush().map_err(|error| error.to_string())?;
+    Ok(limited.written)
+}
+
 pub fn install(
     entry: &CatalogEntry,
     dir: &Path,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<PathBuf, String> {
-    let safe_id: String = entry
-        .id
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
-        .collect();
-    if safe_id.is_empty() {
+    let Some(safe_id) = sanitize_pack_id(&entry.id) else {
         return Err("invalid dictionary id".to_string());
-    }
+    };
     fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     crate::platform::permissions::create_private_dir(dir);
 
@@ -44,11 +96,9 @@ pub fn install(
 
     let result = (|| -> Result<(), String> {
         let archive = File::open(&archive_path).map_err(|error| error.to_string())?;
-        let mut tar_writer =
+        let tar_writer =
             BufWriter::new(File::create(&tar_path).map_err(|error| error.to_string())?);
-        lzma_rs::xz_decompress(&mut BufReader::new(archive), &mut tar_writer)
-            .map_err(|error| format!("dictionary archive: {error}"))?;
-        tar_writer.flush().map_err(|error| error.to_string())?;
+        decompress_xz_limited(&mut BufReader::new(archive), tar_writer, MAX_UNPACKED_BYTES)?;
 
         extract_tar(&tar_path, &temp_dir)?;
         decompress_members(&temp_dir)

@@ -536,6 +536,7 @@ impl PdfViewState {
         }
 
         self.current_page = self.current_page.min(page_count.saturating_sub(1));
+        let can_copy = document.as_ref().map(|d| d.can_copy()).unwrap_or(true);
 
         ui.add_space(2.0);
         self.render_toolbar(
@@ -547,6 +548,7 @@ impl PdfViewState {
             format_label,
             lang,
             smart_scan_allowed,
+            can_copy,
             on_pro_required,
         );
         ui.add_space(4.0);

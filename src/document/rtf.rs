@@ -65,23 +65,23 @@ impl RtfDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path = path.as_ref();
         let meta = std::fs::metadata(path)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать файл RTF: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_read("RTF", &e)))?;
         if meta.len() > crate::document::MAX_TOTAL_UNPACK_BYTES {
             return Err(DocumentError::LimitExceeded(
-                "Размер файла RTF превышает лимит".to_string(),
+                crate::document::errors::file_too_large("RTF"),
             ));
         }
 
         let mut file = File::open(path)
-            .map_err(|e| DocumentError::Io(format!("Не удалось открыть файл RTF: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_open("RTF", &e)))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
-            .map_err(|e| DocumentError::Io(format!("Ошибка чтения файла RTF: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_read("RTF", &e)))?;
 
         let default_title = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Документ RTF");
+            .unwrap_or(crate::document::errors::tokens::TITLE_RTF);
 
         Self::from_bytes(&bytes, default_title)
     }
@@ -89,16 +89,19 @@ impl RtfDocument {
     pub fn from_bytes(bytes: &[u8], default_title: &str) -> Result<Self, DocumentError> {
         if bytes.len() > crate::document::MAX_TOTAL_UNPACK_BYTES as usize {
             return Err(DocumentError::LimitExceeded(
-                "Размер данных RTF превышает лимит".to_string(),
+                crate::document::errors::data_too_large("RTF"),
             ));
         }
+        validate_rtf_header(bytes)?;
 
-        let (prepared, footnotes) = preprocess_notes(bytes, b"\\footnote", "rtf_fn_");
-        let (prepared, endnotes) = preprocess_notes(&prepared, b"\\endnote", "rtf_en_");
+        let doc_encoding = detect_rtf_encoding(bytes);
+        let (prepared, footnotes) = preprocess_notes(bytes, b"\\footnote", "rtf_fn_", doc_encoding);
+        let (prepared, endnotes) =
+            preprocess_notes(&prepared, b"\\endnote", "rtf_en_", doc_encoding);
         let mut notes = footnotes;
         notes.extend(endnotes);
-        let header_text = extract_rtf_groups(bytes, b"\\header");
-        let footer_text = extract_rtf_groups(bytes, b"\\footer");
+        let header_text = extract_rtf_groups(bytes, b"\\header", doc_encoding);
+        let footer_text = extract_rtf_groups(bytes, b"\\footer", doc_encoding);
         let (mut chapters, toc, metadata) = parse_rtf(&prepared, default_title)?;
         let note_locations = crate::document::build_notes_appendix(&mut chapters, &notes);
 
@@ -112,6 +115,155 @@ impl RtfDocument {
             footer_text,
         })
     }
+}
+
+fn validate_rtf_header(bytes: &[u8]) -> Result<(), DocumentError> {
+    let without_bom = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let mut start = 0;
+    while start < without_bom.len() && matches!(without_bom[start], b' ' | b'\t' | b'\r' | b'\n') {
+        start += 1;
+    }
+    let trimmed = &without_bom[start..];
+    if trimmed.len() < 5 {
+        return Err(DocumentError::Corrupted(
+            crate::document::errors::file_too_short("RTF"),
+        ));
+    }
+    if !trimmed.starts_with(b"{\\rtf") {
+        return Err(DocumentError::Corrupted(
+            crate::document::errors::invalid_header("RTF", "{\\rtf}"),
+        ));
+    }
+    Ok(())
+}
+
+fn encoding_from_codepage(cpg: i32) -> &'static encoding_rs::Encoding {
+    match cpg {
+        1250 => encoding_rs::WINDOWS_1250,
+        1251 => encoding_rs::WINDOWS_1251,
+        1252 => encoding_rs::WINDOWS_1252,
+        1253 => encoding_rs::WINDOWS_1253,
+        1254 => encoding_rs::WINDOWS_1254,
+        1255 => encoding_rs::WINDOWS_1255,
+        1256 => encoding_rs::WINDOWS_1256,
+        1257 => encoding_rs::WINDOWS_1257,
+        1258 => encoding_rs::WINDOWS_1258,
+        874 => encoding_rs::WINDOWS_874,
+        932 => encoding_rs::SHIFT_JIS,
+        936 | 54936 => encoding_rs::GBK,
+        949 => encoding_rs::EUC_KR,
+        950 => encoding_rs::BIG5,
+        20866 => encoding_rs::KOI8_R,
+        21866 => encoding_rs::KOI8_U,
+        28595 => encoding_rs::ISO_8859_5,
+        65001 => encoding_rs::UTF_8,
+        _ => encoding_rs::WINDOWS_1252,
+    }
+}
+
+fn read_rtf_control_word<'a>(bytes: &'a [u8], i: &mut usize) -> (&'a str, Option<i32>) {
+    let len = bytes.len();
+    let start = *i;
+    while *i < len && bytes[*i].is_ascii_alphabetic() {
+        *i += 1;
+    }
+    let word = std::str::from_utf8(&bytes[start..*i]).unwrap_or("");
+    let p_start = *i;
+    let mut has_param = false;
+    if *i < len && bytes[*i] == b'-' {
+        *i += 1;
+    }
+    while *i < len && bytes[*i].is_ascii_digit() {
+        has_param = true;
+        *i += 1;
+    }
+    let param = if has_param {
+        std::str::from_utf8(&bytes[p_start..*i])
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok())
+    } else {
+        None
+    };
+    if *i < len && bytes[*i] == b' ' {
+        *i += 1;
+    }
+    (word, param)
+}
+
+fn detect_rtf_encoding(bytes: &[u8]) -> &'static encoding_rs::Encoding {
+    let limit = bytes.len().min(4096);
+    let header = &bytes[..limit];
+    let mut enc = encoding_rs::WINDOWS_1252;
+    let mut i = 0;
+    while i < header.len() {
+        if header[i] == b'\\' {
+            i += 1;
+            if i >= header.len() {
+                break;
+            }
+            if header[i].is_ascii_alphabetic() {
+                let (word, param) = read_rtf_control_word(header, &mut i);
+                if word == "mac" {
+                    enc = encoding_rs::MACINTOSH;
+                } else if word == "ansicpg"
+                    && let Some(cpg) = param
+                {
+                    return encoding_from_codepage(cpg);
+                }
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    enc
+}
+
+fn skip_rtf_unicode_fallback(bytes: &[u8], i: &mut usize, skip_count: usize) {
+    let len = bytes.len();
+    let mut skipped = 0;
+    while skipped < skip_count && *i < len {
+        let b = bytes[*i];
+        if b == b'\r' || b == b'\n' {
+            *i += 1;
+            continue;
+        }
+        if b == b'{' || b == b'}' {
+            break;
+        }
+        if b == b'\\' {
+            if *i + 3 < len && bytes[*i + 1] == b'\'' {
+                *i += 4;
+                skipped += 1;
+            } else if *i + 1 < len && matches!(bytes[*i + 1], b'\\' | b'{' | b'}' | b'~' | b'_') {
+                *i += 2;
+                skipped += 1;
+            } else {
+                break;
+            }
+        } else {
+            *i += 1;
+            skipped += 1;
+        }
+    }
+}
+
+fn decode_rtf_unicode_param(v: i32, pending_surrogate: &mut Option<u16>) -> Option<char> {
+    let code = if v < 0 { (v + 65536) as u32 } else { v as u32 };
+    if (0xD800..=0xDBFF).contains(&code) {
+        *pending_surrogate = Some(code as u16);
+        return None;
+    }
+    if (0xDC00..=0xDFFF).contains(&code) {
+        if let Some(hi) = pending_surrogate.take() {
+            let full = 0x10000 + ((((hi as u32) - 0xD800) << 10) | (code - 0xDC00));
+            return char::from_u32(full);
+        }
+        return None;
+    }
+    *pending_surrogate = None;
+    char::from_u32(code)
 }
 
 #[derive(Clone, Copy)]
@@ -128,15 +280,30 @@ struct RtfState {
     uc: usize,
 }
 
+fn current_dest(stack: &[RtfState]) -> Destination {
+    stack.last().map(|s| s.dest).unwrap_or(Destination::Normal)
+}
+
+fn push_dest_char(
+    dest: Destination,
+    ch: char,
+    cur_p: &mut String,
+    tit: &mut String,
+    aut: &mut String,
+) {
+    match dest {
+        Destination::Normal => cur_p.push(ch),
+        Destination::Title => tit.push(ch),
+        Destination::Author => aut.push(ch),
+        Destination::Skip => {}
+    }
+}
+
 fn parse_rtf(
     bytes: &[u8],
     default_title: &str,
 ) -> Result<(Vec<BookChapter>, Vec<TocItem>, BookMetadata), DocumentError> {
-    if bytes.len() < 5 {
-        return Err(DocumentError::Corrupted(
-            "Файл слишком короткий для RTF".to_string(),
-        ));
-    }
+    validate_rtf_header(bytes)?;
 
     let mut encoding: &'static encoding_rs::Encoding = encoding_rs::WINDOWS_1252;
     let mut title = String::new();
@@ -146,12 +313,12 @@ fn parse_rtf(
     let mut current_paras: Vec<String> = Vec::new();
     let mut current_para = String::new();
     let mut hex_buffer: Vec<u8> = Vec::new();
+    let mut pending_surrogate: Option<u16> = None;
 
-    let mut state_stack: Vec<RtfState> = Vec::new();
-    state_stack.push(RtfState {
+    let mut state_stack = vec![RtfState {
         dest: Destination::Normal,
         uc: 1,
-    });
+    }];
 
     let flush_hex = |hex_buf: &mut Vec<u8>,
                      enc: &'static encoding_rs::Encoding,
@@ -185,15 +352,13 @@ fn parse_rtf(
 
     while i < len {
         let b = bytes[i];
+        let dest = current_dest(&state_stack);
         if b == b'{' {
             flush_hex(
                 &mut hex_buffer,
                 encoding,
                 &mut current_para,
-                state_stack
-                    .last()
-                    .map(|s| s.dest)
-                    .unwrap_or(Destination::Normal),
+                dest,
                 &mut title,
                 &mut author,
             );
@@ -208,10 +373,7 @@ fn parse_rtf(
                 &mut hex_buffer,
                 encoding,
                 &mut current_para,
-                state_stack
-                    .last()
-                    .map(|s| s.dest)
-                    .unwrap_or(Destination::Normal),
+                dest,
                 &mut title,
                 &mut author,
             );
@@ -224,10 +386,7 @@ fn parse_rtf(
                 &mut hex_buffer,
                 encoding,
                 &mut current_para,
-                state_stack
-                    .last()
-                    .map(|s| s.dest)
-                    .unwrap_or(Destination::Normal),
+                dest,
                 &mut title,
                 &mut author,
             );
@@ -237,16 +396,13 @@ fn parse_rtf(
             }
             let next = bytes[i];
             if next == b'\\' || next == b'{' || next == b'}' {
-                let current_dest = state_stack
-                    .last()
-                    .map(|s| s.dest)
-                    .unwrap_or(Destination::Normal);
-                match current_dest {
-                    Destination::Normal => current_para.push(next as char),
-                    Destination::Title => title.push(next as char),
-                    Destination::Author => author.push(next as char),
-                    Destination::Skip => {}
-                }
+                push_dest_char(
+                    dest,
+                    next as char,
+                    &mut current_para,
+                    &mut title,
+                    &mut author,
+                );
                 i += 1;
             } else if next == b'\'' {
                 i += 1;
@@ -254,15 +410,10 @@ fn parse_rtf(
                     let h1 = bytes[i];
                     let h2 = bytes[i + 1];
                     i += 2;
-                    if let (Some(d1), Some(d2)) = (hex_digit(h1), hex_digit(h2)) {
-                        let byte_val = (d1 << 4) | d2;
-                        let current_dest = state_stack
-                            .last()
-                            .map(|s| s.dest)
-                            .unwrap_or(Destination::Normal);
-                        if !matches!(current_dest, Destination::Skip) {
-                            hex_buffer.push(byte_val);
-                        }
+                    if !matches!(dest, Destination::Skip)
+                        && let (Some(d1), Some(d2)) = (hex_digit(h1), hex_digit(h2))
+                    {
+                        hex_buffer.push((d1 << 4) | d2);
                     }
                 }
             } else if next == b'*' {
@@ -271,63 +422,39 @@ fn parse_rtf(
                 }
                 i += 1;
             } else if next == b'~' {
-                current_para.push('\u{00A0}');
+                push_dest_char(dest, '\u{00A0}', &mut current_para, &mut title, &mut author);
                 i += 1;
             } else if next == b'_' {
-                current_para.push('-');
+                push_dest_char(dest, '-', &mut current_para, &mut title, &mut author);
+                i += 1;
+            } else if next == b'\r' || next == b'\n' {
+                if matches!(dest, Destination::Normal) {
+                    flush_paragraph(&mut current_para, &mut current_paras);
+                }
                 i += 1;
             } else if next.is_ascii_alphabetic() {
-                let start = i;
-                while i < len && bytes[i].is_ascii_alphabetic() {
-                    i += 1;
-                }
-                let word = String::from_utf8_lossy(&bytes[start..i]).to_string();
-
-                let mut has_param = false;
-                let mut param_neg = false;
-                let param_start = i;
-                if i < len && bytes[i] == b'-' {
-                    param_neg = true;
-                    i += 1;
-                }
-                while i < len && bytes[i].is_ascii_digit() {
-                    has_param = true;
-                    i += 1;
-                }
-                let param_val: Option<i32> = if has_param {
-                    let s = String::from_utf8_lossy(&bytes[param_start..i]);
-                    s.parse::<i32>().ok()
-                } else if param_neg {
-                    None
-                } else {
-                    None
-                };
-
-                if i < len && bytes[i] == b' ' {
-                    i += 1;
-                }
-
-                match word.as_str() {
+                let (word, param_val) = read_rtf_control_word(bytes, &mut i);
+                match word {
+                    "ansi" => encoding = encoding_rs::WINDOWS_1252,
+                    "mac" => encoding = encoding_rs::MACINTOSH,
                     "ansicpg" => {
                         if let Some(cpg) = param_val {
-                            encoding = match cpg {
-                                1251 => encoding_rs::WINDOWS_1251,
-                                1250 => encoding_rs::WINDOWS_1250,
-                                1252 => encoding_rs::WINDOWS_1252,
-                                1253 => encoding_rs::WINDOWS_1253,
-                                1254 => encoding_rs::WINDOWS_1254,
-                                1257 => encoding_rs::WINDOWS_1257,
-                                932 => encoding_rs::SHIFT_JIS,
-                                936 => encoding_rs::GBK,
-                                950 => encoding_rs::BIG5,
-                                949 => encoding_rs::EUC_KR,
-                                65001 => encoding_rs::UTF_8,
-                                _ => encoding_rs::WINDOWS_1252,
-                            };
+                            encoding = encoding_from_codepage(cpg);
+                        }
+                    }
+                    "bin" => {
+                        if let Some(v) = param_val
+                            && v > 0
+                        {
+                            i = i.saturating_add(v as usize).min(len);
                         }
                     }
                     "fonttbl" | "colortbl" | "stylesheet" | "pict" | "object" | "header"
-                    | "footer" | "footnote" | "endnote" => {
+                    | "footer" | "headerl" | "headerr" | "headerf" | "footerl" | "footerr"
+                    | "footerf" | "footnote" | "endnote" | "operator" | "company" | "creatim"
+                    | "revtim" | "printim" | "buptim" | "doccomm" | "fldinst" | "listtable"
+                    | "listoverridetable" | "revtbl" | "rsidtbl" | "xmlnstbl" | "themedata"
+                    | "colorschememapping" | "latentstyles" | "datastore" | "pgdsctbl" => {
                         if let Some(top) = state_stack.last_mut() {
                             top.dest = Destination::Skip;
                         }
@@ -343,59 +470,50 @@ fn parse_rtf(
                         }
                     }
                     "uc" => {
-                        if let Some(v) = param_val {
-                            if let Some(top) = state_stack.last_mut() {
-                                top.uc = v.max(0) as usize;
-                            }
+                        if let Some(v) = param_val
+                            && let Some(top) = state_stack.last_mut()
+                        {
+                            top.uc = v.max(0) as usize;
                         }
                     }
                     "u" => {
                         if let Some(v) = param_val {
-                            let code = if v < 0 { (v + 65536) as u32 } else { v as u32 };
-                            if let Some(ch) = char::from_u32(code) {
-                                let current_dest = state_stack
-                                    .last()
-                                    .map(|s| s.dest)
-                                    .unwrap_or(Destination::Normal);
-                                match current_dest {
-                                    Destination::Normal => current_para.push(ch),
-                                    Destination::Title => title.push(ch),
-                                    Destination::Author => author.push(ch),
-                                    Destination::Skip => {}
-                                }
+                            if let Some(ch) = decode_rtf_unicode_param(v, &mut pending_surrogate) {
+                                push_dest_char(
+                                    dest,
+                                    ch,
+                                    &mut current_para,
+                                    &mut title,
+                                    &mut author,
+                                );
                             }
                             let skip_count = state_stack.last().map(|s| s.uc).unwrap_or(1);
-                            let mut skipped = 0;
-                            while skipped < skip_count && i < len {
-                                if bytes[i] == b'\\' {
-                                    if i + 1 < len && bytes[i + 1] == b'\'' {
-                                        i += 4;
-                                        skipped += 1;
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    i += 1;
-                                    skipped += 1;
-                                }
-                            }
+                            skip_rtf_unicode_fallback(bytes, &mut i, skip_count);
                         }
                     }
                     "par" | "line" => {
-                        flush_paragraph(&mut current_para, &mut current_paras);
+                        if matches!(dest, Destination::Normal) {
+                            flush_paragraph(&mut current_para, &mut current_paras);
+                        }
                     }
                     "page" | "sect" => {
-                        flush_paragraph(&mut current_para, &mut current_paras);
-                        if !current_paras.is_empty() {
-                            chapters.push(BookChapter {
-                                id: Some(format!("chap_{}", chapters.len())),
-                                title: format!("Раздел {}", chapters.len() + 1),
-                                paragraphs: std::mem::take(&mut current_paras),
-                            });
+                        if matches!(dest, Destination::Normal) {
+                            flush_paragraph(&mut current_para, &mut current_paras);
+                            if !current_paras.is_empty() {
+                                chapters.push(BookChapter {
+                                    id: Some(format!("chap_{}", chapters.len())),
+                                    title: crate::document::errors::tokens::section(
+                                        chapters.len() + 1,
+                                    ),
+                                    paragraphs: std::mem::take(&mut current_paras),
+                                });
+                            }
                         }
                     }
                     "tab" => {
-                        current_para.push('\t');
+                        if matches!(dest, Destination::Normal) {
+                            current_para.push('\t');
+                        }
                     }
                     _ => {}
                 }
@@ -405,24 +523,19 @@ fn parse_rtf(
         } else if b == b'\r' || b == b'\n' {
             i += 1;
         } else {
-            let current_dest = state_stack
-                .last()
-                .map(|s| s.dest)
-                .unwrap_or(Destination::Normal);
-            if !matches!(current_dest, Destination::Skip) {
-                flush_hex(
-                    &mut hex_buffer,
-                    encoding,
-                    &mut current_para,
-                    current_dest,
-                    &mut title,
-                    &mut author,
-                );
-                match current_dest {
-                    Destination::Normal => current_para.push(b as char),
-                    Destination::Title => title.push(b as char),
-                    Destination::Author => author.push(b as char),
-                    Destination::Skip => {}
+            if !matches!(dest, Destination::Skip) {
+                if b >= 0x80 {
+                    hex_buffer.push(b);
+                } else {
+                    flush_hex(
+                        &mut hex_buffer,
+                        encoding,
+                        &mut current_para,
+                        dest,
+                        &mut title,
+                        &mut author,
+                    );
+                    push_dest_char(dest, b as char, &mut current_para, &mut title, &mut author);
                 }
             }
             i += 1;
@@ -447,7 +560,7 @@ fn parse_rtf(
         let chap_title = if chap_idx == 0 {
             default_title.to_string()
         } else {
-            format!("Раздел {}", chap_idx + 1)
+            crate::document::errors::tokens::section(chap_idx + 1)
         };
         chapters.push(BookChapter {
             id: Some(format!("chap_{chap_idx}")),
@@ -460,7 +573,7 @@ fn parse_rtf(
         chapters.push(BookChapter {
             id: Some("chap_0".to_string()),
             title: default_title.to_string(),
-            paragraphs: vec!["Документ не содержит текста.".to_string()],
+            paragraphs: vec![crate::document::errors::tokens::NO_TEXT.to_string()],
         });
     }
 
@@ -483,7 +596,7 @@ fn parse_rtf(
             title.trim().to_string()
         },
         author: if author.trim().is_empty() {
-            "Неизвестный автор".to_string()
+            crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string()
         } else {
             author.trim().to_string()
         },
@@ -496,6 +609,7 @@ fn preprocess_notes(
     bytes: &[u8],
     needle: &[u8],
     prefix: &str,
+    encoding: &'static encoding_rs::Encoding,
 ) -> (Vec<u8>, std::collections::HashMap<String, String>) {
     let mut output = Vec::with_capacity(bytes.len());
     let mut notes = std::collections::HashMap::new();
@@ -503,7 +617,7 @@ fn preprocess_notes(
     let mut search = 0;
     let mut counter = 0usize;
 
-    while let Some(relative) = find_bytes(&bytes[search..], needle) {
+    while let Some(relative) = find_rtf_control_word(&bytes[search..], needle) {
         let position = search + relative;
         let Some(group_start) = find_group_start(bytes, position) else {
             search = position + needle.len();
@@ -512,7 +626,11 @@ fn preprocess_notes(
         let Some(group_end) = find_group_end(bytes, group_start) else {
             break;
         };
-        let text = rtf_group_text(&bytes[position + needle.len()..group_end]);
+        let mut content_start = position + needle.len();
+        if content_start < group_end && bytes[content_start] == b' ' {
+            content_start += 1;
+        }
+        let text = rtf_group_text(&bytes[content_start..group_end], encoding);
         if !text.is_empty() {
             let id = format!("{prefix}{counter}");
             counter += 1;
@@ -530,10 +648,14 @@ fn preprocess_notes(
     (output, notes)
 }
 
-fn extract_rtf_groups(bytes: &[u8], needle: &[u8]) -> Option<String> {
+fn extract_rtf_groups(
+    bytes: &[u8],
+    needle: &[u8],
+    encoding: &'static encoding_rs::Encoding,
+) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut search = 0;
-    while let Some(relative) = find_bytes(&bytes[search..], needle) {
+    while let Some(relative) = find_rtf_control_word(&bytes[search..], needle) {
         let position = search + relative;
         let Some(start) = find_group_start(bytes, position) else {
             search = position + needle.len();
@@ -543,10 +665,10 @@ fn extract_rtf_groups(bytes: &[u8], needle: &[u8]) -> Option<String> {
             break;
         };
         let mut text_start = position + needle.len();
-        while text_start < end && bytes[text_start].is_ascii_alphabetic() {
+        if text_start < end && bytes[text_start] == b' ' {
             text_start += 1;
         }
-        let text = rtf_group_text(&bytes[text_start..end]);
+        let text = rtf_group_text(&bytes[text_start..end], encoding);
         if !text.is_empty() && !parts.iter().any(|part| part == &text) {
             parts.push(text);
         }
@@ -557,6 +679,23 @@ fn extract_rtf_groups(bytes: &[u8], needle: &[u8]) -> Option<String> {
     } else {
         Some(parts.join(" • "))
     }
+}
+
+fn find_rtf_control_word(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut offset = 0;
+    while let Some(rel) = find_bytes(&haystack[offset..], needle) {
+        let pos = offset + rel;
+        let after = pos + needle.len();
+        let word_boundary = after >= haystack.len() || !haystack[after].is_ascii_alphabetic();
+        if word_boundary && !is_escaped(haystack, pos) {
+            return Some(pos);
+        }
+        offset = pos + 1;
+    }
+    None
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -618,70 +757,132 @@ fn find_group_end(bytes: &[u8], start: usize) -> Option<usize> {
     None
 }
 
-fn rtf_group_text(bytes: &[u8]) -> String {
+fn flush_group_hex(
+    hex_buffer: &mut Vec<u8>,
+    encoding: &'static encoding_rs::Encoding,
+    output: &mut String,
+) {
+    if hex_buffer.is_empty() {
+        return;
+    }
+    let (decoded, _, _) = encoding.decode(hex_buffer);
+    output.push_str(&decoded);
+    hex_buffer.clear();
+}
+
+fn rtf_group_text(bytes: &[u8], encoding: &'static encoding_rs::Encoding) -> String {
     let mut output = String::new();
+    let mut hex_buffer: Vec<u8> = Vec::new();
+    let mut stack: Vec<(usize, bool)> = vec![(1, false)];
+    let mut pending_surrogate: Option<u16> = None;
     let mut index = 0;
-    while index < bytes.len() {
+    let len = bytes.len();
+
+    while index < len {
+        let is_skip = stack.last().is_some_and(|(_, skip)| *skip);
         match bytes[index] {
-            b'\\' => {
+            b'{' => {
+                flush_group_hex(&mut hex_buffer, encoding, &mut output);
+                let top = stack.last().copied().unwrap_or((1, false));
+                stack.push(top);
                 index += 1;
-                if index >= bytes.len() {
+            }
+            b'}' => {
+                flush_group_hex(&mut hex_buffer, encoding, &mut output);
+                if stack.len() > 1 {
+                    stack.pop();
+                }
+                index += 1;
+            }
+            b'\\' => {
+                flush_group_hex(&mut hex_buffer, encoding, &mut output);
+                index += 1;
+                if index >= len {
                     break;
                 }
                 match bytes[index] {
                     b'\\' | b'{' | b'}' => {
-                        output.push(bytes[index] as char);
+                        if !is_skip {
+                            output.push(bytes[index] as char);
+                        }
+                        index += 1;
+                    }
+                    b'*' => {
+                        if let Some(top) = stack.last_mut() {
+                            top.1 = true;
+                        }
+                        index += 1;
+                    }
+                    b'~' => {
+                        if !is_skip {
+                            output.push('\u{00A0}');
+                        }
+                        index += 1;
+                    }
+                    b'_' => {
+                        if !is_skip {
+                            output.push('-');
+                        }
+                        index += 1;
+                    }
+                    b'\r' | b'\n' => {
+                        if !is_skip && !output.ends_with(' ') {
+                            output.push(' ');
+                        }
                         index += 1;
                     }
                     b'\'' => {
                         index += 1;
-                        if index + 1 < bytes.len() {
+                        if index + 1 < len {
                             let high = hex_digit(bytes[index]);
                             let low = hex_digit(bytes[index + 1]);
-                            if let (Some(high), Some(low)) = (high, low) {
-                                output.push(((high << 4) | low) as char);
+                            if !is_skip && let (Some(high), Some(low)) = (high, low) {
+                                hex_buffer.push((high << 4) | low);
                             }
                             index += 2;
                         }
                     }
-                    b'u' => {
-                        index += 1;
-                        let start = index;
-                        if index < bytes.len() && bytes[index] == b'-' {
-                            index += 1;
-                        }
-                        while index < bytes.len() && bytes[index].is_ascii_digit() {
-                            index += 1;
-                        }
-                        if let Ok(code) = std::str::from_utf8(&bytes[start..index])
-                            .unwrap_or("")
-                            .parse::<i32>()
-                        {
-                            let code = if code < 0 { code + 65536 } else { code };
-                            if let Some(ch) = char::from_u32(code as u32) {
-                                output.push(ch);
-                            }
-                        }
-                        if index < bytes.len() && bytes[index] == b' ' {
-                            index += 1;
-                        }
-                    }
                     byte if byte.is_ascii_alphabetic() => {
-                        let start = index;
-                        while index < bytes.len() && bytes[index].is_ascii_alphabetic() {
-                            index += 1;
-                        }
-                        let word = std::str::from_utf8(&bytes[start..index]).unwrap_or("");
-                        while index < bytes.len()
-                            && (bytes[index].is_ascii_digit() || bytes[index] == b'-')
-                        {
-                            index += 1;
-                        }
-                        if matches!(word, "par" | "line" | "tab") && !output.ends_with(' ') {
-                            output.push(' ');
-                        }
-                        if index < bytes.len() && bytes[index] == b' ' {
-                            index += 1;
+                        let (word, param) = read_rtf_control_word(bytes, &mut index);
+                        match word {
+                            "bin" => {
+                                if let Some(v) = param
+                                    && v > 0
+                                {
+                                    index = index.saturating_add(v as usize).min(len);
+                                }
+                            }
+                            "fonttbl" | "colortbl" | "stylesheet" | "pict" | "object"
+                            | "fldinst" | "bkmkstart" | "bkmkend" => {
+                                if let Some(top) = stack.last_mut() {
+                                    top.1 = true;
+                                }
+                            }
+                            "uc" => {
+                                if let Some(v) = param
+                                    && let Some(top) = stack.last_mut()
+                                {
+                                    top.0 = v.max(0) as usize;
+                                }
+                            }
+                            "u" => {
+                                if let Some(v) = param {
+                                    if !is_skip
+                                        && let Some(ch) =
+                                            decode_rtf_unicode_param(v, &mut pending_surrogate)
+                                    {
+                                        output.push(ch);
+                                    }
+                                    let skip_count = stack.last().map(|s| s.0).unwrap_or(1);
+                                    skip_rtf_unicode_fallback(bytes, &mut index, skip_count);
+                                }
+                            }
+                            "par" | "line" | "tab" => {
+                                if !is_skip && !output.ends_with(' ') {
+                                    output.push(' ');
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     _ => {
@@ -689,13 +890,24 @@ fn rtf_group_text(bytes: &[u8]) -> String {
                     }
                 }
             }
-            b'{' | b'}' => index += 1,
+            b'\r' | b'\n' => {
+                index += 1;
+            }
             byte => {
-                output.push(byte as char);
+                if !is_skip {
+                    if byte >= 0x80 {
+                        hex_buffer.push(byte);
+                    } else {
+                        flush_group_hex(&mut hex_buffer, encoding, &mut output);
+                        output.push(byte as char);
+                    }
+                }
                 index += 1;
             }
         }
     }
+
+    flush_group_hex(&mut hex_buffer, encoding, &mut output);
     output.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

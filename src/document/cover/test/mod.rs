@@ -252,3 +252,27 @@ fn test_comic_folder_uses_first_naturally_sorted_image() {
 
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+#[test]
+fn test_fb2_zip_cover_enforces_streaming_size_limit() {
+    let directory = unique_test_dir("cover_fb2_zip_limit");
+    let book = directory.join("book.fb2.zip");
+    let cover = image_bytes(40, 60, [20, 120, 220, 255]);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&cover);
+    let fb2 = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description><title-info><book-title>Test</book-title><coverpage><image l:href="cover.png"/></coverpage></title-info></description>
+  <binary id="cover.png" content-type="image/png">{encoded}</binary>
+</FictionBook>"#
+    );
+    write_zip(&book, &[("book.fb2", fb2.as_bytes())]);
+
+    let ok = crate::document::cover::fb2_cover_with_limit(&book, fb2.len() as u64);
+    assert!(ok.is_some());
+
+    let rejected = crate::document::cover::fb2_cover_with_limit(&book, (fb2.len() - 1) as u64);
+    assert!(rejected.is_none());
+
+    let _ = std::fs::remove_dir_all(&directory);
+}

@@ -44,7 +44,17 @@ pub fn render_reading_rhythm_panel(
             } else {
                 Color32::from_rgb(72, 187, 120)
             };
-            let badge_w = 88.0;
+            let badge_font = egui::FontId::proportional(10.5);
+            let badge_text_w = ui.fonts_mut(|f| {
+                f.layout_no_wrap(
+                    t.library_rhythm_local.to_string(),
+                    badge_font.clone(),
+                    shield_color,
+                )
+                .size()
+                .x
+            });
+            let badge_w = (badge_text_w + 30.0).max(88.0);
             let badge_rect = Rect::from_min_size(
                 Pos2::new(header_rect.max.x - badge_w, header_rect.center().y - 10.0),
                 Vec2::new(badge_w, 20.0),
@@ -60,7 +70,7 @@ pub fn render_reading_rhythm_panel(
                 Pos2::new(badge_rect.min.x + 23.0, badge_rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 t.library_rhythm_local,
-                egui::FontId::proportional(10.5),
+                badge_font,
                 shield_color,
             );
 
@@ -146,15 +156,19 @@ pub fn render_reading_rhythm_panel(
             };
             let completed_text = t.library_goal_completed;
             let text_font = egui::FontId::proportional(11.0);
-            let text_w = completed_text.len() as f32 * 6.0;
+            let text_w = ui.fonts_mut(|f| {
+                f.layout_no_wrap(completed_text.to_string(), text_font.clone(), check_color)
+                    .size()
+                    .x
+            });
             let check_icon_rect = Rect::from_center_size(
-                Pos2::new(footer_rect.max.x - text_w - 12.0, footer_rect.center().y),
+                Pos2::new(footer_rect.max.x - text_w - 10.0, footer_rect.center().y),
                 Vec2::splat(12.0),
             );
             paint_icon(ui.painter(), Icon::Check, check_icon_rect, check_color);
             ui.painter().text(
-                Pos2::new(footer_rect.max.x - text_w - 2.0, footer_rect.center().y),
-                egui::Align2::LEFT_CENTER,
+                footer_rect.right_center(),
+                egui::Align2::RIGHT_CENTER,
                 completed_text,
                 text_font,
                 check_color,
@@ -263,7 +277,15 @@ fn render_sparkline_card(
             ui.add_space(6.0);
 
             let today = unix_day_index(crate::core::license::unix_now());
-            let day_labels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+            let day_labels = [
+                t.extra.weekday_mon,
+                t.extra.weekday_tue,
+                t.extra.weekday_wed,
+                t.extra.weekday_thu,
+                t.extra.weekday_fri,
+                t.extra.weekday_sat,
+                t.extra.weekday_sun,
+            ];
 
             let chart_height = 40.0;
             let (chart_rect, _) = ui.allocate_exact_size(

@@ -33,70 +33,42 @@ pub fn ensure_welcome_book(library_path: &Path, library: &mut LibraryStore) -> b
     )
 }
 
-pub fn resolve_books_dir() -> PathBuf {
-    let repo_books = PathBuf::from(r"C:\Users\Almas\Documents\QuietReader\books");
-    if repo_books.exists() {
-        return repo_books;
-    }
+pub fn resolve_books_dir() -> Option<PathBuf> {
+    let exe_path = std::env::current_exe().ok();
+    let current_dir = std::env::current_dir().ok();
+    resolve_books_dir_from(exe_path.as_deref(), current_dir.as_deref())
+}
+
+pub(crate) fn resolve_books_dir_from(
+    exe_path: Option<&Path>,
+    current_dir: Option<&Path>,
+) -> Option<PathBuf> {
     let candidates = [
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("books"))),
-        std::env::current_exe().ok().and_then(|p| {
+        exe_path.and_then(|p| p.parent().map(|d| d.join("books"))),
+        exe_path.and_then(|p| {
             p.parent()
                 .and_then(|p| p.parent())
                 .and_then(|p| p.parent())
                 .map(|d| d.join("books"))
         }),
-        std::env::current_dir().ok().map(|d| d.join("books")),
-        Some(PathBuf::from("books")),
+        current_dir.map(|d| d.join("books")),
+        current_dir.is_none().then(|| PathBuf::from("books")),
     ];
-    for cand in candidates.into_iter().flatten() {
-        if cand.exists() {
-            return cand;
-        }
-    }
-    repo_books
+    candidates.into_iter().flatten().find(|cand| cand.is_dir())
 }
 
 pub fn ensure_cozy_showcase_library(library: &mut LibraryStore) -> bool {
-    let full_books_dir = resolve_books_dir();
-    let now = crate::core::license::unix_now();
-    let day = crate::core::library::unix_day_index(now);
-
-    let first_is_cities = library
-        .entries
-        .iter()
-        .any(|e| e.title == "Невидимые города");
-    let has_lavender = library
-        .entries
-        .iter()
-        .any(|e| e.title == "Лавандовая комната");
-
-    let reading_count = library
-        .entries
-        .iter()
-        .filter(|e| e.status == LibraryReadingStatus::Reading)
-        .count();
-    let finished_count = library
-        .entries
-        .iter()
-        .filter(|e| e.status == LibraryReadingStatus::Finished)
-        .count();
-
-    if first_is_cities
-        && has_lavender
-        && library.entries.len() == 48
-        && reading_count == 3
-        && finished_count == 12
-        && library.current_streak_days(day) >= 14
-        && (library.total_reading_minutes() as f32 / 60.0 - 38.5).abs() < 0.2
-        && library.mode == LibraryMode::Shelf
-        && library.shelf_view == ShelfViewMode::Standard
-        && library.design == UiDesignMode::Cozy
+    if !library.entries.is_empty()
+        || !library.daily_reading_seconds.is_empty()
+        || library.mode == LibraryMode::ReaderOnly
     {
         return false;
     }
+    let Some(full_books_dir) = resolve_books_dir() else {
+        return false;
+    };
+    let now = crate::core::license::unix_now();
+    let day = crate::core::library::unix_day_index(now);
 
     library.mode = LibraryMode::Shelf;
     library.shelf_view = ShelfViewMode::Standard;

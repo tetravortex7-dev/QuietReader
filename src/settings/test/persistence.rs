@@ -434,10 +434,16 @@ fn test_library_pin_and_saved_words() {
     assert!(settings.library_pin_hash.as_deref().unwrap().contains(':'));
 
     settings.set_library_pin("987654");
+    assert!(settings.verify_library_pin("1234"));
+    assert!(!settings.verify_library_pin("987654"));
+
+    assert!(!settings.clear_library_pin("wrong"));
+    assert!(settings.clear_library_pin("1234"));
+    settings.set_library_pin("987654");
     assert!(settings.verify_library_pin("987654"));
     assert!(!settings.verify_library_pin("1234"));
 
-    settings.clear_library_pin();
+    assert!(settings.clear_library_pin("987654"));
     assert!(!settings.has_library_pin());
     assert!(settings.verify_library_pin("1234"));
 
@@ -537,5 +543,46 @@ fn portable_mode_resolves_and_persists_settings() {
     assert!(loaded.rsvp_auto_accelerate);
 
     AppSettings::set_portable(false);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_window_state_with_scale_persistence_and_legacy_fallback() {
+    let dir = unique_test_dir("window_scale");
+    let path = dir.join("settings.json");
+
+    let legacy_json =
+        r#"{"window":{"x":120.0,"y":90.0,"width":1000.0,"height":700.0,"maximized":false}}"#;
+    std::fs::write(&path, legacy_json).unwrap();
+    let legacy = AppSettings::load_from_path(&path);
+    assert_eq!(legacy.window.scale_factor, None);
+
+    let mut settings = AppSettings::default();
+    settings.update_window_state_with_scale(
+        Some(100.0),
+        Some(80.0),
+        960.0,
+        640.0,
+        false,
+        Some(1.5),
+    );
+    assert_eq!(settings.window.scale_factor, Some(1.5));
+
+    settings.update_window_state_with_scale(
+        Some(100.0),
+        Some(80.0),
+        960.0,
+        640.0,
+        false,
+        Some(f32::NAN),
+    );
+    assert_eq!(settings.window.scale_factor, Some(1.5));
+
+    settings.save_to_path(&path).unwrap();
+    let reloaded = AppSettings::load_from_path(&path);
+    assert_eq!(reloaded.window.scale_factor, Some(1.5));
+    assert_eq!(reloaded.window.width, 960.0);
+    assert_eq!(reloaded.window.height, 640.0);
+
     let _ = std::fs::remove_dir_all(&dir);
 }

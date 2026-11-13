@@ -7,7 +7,7 @@ pub const MAX_MOBI_TEXT_BYTES: usize = 300 * 1024 * 1024;
 fn ensure_mobi_capacity(out: &[u8], extra: usize) -> Result<(), DocumentError> {
     if out.len().saturating_add(extra) > MAX_MOBI_TEXT_BYTES {
         return Err(DocumentError::LimitExceeded(
-            "Размер распакованного текста MOBI/AZW превышает допустимый лимит (300 МБ)".to_string(),
+            crate::document::errors::decompressed_too_large_mb("MOBI/AZW", 300),
         ));
     }
     Ok(())
@@ -294,91 +294,357 @@ pub fn encoding_from_codepage(codepage: u32) -> Option<&'static encoding_rs::Enc
     }
 }
 
-pub fn is_cyrillic_windows1251(bytes: &[u8]) -> bool {
-    let mut total_alpha = 0usize;
-    let mut cyrillic_count = 0usize;
+fn skip_tag_or_entity(bytes: &[u8], i: usize) -> Option<usize> {
+    if bytes[i] == b'<'
+        && let Some(next) = bytes.get(i + 1).copied()
+        && (next.is_ascii_alphabetic() || matches!(next, b'/' | b'!' | b'?'))
+    {
+        let limit = (i + 512).min(bytes.len());
+        for j in (i + 1)..limit {
+            if bytes[j] == b'<' {
+                return None;
+            }
+            if bytes[j] == b'>' {
+                return Some(j + 1);
+            }
+        }
+    }
+    if bytes[i] == b'&' {
+        let limit = (i + 14).min(bytes.len());
+        for j in (i + 1)..limit {
+            let b = bytes[j];
+            if b == b';' && j > i + 1 {
+                return Some(j + 1);
+            }
+            if !(b.is_ascii_alphanumeric() || b == b'#') {
+                return None;
+            }
+        }
+    }
+    None
+}
 
-    for &b in bytes {
-        if b >= 0xC0 {
-            cyrillic_count += 1;
-            total_alpha += 1;
-        } else if b.is_ascii_alphabetic() {
-            total_alpha += 1;
+fn byte_cp1251_to_char(b: u8) -> Option<char> {
+    match b {
+        0xA8 => Some('Ё'),
+        0xB8 => Some('ё'),
+        0xC0..=0xFF => char::from_u32(0x0410 + (b as u32 - 0xC0)),
+        _ => None,
+    }
+}
+
+fn cp1252_char_to_byte(c: char) -> Option<u8> {
+    match c {
+        '\u{0000}'..='\u{007F}' | '\u{00A0}'..='\u{00FF}' => Some(c as u8),
+        '€' => Some(0x80),
+        '‚' => Some(0x82),
+        'ƒ' => Some(0x83),
+        '„' => Some(0x84),
+        '…' => Some(0x85),
+        '†' => Some(0x86),
+        '‡' => Some(0x87),
+        'ˆ' => Some(0x88),
+        '‰' => Some(0x89),
+        'Š' => Some(0x8A),
+        '‹' => Some(0x8B),
+        'Œ' => Some(0x8C),
+        'Ž' => Some(0x8E),
+        '‘' => Some(0x91),
+        '’' => Some(0x92),
+        '“' => Some(0x93),
+        '”' => Some(0x94),
+        '•' => Some(0x95),
+        '–' => Some(0x96),
+        '—' => Some(0x97),
+        '˜' => Some(0x98),
+        '™' => Some(0x99),
+        'š' => Some(0x9A),
+        '›' => Some(0x9B),
+        'œ' => Some(0x9C),
+        'ž' => Some(0x9E),
+        'Ÿ' => Some(0x9F),
+        '№' => Some(0xB9),
+        _ => None,
+    }
+}
+
+fn is_russian_vowel(c: char) -> bool {
+    matches!(
+        c,
+        'а' | 'е'
+            | 'ё'
+            | 'и'
+            | 'о'
+            | 'у'
+            | 'ы'
+            | 'э'
+            | 'ю'
+            | 'я'
+            | 'А'
+            | 'Е'
+            | 'Ё'
+            | 'И'
+            | 'О'
+            | 'У'
+            | 'Ы'
+            | 'Э'
+            | 'Ю'
+            | 'Я'
+    )
+}
+
+fn has_russian_script_profile(decoded: &str, pure_chars: usize) -> bool {
+    if pure_chars < 4 {
+        return false;
+    }
+    let mut total = 0usize;
+    let mut vowels = 0usize;
+    for c in decoded.chars() {
+        if c != ' ' {
+            total += 1;
+            if is_russian_vowel(c) {
+                vowels += 1;
+            }
+        }
+    }
+    if total < 4 || vowels == 0 || vowels * 5 < total {
+        return false;
+    }
+    if total < 5 {
+        return true;
+    }
+    let lower = decoded.to_lowercase();
+    let chars: Vec<char> = lower.chars().collect();
+    let mut bigrams = 0usize;
+    for window in chars.windows(2) {
+        let pair = [window[0], window[1]];
+        if matches!(
+            pair,
+            ['с', 'т']
+                | ['н', 'о']
+                | ['т', 'о']
+                | ['н', 'а']
+                | ['е', 'н']
+                | ['о', 'в']
+                | ['н', 'и']
+                | ['р', 'а']
+                | ['в', 'о']
+                | ['к', 'о']
+                | ['п', 'р']
+                | ['р', 'о']
+                | ['п', 'о']
+                | ['г', 'о']
+                | ['о', 'с']
+                | ['л', 'и']
+                | ['р', 'е']
+                | ['а', 'л']
+                | ['е', 'р']
+                | ['т', 'ь']
+                | ['с', 'я']
+                | ['н', 'е']
+                | ['о', 'м']
+                | ['о', 'т']
+                | ['к', 'а']
+                | ['т', 'а']
+                | ['т', 'е']
+                | ['л', 'а']
+                | ['л', 'о']
+                | ['а', 'н']
+                | ['о', 'р']
+                | ['д', 'е']
+                | ['и', 'т']
+                | ['з', 'а']
+                | ['и', 'з']
+                | ['е', 'л']
+                | ['л', 'ь']
+                | ['н', 'ы']
+                | ['б', 'ы']
+                | ['ь', 'н']
+                | ['е', 'й']
+                | ['р', 'и']
+                | ['и', 'в']
+                | ['в', 'е']
+                | ['е', 'т']
+                | ['ч', 'т']
+                | ['э', 'т']
+                | ['а', 'к']
+                | ['д', 'л']
+                | ['и', 'л']
+                | ['в', 'а']
+                | ['м', 'а']
+                | ['д', 'а']
+                | ['о', 'н']
+                | ['о', 'д']
+                | ['с', 'к']
+                | ['ч', 'н']
+                | ['и', 'н']
+                | ['а', 'т']
+                | ['а', 'с']
+                | ['м', 'и']
+                | ['м', 'у']
+                | ['г', 'л']
+                | ['е', 'в']
+                | ['г', 'е']
+                | ['о', 'л']
+                | ['о', 'й']
+                | ['с', 'о']
+                | ['о', 'б']
+                | ['а', 'р']
+                | ['е', 'с']
+                | ['п', 'е']
+        ) {
+            bigrams += 1;
+        }
+    }
+    if total >= 20 {
+        bigrams * 20 >= total
+    } else {
+        bigrams >= 1
+    }
+}
+
+pub fn is_cyrillic_windows1251(bytes: &[u8]) -> bool {
+    let mut pure_high = 0usize;
+    let mut mixed_high = 0usize;
+    let mut pure_tokens_ge2 = 0usize;
+    let mut decoded = String::new();
+
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if let Some(next_i) = skip_tag_or_entity(bytes, i) {
+            i = next_i;
+            continue;
+        }
+        let b = bytes[i];
+        let is_token_byte = b.is_ascii_alphabetic() || b >= 0xC0 || b == 0xA8 || b == 0xB8;
+        if !is_token_byte {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut ascii = 0usize;
+        let mut high = 0usize;
+        while i < bytes.len() {
+            let cur = bytes[i];
+            if cur.is_ascii_alphabetic() {
+                ascii += 1;
+                i += 1;
+            } else if cur >= 0xC0 || cur == 0xA8 || cur == 0xB8 {
+                if cur >= 0xC0 {
+                    high += 1;
+                }
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        if high > 0 {
+            if ascii > 0 {
+                mixed_high += high;
+            } else {
+                pure_high += high;
+                if high >= 2 {
+                    pure_tokens_ge2 += 1;
+                }
+                if !decoded.is_empty() {
+                    decoded.push(' ');
+                }
+                for &tb in &bytes[start..i] {
+                    if let Some(c) = byte_cp1251_to_char(tb) {
+                        decoded.push(c);
+                    }
+                }
+            }
         }
     }
 
-    total_alpha > 0 && cyrillic_count * 10 >= total_alpha * 4
+    pure_high >= 4
+        && pure_tokens_ge2 >= 1
+        && (mixed_high == 0 || mixed_high * 5 <= pure_high)
+        && has_russian_script_profile(&decoded, pure_high)
 }
 
 pub fn is_cp1252_mojibake(text: &str) -> bool {
-    let mut mojibake_chars = 0usize;
-    let mut total_alpha = 0usize;
-    let mut consecutive_pairs = 0usize;
-    let mut prev_mojibake = false;
+    let bytes = text.as_bytes();
+    let mut pure_moj_chars = 0usize;
+    let mut mixed_moj_chars = 0usize;
+    let mut pure_tokens_ge2 = 0usize;
+    let mut total_cyrillic = 0usize;
+    let mut decoded = String::new();
+    let mut token_buf = String::new();
 
-    for c in text.chars() {
-        let is_moj = matches!(
-            c,
-            '\u{00C0}'
-                ..='\u{00FF}'
-                    | '—'
-                    | '–'
-                    | '“'
-                    | '”'
-                    | '„'
-                    | '«'
-                    | '»'
-                    | '…'
-                    | '№'
-                    | '†'
-                    | '‡'
-                    | '€'
-                    | '‰'
-                    | '‹'
-                    | '›'
-                    | '•'
-                    | '™'
-                    | '¤'
-                    | '¦'
-                    | '§'
-                    | '©'
-                    | '¬'
-                    | '®'
-                    | '°'
-                    | '±'
-                    | 'µ'
-                    | '¶'
-                    | '·'
-        );
-
-        if c.is_alphabetic() {
-            total_alpha += 1;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if let Some(next_i) = skip_tag_or_entity(bytes, i) {
+            i = next_i;
+            continue;
         }
-        if is_moj {
-            mojibake_chars += 1;
-            if prev_mojibake {
-                consecutive_pairs += 1;
+        let Some(first_ch) = text[i..].chars().next() else {
+            break;
+        };
+        let is_token_char = |c: char| {
+            c.is_ascii_alphabetic()
+                || ('\u{00C0}'..='\u{00FF}').contains(&c)
+                || matches!(c, '¨' | '¸')
+                || ('\u{0400}'..='\u{04FF}').contains(&c)
+                || c.is_alphabetic()
+        };
+        if !is_token_char(first_ch) {
+            i += first_ch.len_utf8();
+            continue;
+        }
+        token_buf.clear();
+        let mut ascii = 0usize;
+        let mut moj = 0usize;
+        let mut cyr = 0usize;
+        while i < bytes.len() {
+            let Some(c) = text[i..].chars().next() else {
+                break;
+            };
+            if !is_token_char(c) {
+                break;
+            }
+            if c.is_ascii_alphabetic() {
+                ascii += 1;
+            } else if ('\u{0400}'..='\u{04FF}').contains(&c) {
+                cyr += 1;
+            } else if ('\u{00C0}'..='\u{00FF}').contains(&c) {
+                moj += 1;
+            }
+            token_buf.push(c);
+            i += c.len_utf8();
+        }
+        total_cyrillic += cyr;
+        if moj > 0 && cyr == 0 {
+            if ascii > 0 {
+                mixed_moj_chars += moj;
+            } else {
+                pure_moj_chars += moj;
+                if moj >= 2 {
+                    pure_tokens_ge2 += 1;
+                }
+                if !decoded.is_empty() {
+                    decoded.push(' ');
+                }
+                for c in token_buf.chars() {
+                    if let Some(b) = cp1252_char_to_byte(c)
+                        && let Some(rc) = byte_cp1251_to_char(b)
+                    {
+                        decoded.push(rc);
+                    }
+                }
             }
         }
-        prev_mojibake = is_moj;
     }
 
-    let has_lead = text
-        .chars()
-        .filter(|c| matches!(c, 'Ã' | 'Â' | 'Ð' | 'Ñ' | 'Î' | 'Ï' | 'ð'))
-        .count()
-        >= 2;
-    total_alpha > 0
-        && has_lead
-        && consecutive_pairs >= 3
-        && (mojibake_chars * 10 >= total_alpha * 4 || consecutive_pairs >= 8)
-        && {
-            let cyrillic = text
-                .chars()
-                .filter(|c| ('\u{0400}'..='\u{04FF}').contains(c))
-                .count();
-            cyrillic < 3 || cyrillic * 10 < total_alpha
-        }
+    if total_cyrillic >= 3 && total_cyrillic * 5 >= pure_moj_chars {
+        return false;
+    }
+
+    pure_moj_chars >= 4
+        && pure_tokens_ge2 >= 1
+        && (mixed_moj_chars == 0 || mixed_moj_chars * 5 <= pure_moj_chars)
+        && has_russian_script_profile(&decoded, pure_moj_chars)
 }
 
 fn is_cp1251_mojibake_tail(c: char) -> bool {
@@ -474,33 +740,88 @@ fn repair_cp1251_mojibake_token(token: &str) -> Option<String> {
     Some(repaired.to_string())
 }
 
+fn flush_cp1251_bytes(raw_bytes: &mut Vec<u8>, out: &mut String) {
+    if !raw_bytes.is_empty() {
+        let (cow, _, _) = encoding_rs::WINDOWS_1251.decode(raw_bytes);
+        out.push_str(&cow);
+        raw_bytes.clear();
+    }
+}
+
 pub fn repair_cp1252_mojibake(text: &str) -> String {
-    let mut raw_bytes = Vec::with_capacity(text.len());
-    for c in text.chars() {
-        let cp = c as u32;
-        if cp <= 0xFF {
-            raw_bytes.push(cp as u8);
-        } else {
-            match c {
-                '—' => raw_bytes.push(0x97),
-                '–' => raw_bytes.push(0x96),
-                '“' => raw_bytes.push(0x93),
-                '”' => raw_bytes.push(0x94),
-                '„' => raw_bytes.push(0x84),
-                '«' => raw_bytes.push(0xAB),
-                '»' => raw_bytes.push(0xBB),
-                '…' => raw_bytes.push(0x85),
-                '№' => raw_bytes.push(0xB9),
-                _ => {
-                    let mut buf = [0u8; 4];
-                    let s = c.encode_utf8(&mut buf);
-                    raw_bytes.extend_from_slice(s.as_bytes());
+    if !is_cp1252_mojibake(text) {
+        return text.to_string();
+    }
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut raw_bytes = Vec::new();
+    let mut token = String::new();
+    let mut i = 0usize;
+    let is_token_char = |c: char| {
+        c.is_ascii_alphabetic()
+            || ('\u{00C0}'..='\u{00FF}').contains(&c)
+            || matches!(c, '¨' | '¸')
+            || ('\u{0400}'..='\u{04FF}').contains(&c)
+            || c.is_alphabetic()
+    };
+
+    while i < bytes.len() {
+        if let Some(next_i) = skip_tag_or_entity(bytes, i) {
+            flush_cp1251_bytes(&mut raw_bytes, &mut out);
+            out.push_str(&text[i..next_i]);
+            i = next_i;
+            continue;
+        }
+        let Some(ch) = text[i..].chars().next() else {
+            break;
+        };
+        if !is_token_char(ch) {
+            if let Some(b) = cp1252_char_to_byte(ch) {
+                raw_bytes.push(b);
+            } else {
+                flush_cp1251_bytes(&mut raw_bytes, &mut out);
+                out.push(ch);
+            }
+            i += ch.len_utf8();
+            continue;
+        }
+        token.clear();
+        let mut ascii = 0usize;
+        let mut moj = 0usize;
+        let mut cyr = 0usize;
+        while i < bytes.len() {
+            let Some(c) = text[i..].chars().next() else {
+                break;
+            };
+            if !is_token_char(c) {
+                break;
+            }
+            if c.is_ascii_alphabetic() {
+                ascii += 1;
+            } else if ('\u{0400}'..='\u{04FF}').contains(&c) {
+                cyr += 1;
+            } else if ('\u{00C0}'..='\u{00FF}').contains(&c) || matches!(c, '¨' | '¸') {
+                moj += 1;
+            }
+            token.push(c);
+            i += c.len_utf8();
+        }
+        if moj > 0 && ascii == 0 && cyr == 0 {
+            for c in token.chars() {
+                if let Some(b) = cp1252_char_to_byte(c) {
+                    raw_bytes.push(b);
+                } else {
+                    flush_cp1251_bytes(&mut raw_bytes, &mut out);
+                    out.push(c);
                 }
             }
+        } else {
+            flush_cp1251_bytes(&mut raw_bytes, &mut out);
+            out.push_str(&token);
         }
     }
-    let (cow, _, _) = encoding_rs::WINDOWS_1251.decode(&raw_bytes);
-    cow.into_owned()
+    flush_cp1251_bytes(&mut raw_bytes, &mut out);
+    out
 }
 
 pub fn resolve_mobi_encoding(bytes: &[u8], header_codepage: u32) -> &'static encoding_rs::Encoding {

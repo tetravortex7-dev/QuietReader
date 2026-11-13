@@ -88,11 +88,12 @@ impl QuietReaderApp {
                 library_dirty = true;
             }
         }
-        if !library_existed && onboarding::ensure_welcome_book(&library_path, &mut library) {
-            library_dirty = library.save_to_path(&library_path).is_err();
-        }
-        if onboarding::ensure_cozy_showcase_library(&mut library) {
-            library_dirty = library.save_to_path(&library_path).is_err();
+        if !library_existed {
+            if onboarding::ensure_cozy_showcase_library(&mut library) {
+                library_dirty = library.save_to_path(&library_path).is_err();
+            } else if onboarding::ensure_welcome_book(&library_path, &mut library) {
+                library_dirty = library.save_to_path(&library_path).is_err();
+            }
         }
         let show_library = library.mode != LibraryMode::ReaderOnly;
         let last_applied_design = library.design;
@@ -155,7 +156,7 @@ impl QuietReaderApp {
             show_library,
             updater,
             show_opds_dialog: false,
-            opds_state: crate::opds::OpdsBrowserState::new(),
+            opds_state: crate::app::opds_view::OpdsBrowserState::new(),
             translate: TranslateState::new(),
             dictionary: DictionaryState::new(),
             sidebar_tab: SidebarTab::Toc,
@@ -185,6 +186,7 @@ impl QuietReaderApp {
         let saved_tabs = settings.open_tabs.clone();
         let saved_active_idx = settings.active_tab_index;
         let has_initial_file = !initial_files.is_empty();
+        let library_existed = LibraryStore::path_beside(&AppSettings::get_settings_path()).exists();
         let mut app = Self::from_settings(settings);
         app.document_loader.update_ctx(&cc.egui_ctx);
         crate::platform::set_keep_screen_on(app.keep_screen_on);
@@ -192,6 +194,7 @@ impl QuietReaderApp {
         cc.egui_ctx
             .add_plugin(super::selection::SelectionCapturePlugin);
 
+        let had_saved_tabs = !saved_tabs.is_empty() || app.settings.last_opened_book.is_some();
         if !saved_tabs.is_empty() {
             for tab_path in saved_tabs {
                 if tab_path.exists() {
@@ -208,8 +211,11 @@ impl QuietReaderApp {
             app.load_file(last_path);
         }
 
-        if app.tabs.is_empty() {
-            let books_dir = onboarding::resolve_books_dir();
+        if app.tabs.is_empty()
+            && !library_existed
+            && !had_saved_tabs
+            && let Some(books_dir) = onboarding::resolve_books_dir()
+        {
             for name in ["Lavender_Room.epub", "Solaris.fb2", "Neuromancer.pdf"] {
                 let p = books_dir.join(name);
                 if p.exists() {
@@ -227,7 +233,11 @@ impl QuietReaderApp {
             }
         }
 
-        app.show_library = if has_initial_file { false } else { true };
+        app.show_library = if has_initial_file {
+            false
+        } else {
+            app.library.mode != LibraryMode::ReaderOnly
+        };
         app
     }
 
@@ -359,6 +369,7 @@ impl QuietReaderApp {
             return;
         }
 
+        self.save_active_to_tab();
         self.flush_settings_now();
         self.autoscroll.stop();
 
@@ -377,12 +388,7 @@ impl QuietReaderApp {
         let Some(path) = self.current_file_path.clone() else {
             return;
         };
-        let extension = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| value.to_lowercase())
-            .unwrap_or_default();
-        if !matches!(extension.as_str(), "txt" | "md" | "markdown" | "log") {
+        if !crate::document::registry::supports_text_encoding(&path) {
             return;
         }
         self.save_active_to_tab();
@@ -449,43 +455,99 @@ impl QuietReaderApp {
                         );
                     }
                     if self.active_tab == idx {
+                        let loaded_view_kind = loaded.document.view_kind();
                         self.document = Some(loaded.document);
-                        self.current_file_path = Some(loaded.file_path);
+                        self.current_file_path = Some(loaded.file_path.clone());
                         self.last_reading_activity = Some(Instant::now());
                         self.reading_seconds_accumulator = 0.0;
                         self.current_chapter = loaded.chapter;
                         self.last_rendered_chapter = loaded.chapter;
                         self.pending_scroll_y = Some(loaded.scroll_y);
                         self.current_scroll_y = loaded.scroll_y;
+                        self.last_saved_scroll_y = loaded.scroll_y;
                         self.comic_view.clear_cache();
-                        self.comic_view.current_page = loaded.comic_page;
+                        self.comic_view.page_input.clear();
                         self.pdf_view.clear_cache();
-                        self.pdf_view.current_page = loaded.comic_page;
+                        self.pdf_view.page_input.clear();
+                        self.comic_view.current_page = 0;
+                        self.pdf_view.current_page = 0;
+                        match loaded_view_kind {
+                            DocumentViewKind::Pdf => {
+                                if loaded.scroll_y <= 0.0 && loaded.comic_page > 0 {
+                                    self.pdf_view.go_to_page(loaded.comic_page);
+                                } else {
+                                    self.pdf_view.current_page = loaded.comic_page;
+                                }
+                            }
+                            DocumentViewKind::Comic => {
+                                if loaded.scroll_y <= 0.0 && loaded.comic_page > 0 {
+                                    self.comic_view.go_to_page(loaded.comic_page);
+                                } else {
+                                    self.comic_view.current_page = loaded.comic_page;
+                                }
+                            }
+                            DocumentViewKind::Text => {}
+                        }
                         self.text_images.clear();
                         self.search.reset_for_document();
                         self.toc_view.filter.clear();
                         self.status_message = Some(loaded.status_message);
                         self.mark_settings_dirty();
+                        if self
+                            .password_prompt
+                            .as_ref()
+                            .is_some_and(|p| p.path == loaded.file_path)
+                        {
+                            self.password_prompt = None;
+                        }
+                    } else if self
+                        .password_prompt
+                        .as_ref()
+                        .is_some_and(|p| p.path == loaded.file_path)
+                    {
+                        self.password_prompt = None;
                     }
-                    self.password_prompt = None;
                 }
                 Err(err) => {
                     if err == crate::app::document_loader::ERR_PASSWORD_REQUIRED {
-                        if let Some(prompt) = self.password_prompt.as_mut() {
-                            if prompt.path == resp.path {
-                                prompt.has_error = true;
-                            }
-                        } else {
+                        if let Some(prompt) = self.password_prompt.as_mut()
+                            && prompt.path == resp.path
+                        {
+                            prompt.has_error = true;
+                        } else if self.password_prompt.is_none() && self.active_tab == idx {
                             self.password_prompt =
                                 Some(crate::app::dialogs::PasswordPromptState::new(resp.path));
+                        } else {
+                            if let Some(tab) = self.tabs.get_mut(idx) {
+                                tab.is_loading = false;
+                                tab.document = None;
+                                tab.load_error = Some(
+                                    self.settings
+                                        .ui_language
+                                        .t()
+                                        .err_password_required
+                                        .to_string(),
+                                );
+                            }
                         }
                     } else {
                         if let Some(tab) = self.tabs.get_mut(idx) {
                             tab.is_loading = false;
+                            tab.document = None;
                             tab.load_error = Some(err.clone());
                         }
                         if self.active_tab == idx {
                             self.document = None;
+                            self.current_file_path = Some(resp.path);
+                            self.current_chapter = 0;
+                            self.last_rendered_chapter = 0;
+                            self.comic_view.clear_cache();
+                            self.comic_view.current_page = 0;
+                            self.pdf_view.clear_cache();
+                            self.pdf_view.current_page = 0;
+                            self.text_images.clear();
+                            self.tts.stop();
+                            self.last_tts_paragraph = None;
                             self.status_message = Some(err);
                         }
                     }

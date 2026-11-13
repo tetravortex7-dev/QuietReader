@@ -65,23 +65,23 @@ impl DocDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path = path.as_ref();
         let meta = std::fs::metadata(path)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать файл DOC: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_read("DOC", &e)))?;
         if meta.len() > crate::document::MAX_TOTAL_UNPACK_BYTES {
             return Err(DocumentError::LimitExceeded(
-                "Размер файла DOC превышает лимит".to_string(),
+                crate::document::errors::file_too_large("DOC"),
             ));
         }
 
         let mut file = File::open(path)
-            .map_err(|e| DocumentError::Io(format!("Не удалось открыть файл DOC: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_open("DOC", &e)))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
-            .map_err(|e| DocumentError::Io(format!("Ошибка чтения файла DOC: {e}")))?;
+            .map_err(|e| DocumentError::Io(crate::document::errors::io_read("DOC", &e)))?;
 
         let default_title = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Документ Word");
+            .unwrap_or(crate::document::errors::tokens::TITLE_WORD);
 
         Self::from_bytes(&bytes, default_title)
     }
@@ -89,7 +89,7 @@ impl DocDocument {
     pub fn from_bytes(bytes: &[u8], default_title: &str) -> Result<Self, DocumentError> {
         if bytes.len() > crate::document::MAX_TOTAL_UNPACK_BYTES as usize {
             return Err(DocumentError::LimitExceeded(
-                "Размер данных DOC превышает лимит".to_string(),
+                crate::document::errors::data_too_large("DOC"),
             ));
         }
 
@@ -131,20 +131,20 @@ fn parse_doc(
 > {
     if bytes.len() < 512 {
         return Err(DocumentError::Corrupted(
-            "Файл слишком короткий для формата DOC".to_string(),
+            crate::document::errors::file_too_short("DOC"),
         ));
     }
 
     if &bytes[0..8] != b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1" {
         return Err(DocumentError::Corrupted(
-            "Некорректная сигнатура OLE2 в файле DOC".to_string(),
+            crate::document::errors::invalid_header("DOC", "OLE2"),
         ));
     }
 
     let sector_shift = u16::from_le_bytes([bytes[30], bytes[31]]) as usize;
     if sector_shift < 7 || sector_shift > 14 {
         return Err(DocumentError::Corrupted(
-            "Недопустимый размер сектора в файле DOC".to_string(),
+            crate::document::errors::invalid_sector_size("DOC"),
         ));
     }
     let sector_size = 1 << sector_shift;
@@ -158,21 +158,29 @@ fn parse_doc(
     let num_mini_fat_sectors =
         u32::from_le_bytes([bytes[64], bytes[65], bytes[66], bytes[67]]) as usize;
 
-    let mut fat_sector_ids = Vec::new();
-    let msat_entries = num_fat_sectors.min(109);
-    for idx in 0..msat_entries {
-        let off = 76 + idx * 4;
-        let sec = u32::from_le_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]]);
-        if sec < 0xFFFFFFFD {
-            fat_sector_ids.push(sec);
-        }
-    }
+    let first_difat_sector = u32::from_le_bytes([bytes[68], bytes[69], bytes[70], bytes[71]]);
+    let num_difat_sectors =
+        u32::from_le_bytes([bytes[72], bytes[73], bytes[74], bytes[75]]) as usize;
+    let fat_sector_ids = collect_fat_sector_ids(
+        bytes,
+        sector_size,
+        num_fat_sectors,
+        first_difat_sector,
+        num_difat_sectors,
+    );
 
     let mut fat = Vec::new();
     for &sec in &fat_sector_ids {
-        let sec_offset = (sec as usize + 1) * sector_size;
-        if sec_offset + sector_size <= bytes.len() {
-            let sec_bytes = &bytes[sec_offset..sec_offset + sector_size];
+        let Some(sec_offset) = sec
+            .checked_add(1)
+            .and_then(|s| (s as usize).checked_mul(sector_size))
+        else {
+            continue;
+        };
+        if let Some(sec_end) = sec_offset.checked_add(sector_size)
+            && sec_end <= bytes.len()
+        {
+            let sec_bytes = &bytes[sec_offset..sec_end];
             for chunk in sec_bytes.chunks_exact(4) {
                 fat.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
             }
@@ -277,8 +285,11 @@ fn parse_doc(
                 word_doc_bytes[0x01A9],
             ]) as usize;
 
-            if fc_clx + lcb_clx <= table_bytes.len() && lcb_clx > 0 {
-                let clx_data = &table_bytes[fc_clx..fc_clx + lcb_clx];
+            if let Some(clx_end) = fc_clx.checked_add(lcb_clx)
+                && clx_end <= table_bytes.len()
+                && lcb_clx > 0
+            {
+                let clx_data = &table_bytes[fc_clx..clx_end];
                 let mut pos = 0;
                 while pos < clx_data.len() {
                     let clxt = clx_data[pos];
@@ -286,7 +297,12 @@ fn parse_doc(
                         if pos + 3 <= clx_data.len() {
                             let cb_grpprl =
                                 u16::from_le_bytes([clx_data[pos + 1], clx_data[pos + 2]]) as usize;
-                            pos += 3 + cb_grpprl;
+                            let Some(next_pos) =
+                                pos.checked_add(3).and_then(|p| p.checked_add(cb_grpprl))
+                            else {
+                                break;
+                            };
+                            pos = next_pos;
                         } else {
                             break;
                         }
@@ -299,8 +315,11 @@ fn parse_doc(
                                 clx_data[pos + 4],
                             ]) as usize;
                             pos += 5;
-                            if pos + lcb <= clx_data.len() && lcb >= 4 {
-                                let pcdt = &clx_data[pos..pos + lcb];
+                            if let Some(pcdt_end) = pos.checked_add(lcb)
+                                && pcdt_end <= clx_data.len()
+                                && lcb >= 4
+                            {
+                                let pcdt = &clx_data[pos..pcdt_end];
                                 let n_pieces = (lcb.saturating_sub(4)) / 12;
                                 let cp_table_bytes = (n_pieces + 1) * 4;
                                 if cp_table_bytes + n_pieces * 8 <= pcdt.len() {
@@ -337,23 +356,25 @@ fn parse_doc(
                                         };
 
                                         if is_compressed {
-                                            if file_offset + char_count <= word_doc_bytes.len() {
-                                                let raw = &word_doc_bytes
-                                                    [file_offset..file_offset + char_count];
+                                            if let Some(end_off) =
+                                                file_offset.checked_add(char_count)
+                                                && end_off <= word_doc_bytes.len()
+                                            {
+                                                let raw = &word_doc_bytes[file_offset..end_off];
                                                 let (dec, _, _) =
-                                                    encoding_rs::WINDOWS_1251.decode(raw);
+                                                    encoding_rs::WINDOWS_1252.decode(raw);
                                                 doc_text.push_str(&dec);
                                             }
-                                        } else {
-                                            let byte_count = char_count * 2;
-                                            if file_offset + byte_count <= word_doc_bytes.len() {
-                                                let raw = &word_doc_bytes
-                                                    [file_offset..file_offset + byte_count];
-                                                for c in raw.chunks_exact(2) {
-                                                    let code = u16::from_le_bytes([c[0], c[1]]);
-                                                    if let Some(ch) = char::from_u32(code as u32) {
-                                                        doc_text.push(ch);
-                                                    }
+                                        } else if let Some(byte_count) = char_count.checked_mul(2)
+                                            && let Some(end_off) =
+                                                file_offset.checked_add(byte_count)
+                                            && end_off <= word_doc_bytes.len()
+                                        {
+                                            let raw = &word_doc_bytes[file_offset..end_off];
+                                            for c in raw.chunks_exact(2) {
+                                                let code = u16::from_le_bytes([c[0], c[1]]);
+                                                if let Some(ch) = char::from_u32(code as u32) {
+                                                    doc_text.push(ch);
                                                 }
                                             }
                                         }
@@ -407,7 +428,7 @@ fn parse_doc(
         }
         if !sec_paras.is_empty() {
             let title = if raw_sections.len() > 1 {
-                format!("Раздел {}", sec_idx + 1)
+                crate::document::errors::tokens::section(sec_idx + 1)
             } else {
                 default_title.to_string()
             };
@@ -424,7 +445,7 @@ fn parse_doc(
             id: Some("chap_0".to_string()),
             title: default_title.to_string(),
             paragraphs: if current_paras.is_empty() {
-                vec!["Документ не содержит текста.".to_string()]
+                vec![crate::document::errors::tokens::NO_TEXT.to_string()]
             } else {
                 current_paras
             },
@@ -445,7 +466,7 @@ fn parse_doc(
 
     let metadata = BookMetadata {
         title: default_title.to_string(),
-        author: "Неизвестный автор".to_string(),
+        author: crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string(),
     };
 
     let note_locations = crate::document::build_notes_appendix(&mut chapters, &footnotes);
@@ -459,6 +480,80 @@ fn parse_doc(
         header_text,
         footer_text,
     ))
+}
+
+fn collect_fat_sector_ids(
+    bytes: &[u8],
+    sector_size: usize,
+    num_fat_sectors: usize,
+    first_difat_sector: u32,
+    num_difat_sectors: usize,
+) -> Vec<u32> {
+    let mut fat_sector_ids = Vec::new();
+    let msat_entries = num_fat_sectors.min(109);
+    for idx in 0..msat_entries {
+        let off = 76 + idx * 4;
+        if off + 4 > bytes.len() {
+            break;
+        }
+        let sec = u32::from_le_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]]);
+        if sec < 0xFFFFFFFD {
+            fat_sector_ids.push(sec);
+        }
+    }
+
+    if num_fat_sectors <= 109 || first_difat_sector >= 0xFFFFFFFD || sector_size < 8 {
+        return fat_sector_ids;
+    }
+
+    let entries_per_difat = (sector_size / 4).saturating_sub(1);
+    let max_steps = if num_difat_sectors > 0 {
+        num_difat_sectors
+    } else {
+        bytes.len() / sector_size
+    };
+    let mut cur = first_difat_sector;
+    let mut visited = std::collections::HashSet::new();
+    let mut steps = 0usize;
+
+    while cur < 0xFFFFFFFD && fat_sector_ids.len() < num_fat_sectors && steps < max_steps {
+        if !visited.insert(cur) {
+            break;
+        }
+        let Some(sec_off) = cur
+            .checked_add(1)
+            .and_then(|s| (s as usize).checked_mul(sector_size))
+        else {
+            break;
+        };
+        let Some(sec_end) = sec_off.checked_add(sector_size) else {
+            break;
+        };
+        if sec_end > bytes.len() {
+            break;
+        }
+        for idx in 0..entries_per_difat {
+            if fat_sector_ids.len() >= num_fat_sectors {
+                break;
+            }
+            let off = sec_off + idx * 4;
+            let sec =
+                u32::from_le_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]]);
+            if sec < 0xFFFFFFFD {
+                fat_sector_ids.push(sec);
+            }
+        }
+        let next_off = sec_off + entries_per_difat * 4;
+        cur = u32::from_le_bytes([
+            bytes[next_off],
+            bytes[next_off + 1],
+            bytes[next_off + 2],
+            bytes[next_off + 3],
+        ]);
+        steps += 1;
+    }
+
+    fat_sector_ids
 }
 
 fn read_fat_chain(
@@ -475,8 +570,16 @@ fn read_fat_chain(
         if !visited.insert(cur) {
             break;
         }
-        let off = (cur as usize + 1).saturating_mul(sector_size);
-        if off + sector_size > bytes.len() {
+        let Some(off) = cur
+            .checked_add(1)
+            .and_then(|s| (s as usize).checked_mul(sector_size))
+        else {
+            break;
+        };
+        let Some(sec_end) = off.checked_add(sector_size) else {
+            break;
+        };
+        if sec_end > bytes.len() {
             break;
         }
         let take = (size - out.len()).min(sector_size);
@@ -535,6 +638,7 @@ fn split_doc_stories(
     };
     let ccp_footnotes = read_u32(0x50).unwrap_or(0);
     let ccp_headers = read_u32(0x54).unwrap_or(0);
+    let ccp_macros = read_u32(0x58).unwrap_or(0);
     let ccp_annotations = read_u32(0x5C).unwrap_or(0);
     let ccp_endnotes = read_u32(0x60).unwrap_or(0);
     let chars: Vec<char> = doc_text.chars().collect();
@@ -544,20 +648,19 @@ fn split_doc_stories(
 
     let main_end = ccp_text;
     let footnotes_end = main_end.saturating_add(ccp_footnotes).min(chars.len());
-    let annotations_end = footnotes_end
-        .saturating_add(ccp_annotations)
-        .min(chars.len());
+    let headers_end = footnotes_end.saturating_add(ccp_headers).min(chars.len());
+    let macros_end = headers_end.saturating_add(ccp_macros).min(chars.len());
+    let annotations_end = macros_end.saturating_add(ccp_annotations).min(chars.len());
     let endnotes_end = annotations_end
         .saturating_add(ccp_endnotes)
         .min(chars.len());
-    let headers_end = endnotes_end.saturating_add(ccp_headers).min(chars.len());
 
     let main_text: String = chars[..main_end].iter().collect();
     let footnotes_text: String = chars[main_end..footnotes_end]
         .iter()
         .chain(chars[annotations_end..endnotes_end].iter())
         .collect();
-    let headers_text: String = chars[endnotes_end..headers_end].iter().collect();
+    let headers_text: String = chars[footnotes_end..headers_end].iter().collect();
 
     let notes: Vec<String> = footnotes_text
         .split(['\r', '\n', '\u{000B}'])

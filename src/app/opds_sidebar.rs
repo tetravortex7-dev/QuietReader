@@ -1,16 +1,18 @@
-use super::icons::{Icon, IconButton, paint_icon};
+use super::icons::{Icon, IconButton, IconLabel, paint_icon};
 use super::opds_view::OpdsBrowserState;
 use super::theme::ReaderTheme;
 use crate::core::license::ProFeature;
 use crate::i18n::format_opds_auth_error;
-use crate::opds::{OpdsCatalog, validate_catalog_url};
+use crate::opds::{DownloadStatus, OpdsCatalog, OpdsEntry, validate_catalog_url};
 use crate::settings::AppSettings;
-use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, Vec2};
+use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, StrokeKind, Vec2};
 
 impl OpdsBrowserState {
     pub(crate) fn render_catalogs_sidebar(
         &mut self,
         ui: &mut egui::Ui,
+        target_width: f32,
+        compact: bool,
         settings: &mut AppSettings,
         theme: &ReaderTheme,
         on_pro_required: &mut Option<ProFeature>,
@@ -19,10 +21,14 @@ impl OpdsBrowserState {
         let text_color = theme.text_color();
         let sec_text = theme.secondary_text_color();
         let accent = theme.accent_color();
+        let sidebar_w = target_width.clamp(140.0, ui.available_width().max(140.0));
+        let card_inner_w = (sidebar_w - 16.0).max(110.0);
 
         ui.vertical(|ui| {
-            ui.set_width(240.0);
-            ui.set_height(ui.available_height());
+            ui.set_width(sidebar_w);
+            if !compact {
+                ui.set_height(ui.available_height());
+            }
             ui.horizontal(|ui| {
                 let (icon_rect, _) =
                     ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
@@ -36,13 +42,16 @@ impl OpdsBrowserState {
             });
             ui.add_space(8.0);
 
-            let scroll_max_h = (ui.available_height()
-                - if self.show_add_catalog { 260.0 } else { 70.0 })
-            .max(100.0);
+            let scroll_max_h = if compact {
+                if self.show_add_catalog { 76.0 } else { 90.0 }
+            } else {
+                (ui.available_height() - if self.show_add_catalog { 260.0 } else { 70.0 })
+                    .max(100.0)
+            };
 
             ScrollArea::vertical()
                 .id_salt("opds_catalog_list")
-                .auto_shrink([false, false])
+                .auto_shrink([false, compact])
                 .max_height(scroll_max_h)
                 .show(ui, |ui| {
                     let mut catalog_to_open = None;
@@ -68,7 +77,7 @@ impl OpdsBrowserState {
                             .inner_margin(egui::Margin::symmetric(8, 6));
 
                         let resp = frame.show(ui, |ui| {
-                            ui.set_width(224.0);
+                            ui.set_width(card_inner_w);
                             ui.horizontal(|ui| {
                                 let (icon_rect, _) =
                                     ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
@@ -142,9 +151,16 @@ impl OpdsBrowserState {
                     if let Some(del_id) = catalog_to_delete {
                         settings.opds_catalogs.retain(|c| c.id != del_id);
                         if self.active_catalog_id.as_deref() == Some(&del_id) {
+                            self.pending_request_id = None;
                             self.active_catalog_id = None;
+                            self.cover_manager.clear();
+                            self.current_url = None;
+                            self.last_requested_url = None;
                             self.current_feed = None;
                             self.breadcrumbs.clear();
+                            self.history.clear();
+                            self.is_loading = false;
+                            self.error_message = None;
                         }
                     }
                 });
@@ -157,7 +173,7 @@ impl OpdsBrowserState {
                 if ui
                     .add(
                         IconButton::new(Icon::Plus, t.opds_add_catalog)
-                            .min_size(Vec2::new(220.0, 30.0))
+                            .min_size(Vec2::new((sidebar_w - 4.0).max(110.0), 30.0))
                             .center(true),
                     )
                     .clicked()
@@ -219,7 +235,7 @@ impl OpdsBrowserState {
                 }
 
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui
                         .add(IconButton::new(Icon::Check, t.opds_save_btn))
                         .clicked()
@@ -241,7 +257,7 @@ impl OpdsBrowserState {
                                         .trim_start_matches("https://")
                                         .split('/')
                                         .next()
-                                        .unwrap_or("OPDS Catalog")
+                                        .unwrap_or(t.extra.opds_default_catalog)
                                 } else {
                                     raw_name
                                 };
@@ -292,5 +308,192 @@ impl OpdsBrowserState {
                 });
             }
         });
+    }
+
+    pub(super) fn render_categories_grid(
+        &mut self,
+        ui: &mut egui::Ui,
+        categories: &[&OpdsEntry],
+        theme: &ReaderTheme,
+        nav_url_to_open: &mut Option<(String, String)>,
+    ) {
+        let text_color = theme.text_color();
+        let sec_text = theme.secondary_text_color();
+        let accent = theme.accent_color();
+
+        let avail_w = (ui.available_width() - 8.0).max(120.0);
+        let cols = ((avail_w / 240.0).floor() as usize).clamp(1, 4);
+        let card_w = ((avail_w - (cols.saturating_sub(1) as f32) * 8.0) / (cols as f32)).max(110.0);
+
+        for row in categories.chunks(cols) {
+            ui.horizontal(|ui| {
+                for entry in row {
+                    let card_frame = egui::Frame::new()
+                        .fill(theme.bg_color())
+                        .stroke(Stroke::new(1.0, accent.gamma_multiply(0.2)))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::symmetric(10, 8));
+
+                    let resp = card_frame.show(ui, |ui| {
+                        ui.set_width((card_w - 20.0).max(90.0));
+                        ui.horizontal(|ui| {
+                            let (icon_rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                            paint_icon(ui.painter(), Icon::Folder, icon_rect, accent);
+                            ui.add_space(4.0);
+                            ui.vertical(|ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&entry.title)
+                                            .size(12.5)
+                                            .strong()
+                                            .color(text_color),
+                                    )
+                                    .truncate(),
+                                );
+                                if let Some(summary) = &entry.summary {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(summary).size(10.5).color(sec_text),
+                                        )
+                                        .truncate(),
+                                    );
+                                }
+                            });
+                        });
+                    });
+
+                    let interact =
+                        ui.interact(resp.response.rect, resp.response.id, egui::Sense::click());
+                    if interact.hovered() {
+                        ui.painter().rect_stroke(
+                            resp.response.rect,
+                            6.0,
+                            Stroke::new(1.5, accent),
+                            StrokeKind::Inside,
+                        );
+                    }
+                    if interact.clicked() {
+                        if let Some(link) = &entry.navigation_link {
+                            *nav_url_to_open = Some((entry.title.clone(), link.clone()));
+                        }
+                    }
+
+                    ui.add_space(6.0);
+                }
+            });
+            ui.add_space(6.0);
+        }
+    }
+
+    pub(super) fn render_downloads_banner(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: &ReaderTheme,
+        lang: crate::i18n::UiLanguage,
+    ) {
+        if self.downloads.is_empty() {
+            return;
+        }
+        let t = lang.t();
+
+        let active_downloads: Vec<_> = self
+            .downloads
+            .iter()
+            .filter(|(_, d)| {
+                matches!(
+                    d.status,
+                    DownloadStatus::Downloading { .. }
+                        | DownloadStatus::Queued
+                        | DownloadStatus::Failed(_)
+                )
+            })
+            .map(|(id, d)| (id.clone(), d.clone()))
+            .collect();
+
+        if active_downloads.is_empty() {
+            return;
+        }
+
+        let mut dismiss_id: Option<String> = None;
+        egui::Frame::new()
+            .fill(theme.bg_color())
+            .stroke(Stroke::new(1.0, theme.accent_color().gamma_multiply(0.4)))
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                for (dl_id, item) in active_downloads {
+                    let progress_w = (ui.available_width() * 0.35).clamp(80.0, 200.0);
+                    ui.horizontal_wrapped(|ui| match item.status {
+                        DownloadStatus::Downloading { downloaded, total } => {
+                            let pct = if let Some(tot) = total
+                                && tot > 0
+                            {
+                                downloaded as f32 / tot as f32
+                            } else {
+                                0.0
+                            };
+                            let mb_dl = downloaded as f32 / (1024.0 * 1024.0);
+                            let info = if let Some(tot) = total {
+                                let mb_tot = tot as f32 / (1024.0 * 1024.0);
+                                format!(
+                                    "{} [{}]: {:.1} {} / {:.1} {} ({:.0}%)",
+                                    item.title,
+                                    item.format_label,
+                                    mb_dl,
+                                    t.extra.megabytes_short,
+                                    mb_tot,
+                                    t.extra.megabytes_short,
+                                    pct * 100.0
+                                )
+                            } else {
+                                format!(
+                                    "{} [{}]: {:.1} {}",
+                                    item.title, item.format_label, mb_dl, t.extra.megabytes_short
+                                )
+                            };
+                            ui.add(
+                                IconLabel::new(Icon::Download, &info)
+                                    .color(theme.accent_color())
+                                    .size(12.0)
+                                    .strong(),
+                            );
+                            if total.is_some() {
+                                ui.add(egui::ProgressBar::new(pct).desired_width(progress_w));
+                            }
+                        }
+                        DownloadStatus::Queued => {
+                            let text = crate::i18n::fill(
+                                t.extra.queued_download,
+                                &[("{title}", &item.title)],
+                            );
+                            ui.add(IconLabel::new(Icon::Recent, &text).size(12.0));
+                        }
+                        DownloadStatus::Failed(err) => {
+                            let text = format!("{} [{}]: {}", item.title, item.format_label, err);
+                            ui.add(
+                                IconLabel::new(Icon::Warning, &text)
+                                    .color(Color32::RED)
+                                    .size(12.0),
+                            );
+                            if ui
+                                .add(
+                                    IconButton::new(Icon::Cross, "")
+                                        .min_size(Vec2::splat(18.0))
+                                        .color(theme.secondary_text_color()),
+                                )
+                                .clicked()
+                            {
+                                dismiss_id = Some(dl_id);
+                            }
+                        }
+                        DownloadStatus::Completed { .. } => {}
+                    });
+                }
+            });
+        if let Some(id) = dismiss_id {
+            self.downloads.remove(&id);
+        }
+        ui.add_space(4.0);
     }
 }

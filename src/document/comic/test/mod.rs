@@ -304,3 +304,47 @@ fn test_comic_image_dimension_bounds() {
     assert!(!is_supported_image("test.exe"));
     assert!(!is_supported_image("__MACOSX/page.png"));
 }
+
+#[test]
+fn test_comic_cb7_enforces_cumulative_unpack_limit() {
+    let test_dir = unique_test_dir("comic_cb7_cumulative_limit");
+    let cb7_path = test_dir.join("two.cb7");
+    std::fs::write(&cb7_path, include_bytes!("fixtures/two_pages.7z")).expect("write cb7");
+
+    let (_, _, cache_ok) =
+        crate::document::comic::scan_sevenz_with_limits(&cb7_path, 10, 1024, 1024)
+            .expect("within cumulative limit");
+    assert!(cache_ok.is_some());
+
+    let err = crate::document::comic::scan_sevenz_with_limits(&cb7_path, 10, 1024, 100);
+    assert!(matches!(
+        err,
+        Err(document::DocumentError::LimitExceeded(_))
+    ));
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_comic_folder_skips_oversized_comic_info_xml() {
+    let test_dir = unique_test_dir("comic_folder_oversized_xml");
+    let folder = test_dir.join("Manga");
+    std::fs::create_dir_all(&folder).expect("create folder");
+    let oversized_body = "A".repeat(6 * 1024 * 1024);
+    let xml = format!("<ComicInfo><Title>{oversized_body}</Title></ComicInfo>");
+    std::fs::write(folder.join("ComicInfo.xml"), xml.as_bytes()).expect("write oversized xml");
+
+    let mut sample_png = Vec::new();
+    let img = image::RgbaImage::new(4, 4);
+    img.write_to(
+        &mut std::io::Cursor::new(&mut sample_png),
+        image::ImageFormat::Png,
+    )
+    .expect("encode png");
+    std::fs::write(folder.join("001.png"), &sample_png).expect("write page");
+
+    let doc = document::open_document(&folder).expect("folder opens when ComicInfo is oversized");
+    assert_ne!(doc.metadata().title, oversized_body);
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}

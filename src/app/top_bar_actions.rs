@@ -243,8 +243,23 @@ fn render_unified_bar(
 
                         let today = unix_day_index(crate::core::license::unix_now());
                         let streak = app.library.current_streak_days(today);
+                        let streak_label = crate::i18n::format::plural_days(
+                            streak as usize,
+                            app.settings.ui_language,
+                        );
+                        let streak_font = egui::FontId::proportional(11.0);
+                        let streak_text_w = ui.fonts_mut(|f| {
+                            f.layout_no_wrap(
+                                streak_label.clone(),
+                                streak_font.clone(),
+                                Color32::WHITE,
+                            )
+                            .size()
+                            .x
+                        });
+                        let streak_w = (streak_text_w + 30.0).max(76.0);
                         let (streak_rect, _) =
-                            ui.allocate_exact_size(Vec2::new(76.0, 24.0), egui::Sense::hover());
+                            ui.allocate_exact_size(Vec2::new(streak_w, 24.0), egui::Sense::hover());
                         ui.painter().rect_filled(
                             streak_rect,
                             12.0,
@@ -271,8 +286,8 @@ fn render_unified_bar(
                         ui.painter().text(
                             Pos2::new(streak_rect.min.x + 22.0, streak_rect.center().y),
                             egui::Align2::LEFT_CENTER,
-                            format!("{streak} дней"),
-                            egui::FontId::proportional(11.0),
+                            streak_label,
+                            streak_font,
                             if is_cozy {
                                 CozyPalette::ON_SURFACE
                             } else {
@@ -329,8 +344,30 @@ fn render_unified_bar(
                         ui.separator();
 
                         let is_cozy_active = app.library.design == UiDesignMode::Cozy;
-                        let (capsule_rect, _) =
-                            ui.allocate_exact_size(Vec2::new(165.0, 24.0), egui::Sense::hover());
+                        let label_font = egui::FontId::proportional(11.0);
+                        let (cozy_w, studio_w) = ui.fonts_mut(|f| {
+                            (
+                                f.layout_no_wrap(
+                                    t.library_design_cozy.to_string(),
+                                    label_font.clone(),
+                                    Color32::WHITE,
+                                )
+                                .size()
+                                .x,
+                                f.layout_no_wrap(
+                                    t.library_design_studio.to_string(),
+                                    label_font,
+                                    Color32::WHITE,
+                                )
+                                .size()
+                                .x,
+                            )
+                        });
+                        let side_w = (cozy_w.max(studio_w) + 22.0).max(82.5);
+                        let (capsule_rect, _) = ui.allocate_exact_size(
+                            Vec2::new(side_w * 2.0, 24.0),
+                            egui::Sense::hover(),
+                        );
                         ui.painter().rect_filled(
                             capsule_rect,
                             12.0,
@@ -375,7 +412,7 @@ fn render_unified_bar(
                             ui.painter().text(
                                 studio_r.center(),
                                 egui::Align2::CENTER_CENTER,
-                                "Исследование",
+                                t.library_design_studio,
                                 egui::FontId::proportional(11.0),
                                 if is_cozy {
                                     CozyPalette::ON_SURFACE_VARIANT
@@ -407,7 +444,7 @@ fn render_unified_bar(
                             ui.painter().text(
                                 studio_r.center(),
                                 egui::Align2::CENTER_CENTER,
-                                "Исследование",
+                                t.library_design_studio,
                                 egui::FontId::proportional(11.0),
                                 if is_cozy {
                                     CozyPalette::PRIMARY
@@ -578,7 +615,7 @@ fn render_classic_bar(
     }
     if actions.open_update {
         if let crate::updater::UpdateStatus::UpdateAvailable(ref info) = app.updater.status() {
-            ctx.open_url(egui::OpenUrl::new_tab(&info.release_url));
+            crate::platform::open_url(&info.release_url);
         }
     }
 

@@ -194,6 +194,7 @@ pub struct WindowState {
     pub width: f32,
     pub height: f32,
     pub maximized: bool,
+    pub scale_factor: Option<f32>,
 }
 
 impl Default for WindowState {
@@ -204,6 +205,7 @@ impl Default for WindowState {
             width: 1050.0,
             height: 750.0,
             maximized: false,
+            scale_factor: None,
         }
     }
 }

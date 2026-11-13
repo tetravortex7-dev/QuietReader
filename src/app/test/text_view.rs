@@ -195,3 +195,128 @@ fn test_two_column_split_balances_paragraphs() {
     assert_eq!(split_paragraphs(&[]), 0);
     assert_eq!(split_paragraphs(&["only".to_string()]), 1);
 }
+
+#[test]
+fn test_append_with_highlight_handles_unicode_case_length_changes() {
+    use crate::app::text_view::layout::append_with_highlight;
+    use eframe::egui::{Color32, TextFormat, text::LayoutJob};
+
+    let base_format = TextFormat {
+        color: Color32::WHITE,
+        background: Color32::TRANSPARENT,
+        ..Default::default()
+    };
+
+    let sharp_text = "ẞß ẞß";
+    let mut sharp_job = LayoutJob::default();
+    append_with_highlight(&mut sharp_job, sharp_text, &base_format, "ß", false, &[]);
+    assert_eq!(sharp_job.text, sharp_text);
+    let highlighted_sharps: Vec<&str> = sharp_job
+        .sections
+        .iter()
+        .filter(|sec| sec.format.background != Color32::TRANSPARENT)
+        .map(|sec| &sharp_job.text[sec.byte_range.start.0..sec.byte_range.end.0])
+        .collect();
+    assert_eq!(highlighted_sharps, vec!["ẞß", "ẞß"]);
+
+    let spaced_sharp_text = "ẞ ß";
+    let mut spaced_sharp_job = LayoutJob::default();
+    append_with_highlight(
+        &mut spaced_sharp_job,
+        spaced_sharp_text,
+        &base_format,
+        "ß",
+        false,
+        &[],
+    );
+    let spaced_sharps: Vec<&str> = spaced_sharp_job
+        .sections
+        .iter()
+        .filter(|sec| sec.format.background != Color32::TRANSPARENT)
+        .map(|sec| &spaced_sharp_job.text[sec.byte_range.start.0..sec.byte_range.end.0])
+        .collect();
+    assert_eq!(spaced_sharps, vec!["ẞ", "ß"]);
+
+    let dotted_text = "İİ word ẞ tail Ёлка";
+    let mut mixed_job = LayoutJob::default();
+    let quote_color = Color32::from_rgb(10, 20, 30);
+    append_with_highlight(
+        &mut mixed_job,
+        dotted_text,
+        &base_format,
+        "word",
+        true,
+        &[("İ", quote_color), ("tail", quote_color)],
+    );
+    assert_eq!(mixed_job.text, dotted_text);
+    let active_hits: Vec<&str> = mixed_job
+        .sections
+        .iter()
+        .filter(|sec| sec.format.background == Color32::from_rgb(255, 175, 0))
+        .map(|sec| &mixed_job.text[sec.byte_range.start.0..sec.byte_range.end.0])
+        .collect();
+    assert_eq!(active_hits, vec!["word"]);
+    let quote_hits: Vec<&str> = mixed_job
+        .sections
+        .iter()
+        .filter(|sec| sec.format.background == quote_color)
+        .map(|sec| &mixed_job.text[sec.byte_range.start.0..sec.byte_range.end.0])
+        .collect();
+    assert_eq!(quote_hits, vec!["İİ", "tail"]);
+
+    let overlapping_text = "İstanbul И word";
+    let mut overlap_job = LayoutJob::default();
+    append_with_highlight(
+        &mut overlap_job,
+        overlapping_text,
+        &base_format,
+        "İ",
+        false,
+        &[("İstanbul", quote_color)],
+    );
+    assert_eq!(overlap_job.text, overlapping_text);
+    assert!(!overlap_job.sections.is_empty());
+}
+
+#[test]
+fn test_footnote_pinning_switches_cleanly_without_losing_active_card() {
+    use crate::app::text_view::footnotes::update_pinned_on_markers;
+
+    let ids = ["1", "2"];
+    let mut pinned = None;
+
+    let hit = update_pinned_on_markers(&ids, &[true, false], &[false, false], true, &mut pinned);
+    assert!(hit);
+    assert_eq!(pinned.as_deref(), Some("1"));
+
+    let hit_hover_second =
+        update_pinned_on_markers(&ids, &[false, true], &[true, false], false, &mut pinned);
+    assert!(hit_hover_second);
+    assert_eq!(pinned.as_deref(), Some("1"));
+
+    let hit_switch =
+        update_pinned_on_markers(&ids, &[false, true], &[false, false], true, &mut pinned);
+    assert!(hit_switch);
+    assert_eq!(pinned.as_deref(), Some("2"));
+
+    let hit_toggle_off =
+        update_pinned_on_markers(&ids, &[false, true], &[false, false], true, &mut pinned);
+    assert!(hit_toggle_off);
+    assert_eq!(pinned, None);
+}
+
+#[test]
+fn test_should_record_text_progress_throttles_scroll_deltas() {
+    use crate::app::text_view::should_record_text_progress;
+    use crate::settings::AppSettings;
+    use std::path::Path;
+
+    let mut settings = AppSettings::default();
+    let path = Path::new("book.fb2");
+    assert!(should_record_text_progress(&settings, path, 0, 0.0));
+
+    settings.record_book_progress(path, "Book", "Author", 1, 100.0);
+    assert!(!should_record_text_progress(&settings, path, 1, 115.0));
+    assert!(should_record_text_progress(&settings, path, 1, 125.0));
+    assert!(should_record_text_progress(&settings, path, 2, 100.0));
+}

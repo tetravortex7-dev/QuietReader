@@ -163,3 +163,63 @@ fn test_autoscroll_controller_state_and_paged_advance() {
     controller.stop();
     assert!(!controller.is_active());
 }
+
+#[test]
+fn test_autoscroll_short_chapter_dwells_before_advancing() {
+    use crate::app::autoscroll::AutoscrollController;
+    use crate::settings::AutoScrollSettings;
+
+    let mut controller = AutoscrollController::default();
+    let mut settings = AutoScrollSettings::default();
+    settings.pause_mode = true;
+    settings.pause_duration = 1.0;
+
+    controller.toggle(0.0, 0.0, 100.0);
+    let mut current_chapter = 0;
+    let mut pending_scroll_y = None;
+    let mut last_rendered = 0;
+
+    for _ in 0..5 {
+        controller.update_with_dt(
+            0.05,
+            &settings,
+            0.0,
+            0.0,
+            3,
+            &mut current_chapter,
+            &mut pending_scroll_y,
+            &mut last_rendered,
+            Some(1),
+        );
+    }
+    assert_eq!(current_chapter, 0);
+
+    for _ in 0..20 {
+        controller.update_with_dt(
+            0.05,
+            &settings,
+            0.0,
+            0.0,
+            3,
+            &mut current_chapter,
+            &mut pending_scroll_y,
+            &mut last_rendered,
+            Some(1),
+        );
+    }
+    assert_eq!(current_chapter, 1);
+    assert_eq!(pending_scroll_y, Some(0.0));
+
+    controller.update_with_dt(
+        0.05,
+        &settings,
+        0.0,
+        0.0,
+        3,
+        &mut current_chapter,
+        &mut pending_scroll_y,
+        &mut last_rendered,
+        Some(2),
+    );
+    assert_eq!(current_chapter, 1);
+}

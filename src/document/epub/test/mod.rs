@@ -537,3 +537,240 @@ fn test_epub_note_target_with_generic_name_outside_spine() {
     assert_eq!(doc.footnote("id14"), Some("Note body."));
     assert!(doc.note_location("id14").is_none());
 }
+
+#[test]
+fn test_epub_entities_table_sorted_and_sanitization_edge_cases() {
+    use document::epub::entities::{HTML_NAMED_ENTITIES, decode_xml_ref};
+    use document::epub::{parse_html_chapter_full, sanitize_xml_entities};
+
+    assert!(HTML_NAMED_ENTITIES.windows(2).all(|w| w[0].0 < w[1].0));
+    for predefined in ["amp", "lt", "gt", "quot", "apos"] {
+        assert!(
+            HTML_NAMED_ENTITIES
+                .binary_search_by_key(&predefined, |(k, _)| *k)
+                .is_err()
+        );
+    }
+
+    assert_eq!(decode_xml_ref("#"), None);
+    assert_eq!(decode_xml_ref("#x"), None);
+    assert_eq!(decode_xml_ref("#X"), None);
+    assert_eq!(decode_xml_ref("#0"), None);
+    assert_eq!(decode_xml_ref("#xD800"), None);
+    assert_eq!(decode_xml_ref("#8212").as_deref(), Some("—"));
+    assert_eq!(decode_xml_ref("eacute").as_deref(), Some("é"));
+
+    let raw = "Caf&eacute; &uuml; &OElig; &thetasym; &#; &#x; &#X; &#0; &#8212; Кофе & Привет; <![CDATA[AT&T & <Co>]]>";
+    let sanitized = sanitize_xml_entities(raw);
+    assert!(sanitized.contains("Café ü Œ ϑ"));
+    assert!(sanitized.contains("&amp;#;"));
+    assert!(sanitized.contains("&amp;#x;"));
+    assert!(sanitized.contains("&amp;#X;"));
+    assert!(sanitized.contains("&amp;#0;"));
+    assert!(sanitized.contains("&#8212;"));
+    assert!(sanitized.contains("Кофе &amp; Привет;"));
+    assert!(sanitized.contains("<![CDATA[AT&T & <Co>]]>"));
+
+    let parsed = parse_html_chapter_full(
+        "<html><body><p>Val&#8212;&#x2014;&eacute; <![CDATA[A & <B>]]></p></body></html>",
+    );
+    assert_eq!(parsed.paragraphs, vec!["Val——é A & <B>"]);
+}
+
+#[test]
+fn test_epub3_nav_toc_nested_lists_whitespace_and_entities() {
+    use document::epub::{parse_epub3_nav_toc, resolve_toc_destination};
+    use std::collections::HashMap;
+
+    let mut chapters = HashMap::new();
+    chapters.insert("OEBPS/ch1.xhtml".to_string(), 0);
+    chapters.insert("OEBPS/ch2.xhtml".to_string(), 1);
+    chapters.insert("OEBPS/ch3.xhtml".to_string(), 2);
+
+    let mut anchors = HashMap::new();
+    anchors.insert("top".to_string(), 0);
+    anchors.insert("only_anchor".to_string(), 2);
+
+    assert_eq!(
+        resolve_toc_destination("ch2.xhtml#top", "OEBPS", &chapters, &anchors),
+        1
+    );
+    assert_eq!(
+        resolve_toc_destination("#only_anchor", "OEBPS", &chapters, &anchors),
+        2
+    );
+
+    let nav_html = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<body>
+<nav epub:type="toc">
+  <ol>
+    <li>
+      <a href="ch1.xhtml#top"><span>Part</span> <b>1</b> &amp; Intro</a>
+      <ol>
+        <li><a href="ch2.xhtml#top">Sub &eacute; Chapter</a></li>
+      </ol>
+    </li>
+    <li>
+      <span>Section Without Link</span>
+      <ol>
+        <li><a href="ch3.xhtml">Ch 3</a></li>
+      </ol>
+    </li>
+  </ol>
+</nav>
+<nav epub:type="landmarks">
+  <ol><li><a href="ch1.xhtml">Cover</a></li></ol>
+</nav>
+</body></html>"#;
+
+    let toc = parse_epub3_nav_toc(nav_html, "OEBPS", &chapters, &anchors);
+    assert_eq!(toc.len(), 2);
+    assert_eq!(toc[0].title, "Part 1 & Intro");
+    assert_eq!(toc[0].chapter_index, 0);
+    assert_eq!(toc[0].children.len(), 1);
+    assert_eq!(toc[0].children[0].title, "Sub é Chapter");
+    assert_eq!(toc[0].children[0].chapter_index, 1);
+    assert_eq!(toc[1].title, "Ch 3");
+    assert_eq!(toc[1].chapter_index, 2);
+}
+
+#[test]
+fn test_epub_ncx_subdir_and_opf_metadata_entities() {
+    use document::Document;
+    use std::io::{Cursor, Write};
+    use zip::write::SimpleFileOptions;
+
+    let mut buf = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
+        let opts = SimpleFileOptions::default();
+
+        zip.start_file("META-INF/container.xml", opts).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#,
+        )
+        .unwrap();
+
+        zip.start_file("OEBPS/content.opf", opts).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0"?>
+<package version="2.0" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Tom &amp; <i>Jerry</i><![CDATA[ Edition]]></dc:title>
+    <dc:creator>Author &amp; Co</dc:creator>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="ncx/toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="ch1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="text/ch2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="ch1"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>"#,
+        )
+        .unwrap();
+
+        zip.start_file("OEBPS/ncx/toc.ncx", opts).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+  <navMap>
+    <navPoint id="np1" playOrder="1">
+      <navLabel><text>Book &amp; One</text></navLabel>
+      <content src="../text/ch1.xhtml#top"/>
+    </navPoint>
+    <navPoint id="np2" playOrder="2">
+      <navLabel><text>Book &amp; Two</text></navLabel>
+      <content src="../text/ch2.xhtml#top"/>
+    </navPoint>
+  </navMap>
+</ncx>"#,
+        )
+        .unwrap();
+
+        zip.start_file("OEBPS/text/ch1.xhtml", opts).unwrap();
+        zip.write_all(b"<html><body><p id=\"top\">First</p></body></html>")
+            .unwrap();
+
+        zip.start_file("OEBPS/text/ch2.xhtml", opts).unwrap();
+        zip.write_all(b"<html><body><p id=\"top\">Second</p></body></html>")
+            .unwrap();
+
+        zip.finish().unwrap();
+    }
+
+    let doc = EpubDocument::from_bytes(&buf).unwrap();
+    assert_eq!(doc.metadata().title, "Tom & Jerry Edition");
+    assert_eq!(doc.metadata().author, "Author & Co");
+    assert_eq!(doc.toc().len(), 2);
+    assert_eq!(doc.toc()[0].title, "Book & One");
+    assert_eq!(doc.toc()[0].chapter_index, 0);
+    assert_eq!(doc.toc()[1].title, "Book & Two");
+    assert_eq!(doc.toc()[1].chapter_index, 1);
+}
+
+#[test]
+fn test_epub_resolve_path_normalization_and_security() {
+    use document::epub::resolve_path;
+
+    assert_eq!(
+        resolve_path("OEBPS/text", "/OEBPS/text/../ch1.xhtml"),
+        "OEBPS/ch1.xhtml"
+    );
+    assert_eq!(resolve_path("OEBPS", "/../../outside.xhtml"), "");
+    assert_eq!(
+        resolve_path("OEBPS", "..\\text\\ch1.xhtml"),
+        "text/ch1.xhtml"
+    );
+    assert_eq!(resolve_path("OEBPS", "..\\..\\outside.xhtml"), "");
+    assert_eq!(resolve_path("OEBPS", "C:\\Windows\\win.ini"), "");
+    assert_eq!(resolve_path("OEBPS", "file:///etc/passwd"), "");
+    assert_eq!(
+        resolve_path("OEBPS", "part:1/../ch2.xhtml"),
+        "OEBPS/ch2.xhtml"
+    );
+    assert_eq!(
+        resolve_path("OEBPS", "https://example.com/book"),
+        "https://example.com/book"
+    );
+}
+
+#[test]
+fn test_epub_html_void_tags_in_notes_whitespace_and_title() {
+    use document::epub::{extract_note_text_by_id, parse_html_chapter_full};
+
+    let html = concat!(
+        "<html><head><style>body { color: #000; }</style><title>Doc &amp; One</title>",
+        "<div>ignored head text</div></head><body>",
+        "<p>\n  Line\n  wrapped\n  <i>with</i>\n  spaces.<br/>\n  After break.\n</p>",
+        "<aside epub:type=\"footnote\" id=\"fn1\"><p>First<br>Second <img src=\"x.png\"> end &#8212; &#xA9;.</p></aside>",
+        "<p>Paragraph after note.</p>",
+        "<div id=\"fn2\"><p>Note<br>two &#8212; &eacute;.</p></div>",
+        "</body></html>",
+    );
+
+    let parsed = parse_html_chapter_full(html);
+    assert_eq!(parsed.title, "Doc & One");
+    assert_eq!(
+        parsed.paragraphs,
+        vec![
+            "Line wrapped <i>with</i> spaces.\nAfter break.",
+            "Paragraph after note."
+        ]
+    );
+    assert_eq!(
+        parsed.notes.get("fn1").map(String::as_str),
+        Some("First Second end — ©.")
+    );
+    assert_eq!(
+        extract_note_text_by_id(html, "fn2").as_deref(),
+        Some("Note two — é.")
+    );
+}

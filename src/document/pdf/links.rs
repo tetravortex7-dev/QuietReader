@@ -3,8 +3,6 @@ use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::object::{Array, Dict, Name, Object, ObjectIdentifier, Rect};
 use std::collections::HashMap;
 
-use super::outline::decode_pdf_string;
-
 pub fn extract_pdf_links(pdf: &Pdf, page_count: usize) -> HashMap<usize, Vec<PageLink>> {
     let mut links: HashMap<usize, Vec<PageLink>> = HashMap::new();
     if page_count == 0 {
@@ -23,25 +21,7 @@ pub fn extract_pdf_links(pdf: &Pdf, page_count: usize) -> HashMap<usize, Vec<Pag
         }
     }
 
-    let mut named_dests: HashMap<String, usize> = HashMap::new();
-    if let Some(dests) = root.get::<Dict<'_>>("Dests") {
-        for (name, _) in dests.entries() {
-            let key = decode_pdf_string(name.as_ref());
-            if let Some(array) = dests.get::<Array<'_>>(name.as_ref()) {
-                if let Some(page) =
-                    super::outline::resolve_dest_array(&array, &page_ids, page_count)
-                {
-                    named_dests.insert(key, page);
-                }
-            } else if let Some(dict) = dests.get::<Dict<'_>>(name.as_ref())
-                && let Some(array) = dict.get::<Array<'_>>("D")
-                && let Some(page) =
-                    super::outline::resolve_dest_array(&array, &page_ids, page_count)
-            {
-                named_dests.insert(key, page);
-            }
-        }
-    }
+    let named_dests = super::outline::collect_named_dests(&root, &page_ids, page_count);
 
     for (page_index, page) in pdf.pages().iter().enumerate() {
         let Some(annots) = page.raw().get::<Array<'_>>("Annots") else {

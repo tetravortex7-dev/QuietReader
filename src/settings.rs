@@ -26,7 +26,10 @@ fn default_font_family() -> String {
 }
 
 fn default_associated_extensions() -> Vec<String> {
-    vec!["fb2".to_string(), "epub".to_string()]
+    crate::document::registry::DEFAULT_BOOK_ASSOCIATIONS
+        .iter()
+        .map(|ext| (*ext).to_string())
+        .collect()
 }
 
 fn default_ui_language() -> crate::i18n::UiLanguage {
@@ -230,12 +233,6 @@ pub(crate) fn fallback_settings_path(base: PathBuf) -> PathBuf {
 impl AppSettings {
     pub fn last_save_error() -> Option<String> {
         LAST_SAVE_ERROR.lock().ok().and_then(|guard| guard.clone())
-    }
-
-    pub fn clear_save_error() {
-        if let Ok(mut guard) = LAST_SAVE_ERROR.lock() {
-            *guard = None;
-        }
     }
 
     pub fn set_portable(enabled: bool) {
@@ -533,16 +530,19 @@ impl AppSettings {
     }
 
     pub fn set_library_pin(&mut self, pin: &str) {
-        if pin.is_empty() {
-            self.library_pin_hash = None;
+        if pin.is_empty() || self.has_library_pin() {
             return;
         }
         let salt = format!("{:016x}{:016x}", salt_seed(), salt_seed());
         self.library_pin_hash = Some(format!("{salt}:{}", hash_pin(&salt, pin)));
     }
 
-    pub fn clear_library_pin(&mut self) {
+    pub fn clear_library_pin(&mut self, current_pin: &str) -> bool {
+        if !self.has_library_pin() || !self.verify_library_pin(current_pin) {
+            return false;
+        }
         self.library_pin_hash = None;
+        true
     }
 
     pub fn verify_library_pin(&self, pin: &str) -> bool {
@@ -711,6 +711,7 @@ impl AppSettings {
             .and_then(|(_, progress)| progress.paragraph)
     }
 
+    #[cfg_attr(not(all(test, feature = "enable_tests")), allow(dead_code))]
     pub fn update_window_state(
         &mut self,
         x: Option<f32>,
@@ -718,6 +719,18 @@ impl AppSettings {
         width: f32,
         height: f32,
         maximized: bool,
+    ) {
+        self.update_window_state_with_scale(x, y, width, height, maximized, None);
+    }
+
+    pub fn update_window_state_with_scale(
+        &mut self,
+        x: Option<f32>,
+        y: Option<f32>,
+        width: f32,
+        height: f32,
+        maximized: bool,
+        scale_factor: Option<f32>,
     ) {
         if !maximized {
             if let (Some(px), Some(py)) = (x, y)
@@ -732,6 +745,12 @@ impl AppSettings {
             if width.is_finite() && height.is_finite() && width >= 400.0 && height >= 300.0 {
                 self.window.width = width;
                 self.window.height = height;
+            }
+            if let Some(scale) = scale_factor
+                && scale.is_finite()
+                && (0.5..=6.0).contains(&scale)
+            {
+                self.window.scale_factor = Some(scale);
             }
         }
         self.window.maximized = maximized;

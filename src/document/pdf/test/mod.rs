@@ -188,7 +188,7 @@ startxref
     let doc = document::open_document(&pdf_path).expect("Должен успешно открыть валидный PDF");
     assert_eq!(doc.chapters().len(), 1);
     assert_eq!(doc.toc().len(), 1);
-    assert_eq!(doc.toc()[0].title, "Страница 1");
+    assert_eq!(doc.toc()[0].title, crate::document::errors::tokens::page(1));
 
     let comic = doc
         .page_content()
@@ -310,6 +310,26 @@ fn test_pdf_permissions_extraction() {
     let perms_no_copy = extract_pdf_permissions(encrypted_no_copy);
     assert!(perms_no_copy.can_print);
     assert!(!perms_no_copy.can_copy);
+
+    let padding = "0".repeat(700);
+    let long_encrypt_pdf = format!(
+        "%PDF-1.7\n\
+        1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+        4 0 obj\n<< /P -20 /O <{padding}> /U <{padding}> /V 5 /R 6 /Filter /Standard >>\nendobj\n\
+        5 0 obj\n<< /Filter /FlateDecode /P -4 /Length 0 >>\nstream\nendstream\nendobj\n\
+        trailer\n<< /Size 6 /Root 1 0 R /Encrypt 4 0 R >>\n%%EOF\n"
+    );
+    let long_perms = extract_pdf_permissions(long_encrypt_pdf.as_bytes());
+    assert!(long_perms.can_print);
+    assert!(!long_perms.can_copy);
+
+    let unencrypted_with_decoy = b"%PDF-1.4\n\
+        1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+        3 0 obj\n<< /Filter /FlateDecode /P -20 /Length 0 >>\nstream\nendstream\nendobj\n\
+        trailer\n<< /Size 4 /Root 1 0 R >>\n%%EOF\n";
+    let decoy_perms = extract_pdf_permissions(unencrypted_with_decoy);
+    assert!(decoy_perms.can_print);
+    assert!(decoy_perms.can_copy);
 }
 
 #[test]
@@ -321,4 +341,60 @@ fn test_pdf_from_bytes_with_password_api() {
     let result_with_pass =
         PdfDocument::from_bytes_with_password(Vec::new(), dummy_path, Some("secret"));
     assert!(matches!(result_with_pass, Err(DocumentError::Corrupted(_))));
+}
+
+#[test]
+fn test_pdf_names_dests_tree_in_outline_and_links() {
+    use crate::document::Document;
+
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /Names << /Dests 8 0 R >> /Outlines 10 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Annots [6 0 R] /Contents 7 0 R >>"
+            .to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Contents 7 0 R >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Contents 7 0 R >>".to_string(),
+        "<< /Type /Annot /Subtype /Link /Rect [10 10 100 40] /Dest (sec_three) >>".to_string(),
+        "<< /Length 0 >>\nstream\nendstream".to_string(),
+        "<< /Kids [9 0 R] >>".to_string(),
+        "<< /Kids [8 0 R] /Names [(sec_two) [4 0 R /Fit] (sec_three) << /D [5 0 R /XYZ 0 250 0] >>] >>"
+            .to_string(),
+        "<< /Type /Outlines /First 11 0 R /Last 12 0 R /Count 2 >>".to_string(),
+        "<< /Title (Part Two) /Parent 10 0 R /Next 12 0 R /Dest (sec_two) >>".to_string(),
+        "<< /Title (Part Three) /Parent 10 0 R /Prev 11 0 R /A << /S /GoTo /D /sec_three >> >>"
+            .to_string(),
+    ];
+
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref_start = pdf.len();
+    pdf.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+
+    let doc = PdfDocument::from_bytes(pdf, Path::new("names_dests.pdf")).unwrap();
+    let toc = doc.toc();
+    assert_eq!(toc.len(), 2);
+    assert_eq!(toc[0].title, "Part Two");
+    assert_eq!(toc[0].chapter_index, 1);
+    assert_eq!(toc[1].title, "Part Three");
+    assert_eq!(toc[1].chapter_index, 2);
+
+    let links = doc.page_content().unwrap().page_links(0);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target_page, 2);
 }

@@ -16,29 +16,29 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
-eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "clipboard"] }
-base64 = "0.23.1"
-encoding_rs = "0.8.42"
-quick-xml = "0.42.0"
-rfd = "0.17.2"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "clipboard"] }
+base64 = { version = "0.23.1", default-features = false, features = ["std"] }
+encoding_rs = { version = "0.8.44", default-features = false, features = ["alloc"] }
+quick-xml = { version = "0.42.0", default-features = false }
+rfd = { version = "0.18.0", default-features = false }
+serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["fast"] }
-zip = { version = "9.1.1", default-features = false, features = ["deflate"] }
+zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 sevenz-rust = { version = "0.6.1", default-features = false }
-unrar-rs = { version = "0.14.1", default-features = false, features = ["crypto-host"] }
-hayro = "0.8.0"
-djvu-rs = { version = "0.43.0", default-features = false, features = ["std"] }
-tts = "0.26.3"
-msedge-tts = "0.4.1"
+unrar-rs = { version = "0.16.1", default-features = false, features = ["crypto-host"] }
+hayro = { version = "0.9.0", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
+djvu-rs = { version = "0.45.0", default-features = false, features = ["std"] }
+tts = { version = "0.26.3", default-features = false }
+msedge-tts = { version = "0.4.1", default-features = false, features = ["blocking"] }
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "symphonia-mp3", "symphonia-wav"] }
-ureq = "3.5.0"
-url = "2.5.8"
-flate2 = "1.1.10"
-lzma-rs = "0.3.0"
-sha2 = "0.11.1"
-tar = "0.4.46"
+ureq = { version = "3.5.2", default-features = false, features = ["rustls", "gzip"] }
+url = { version = "2.5.8", default-features = false, features = ["std"] }
+flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
+lzma-rs = { version = "0.3.0", default-features = false }
+sha2 = { version = "0.11.1", default-features = false }
+tar = { version = "0.4.46", default-features = false }
 rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
 mobi = { version = "0.8.0", default-features = false }
 
@@ -49,6 +49,9 @@ keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["x11", "wayland"] }
+rfd = { version = "0.18.0", default-features = false, features = ["xdg-portal", "wayland"] }
+tts = { version = "0.26.3", default-features = false, features = ["speech_dispatcher_0_11"] }
 keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 
 [dev-dependencies]

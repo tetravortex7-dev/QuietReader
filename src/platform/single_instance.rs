@@ -46,9 +46,7 @@ pub(crate) fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()
         file.sync_all()?;
         drop(file);
         crate::platform::permissions::restrict_file(&tmp);
-        let _ = std::fs::remove_file(path);
         std::fs::rename(&tmp, path)?;
-        crate::platform::permissions::restrict_file(path);
         Ok(())
     })();
     if result.is_err() {
@@ -165,6 +163,28 @@ impl Drop for SingleInstanceGuard {
     }
 }
 
+pub(crate) fn window_title_matches(title: &str) -> bool {
+    let trimmed = title.trim();
+    trimmed == "QuietReader"
+        || trimmed.starts_with("QuietReader ")
+        || trimmed.ends_with("QuietReader")
+}
+
+pub(crate) fn should_accept_window(
+    is_valid: bool,
+    same_pid: bool,
+    want_own_process: bool,
+    title: Option<&str>,
+) -> bool {
+    if !is_valid || same_pid != want_own_process {
+        return false;
+    }
+    match title {
+        Some(t) => window_title_matches(t),
+        None => true,
+    }
+}
+
 #[cfg(windows)]
 mod win32_ipc {
     use super::{SingleInstanceGuard, get_hwnd_file_path, get_ipc_request_path};
@@ -195,7 +215,13 @@ mod win32_ipc {
         fn GetActiveWindow() -> isize;
         fn GetForegroundWindow() -> isize;
         fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> isize;
+        fn EnumWindows(
+            lp_enum_func: unsafe extern "system" fn(isize, isize) -> i32,
+            l_param: isize,
+        ) -> i32;
         fn IsWindow(hwnd: isize) -> i32;
+        fn IsWindowVisible(hwnd: isize) -> i32;
+        fn GetWindowTextW(hwnd: isize, lp_string: *mut u16, n_max_count: i32) -> i32;
         fn IsIconic(hwnd: isize) -> i32;
         fn ShowWindow(hwnd: isize, n_cmd_show: i32) -> i32;
         fn SetForegroundWindow(hwnd: isize) -> i32;
@@ -209,6 +235,16 @@ mod win32_ipc {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
+    fn window_text(hwnd: isize) -> Option<String> {
+        let mut buf = [0u16; 256];
+        let len = unsafe { GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
+        if len > 0 {
+            Some(String::from_utf16_lossy(&buf[..len as usize]))
+        } else {
+            None
+        }
+    }
+
     pub fn is_own_process_window(hwnd: isize) -> bool {
         if hwnd == 0 {
             return false;
@@ -220,17 +256,77 @@ mod win32_ipc {
         }
     }
 
-    fn find_primary_hwnd() -> isize {
+    struct EnumSearchState {
+        want_own_process: bool,
+        found: isize,
+    }
+
+    unsafe extern "system" fn enum_window_proc(hwnd: isize, lparam: isize) -> i32 {
+        unsafe {
+            let state = &mut *(lparam as *mut EnumSearchState);
+            if IsWindowVisible(hwnd) == 0 {
+                return 1;
+            }
+            let title = window_text(hwnd);
+            if title.is_some()
+                && super::should_accept_window(
+                    IsWindow(hwnd) != 0,
+                    is_own_process_window(hwnd),
+                    state.want_own_process,
+                    title.as_deref(),
+                )
+            {
+                state.found = hwnd;
+                return 0;
+            }
+            1
+        }
+    }
+
+    fn find_window_matching(want_own_process: bool) -> isize {
+        let title = to_wide("QuietReader");
+        let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+        if hwnd != 0 {
+            let valid = unsafe { IsWindow(hwnd) != 0 };
+            if super::should_accept_window(
+                valid,
+                is_own_process_window(hwnd),
+                want_own_process,
+                Some("QuietReader"),
+            ) {
+                return hwnd;
+            }
+        }
+        let mut state = EnumSearchState {
+            want_own_process,
+            found: 0,
+        };
+        unsafe {
+            EnumWindows(
+                enum_window_proc,
+                &mut state as *mut EnumSearchState as isize,
+            );
+        }
+        state.found
+    }
+
+    fn find_existing_instance_hwnd() -> isize {
         if let Some(text) = super::read_private_file(&get_hwnd_file_path(), false)
             && let Ok(val) = text.trim().parse::<isize>()
             && val != 0
-            && unsafe { IsWindow(val) != 0 }
         {
-            return val;
+            let valid = unsafe { IsWindow(val) != 0 };
+            let title = window_text(val);
+            if super::should_accept_window(
+                valid,
+                is_own_process_window(val),
+                false,
+                title.as_deref(),
+            ) {
+                return val;
+            }
         }
-        let title = to_wide("QuietReader");
-        let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
-        if is_own_process_window(hwnd) { hwnd } else { 0 }
+        find_window_matching(false)
     }
 
     pub fn focus_hwnd(hwnd: isize) {
@@ -264,7 +360,7 @@ mod win32_ipc {
                 let _ = super::write_private_file(&get_ipc_request_path(), &payload);
 
                 AllowSetForegroundWindow(ASFW_ANY);
-                let hwnd = find_primary_hwnd();
+                let hwnd = find_existing_instance_hwnd();
                 focus_hwnd(hwnd);
 
                 None
@@ -287,8 +383,7 @@ mod win32_ipc {
                 hwnd = GetForegroundWindow();
             }
             if !is_own_process_window(hwnd) {
-                let title = to_wide("QuietReader");
-                hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+                hwnd = find_window_matching(true);
             }
             if is_own_process_window(hwnd) {
                 REGISTERED_HWND.store(hwnd, Ordering::Relaxed);
@@ -311,8 +406,8 @@ mod win32_ipc {
 
     pub fn focus_current_process_window() {
         let mut hwnd = REGISTERED_HWND.load(Ordering::Relaxed);
-        if hwnd == 0 {
-            hwnd = find_primary_hwnd();
+        if hwnd == 0 || unsafe { IsWindow(hwnd) == 0 } || !is_own_process_window(hwnd) {
+            hwnd = find_window_matching(true);
         }
         focus_hwnd(hwnd);
     }

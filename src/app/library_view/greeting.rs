@@ -66,12 +66,22 @@ pub fn render_greeting(
                     ui.add_space(2.0);
 
                     let count_str = library.entries.len().to_string();
-                    let subtitle = t.library_collection_sub.replace("{count}", &count_str);
-                    ui.label(RichText::new(subtitle).size(11.5).color(if is_cozy {
+                    let count_text = t
+                        .extra
+                        .library_collection_count
+                        .replace("{count}", &count_str);
+                    let sub_color = if is_cozy {
                         CozyPalette::ON_SURFACE_VARIANT
                     } else {
                         theme.secondary_text_color()
-                    }));
+                    };
+                    crate::app::icons::dotted_responsive_row(
+                        ui,
+                        &[t.library_collection_sub, &count_text],
+                        11.5,
+                        sub_color,
+                        sub_color.gamma_multiply(0.7),
+                    );
                 });
 
                 let remaining = ui.available_width();

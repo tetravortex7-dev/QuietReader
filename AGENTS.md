@@ -21,25 +21,25 @@ QuietReader is a modular ebook reader for Windows, with Android planned next and
 Strict separation between four layers:
 
 3.1. Application Core
-- Contains application state, navigation, progress, bookmarks, history, and search coordination.
+- Contains application state, navigation, progress, bookmarks, history, and search coordination, plus shared core services (library, OPDS/catalog sync, dictionary, audio/TTS coordination).
 - Framework-agnostic, format-agnostic, and platform-agnostic.
-- Coordinates backends and services via stable abstractions; UI must not depend on concrete backends.
+- Coordinates backends and services via stable abstractions; Core modules (`core`, `opds`, `dictionary`, `settings`) must never import Presentation (`app`) types, and UI must not depend on concrete backends.
 
 3.2. Document Backends
-- Handles parsing, metadata extraction, and content access behind format-agnostic interfaces.
-- Backends must not depend on GUI frameworks or GUI resources.
-- Supported and planned targets:
-  - Flowable text: EPUB, TXT, MD, LOG, FB2.
-  - Fixed-layout: PDF, DJVU.
-  - Comics and manga: CBZ, CBR, CB7, image folders.
-- Format lists define targets, not proof of support. Verify actual implementation before assuming availability.
-- Adding formats requires updating the central registry only—no backend or UI rewrites.
-- Optional features (TOC, search, covers) must not be mandatory for all formats.
-- Shared dependencies and implementations allowed where logical; keep format dependencies isolated.
+- Handles parsing, metadata extraction, and content access behind format-agnostic interfaces (`Document` trait).
+- Backends must not depend on GUI frameworks, GUI resources, or hardcoded single-language user-facing error strings (return typed/localizable errors mapped by localization).
+- Implemented and planned formats:
+  - Flowable and structured text: EPUB, FB2, FB2.ZIP, MOBI, AZW, AZW3, PRC, TXT, MD, LOG, HTML, HTM, XHTML, DOCX, RTF, DOC, DOT.
+  - Fixed-layout: PDF, DJVU, DJV.
+  - Comics and manga: CBZ, CBR, CB7, CBT, ZIP, RAR, 7Z, TAR, image folders.
+- Format lists define project scope, not automatic parity of optional features. Verify actual implementation before assuming availability.
+- Adding a format should go through the central registry (`src/document/registry.rs`) plus shared extension, file-association/MIME, and localization format tables without rewriting UI or unrelated backends; consolidating extension metadata into a single source of truth is the architectural goal.
+- Optional features (TOC, search, covers, copy permissions) must not be mandatory for all formats.
+- Shared dependencies and helpers allowed where logical; keep format dependencies isolated.
 
 3.3. Presentation and UI
 - Library, reader, toolbars, sidebars, themes, settings, fullscreen, and viewing modes.
-- No parsing, decoding, or direct backend dependencies; communicates only with Core interfaces.
+- No parsing, decoding, or direct dependency on concrete document backends; communicates only with Core and `Document` / `LocalizedDocument` interfaces.
 - Visual styling remains separate from document processing. Viewing modes control presentation, not decoding.
 
 3.4. Platform Services
@@ -84,15 +84,15 @@ Maintainability, modularity, cross-platform compatibility, and correctness take 
 
 9. Binary Size Optimization
 
-- Use release builds for production with stripping and optimizations enabled.
-- Minimize dependencies; disable unused defaults (`default-features = false`). Do not use `panic = "abort"` purely for size.
-- Mandatory release settings: `opt-level = "s"` and `lto = "thin"` (~10% / 1.56 MB size saving, 2x faster build vs `opt-level = 3` + `lto = "fat"`).
-- After release builds, copy final binary to project root: `QuietReader.exe`.
+- Use release builds for production with stripping (`strip = true`) and optimizations enabled.
+- Minimize dependencies; disable unused defaults (`default-features = false`) and keep non-Windows windowing features (such as `eframe`'s `x11` and `wayland`) gated out of Windows builds where possible. Do not use `panic = "abort"` purely for size.
+- Mandatory release settings in `Cargo.toml`: `opt-level = "s"` and `lto = "thin"` (~10% / 1.56 MB size saving, 2x faster build vs `opt-level = 3` + `lto = "fat"`). Future hardening notes (such as `rust_egui.md`) do not override this rule unless explicitly requested.
+- After release builds, copy the release binary (`target\release\QuietReader.exe`, never a debug build) to project root: `QuietReader.exe`.
 
 10. Workspace Hygiene and Cleanup
 
-- Disk limit: If workspace size exceeds 3 GB, clean build artifacts (e.g., `target/`) and temporary files, preserving only source files, config, and root `QuietReader.exe`.
-- File line limit: Enforce a 1000-line limit per file (not 700). Decompose files exceeding 1000 lines into separate modules, removing duplicate code and redundant comments.
+- Disk limit: If workspace size exceeds 3 GB, clean build artifacts (e.g., `cargo clean` or clearing `target/`) and temporary files, preserving source files, config, documentation, and the release root `QuietReader.exe`.
+- File line limit: Enforce a 1000-line limit per file (not 700). Decompose files exceeding 1000 lines into separate modules, removing duplicate code and any comments (per Rule 12).
 - Localization exception: the 1000-line limit does not apply to localization files (`src/i18n/*.rs`). A single language file may freely exceed 1000 lines.
 
 11. Immutability of AGENTS.md
@@ -105,7 +105,7 @@ Writing or leaving comments in code is strictly prohibited. If comments exist in
 
 13. Vector Icons Policy
 
-All UI icons must be custom vector paths drawn with `egui::Painter` (`src/app/icons.rs`). Unicode symbols, text arrows, and emojis are forbidden to prevent font-fallback rendering artifacts ("tofu").
+All UI icons must be custom vector paths drawn with `egui::Painter` (`src/app/icons.rs`). Unicode symbols, text arrows (e.g., `→`, `←`), decorative UI bullets (`•`) used in chrome/labels, and emojis are forbidden to prevent font-fallback rendering artifacts ("tofu").
 
 14. Git Synchronization Policy
 
@@ -123,13 +123,13 @@ Every new feature or capability introduced into the project must be documented i
 - Split a `test` directory into several topic files (declared in its `mod.rs`) when it grows; the 1000-line limit and the no-comments rule apply to test files too.
 - Helpers shared by tests of different modules live in `src/test/util.rs` (e.g. `unique_test_dir`); do not duplicate them.
 - New tests must be added to the matching `test` directory in the same change as the feature or fix they cover.
+- Unit and integration tests must be deterministic and offline-safe: never depend on live external servers to pass, and never silently return success when a network or service call fails.
 
 17. Localization Policy
 
-- Any text shown to the user — labels, buttons, tooltips, errors, statuses, dialogs, and notifications — must be localized in every language supported by the project.
-- Hardcoding user-visible text in a single language is forbidden. Add a key to `Translations` in `src/i18n/mod.rs` and provide translations in all locale files (`ru`, `en`, `fr`, `es`, `zh`, `ja`, `pt`, `it`, `tr`, `uk`, `ar`, `id`).
-- A feature that adds or changes user-visible text must include all translations in the same change.
-- Localization files (`src/i18n/*.rs`) are exempt from the 1000-line limit; a single language file may freely exceed 1000 lines.
+- Any text shown to the user — labels, buttons, tooltips, errors, statuses, dialogs, generated fallback titles/chapter names, and notifications — must be localized in every language supported by the project.
+- Hardcoding user-visible text in a single language is forbidden (including inside document backends or background workers). Add keys to `Translations` / `ExtraTranslations` in `src/i18n/mod.rs` and provide complete native translations (no unrequested English fallbacks) in all locale files (`ru`, `en`, `fr`, `es`, `zh`, `ja`, `pt`, `it`, `tr`, `uk`, `ar`, `id`).
+- A feature or bugfix that adds or changes user-visible text must include all 12 translations in the same change (see Rule 10 for the localization file line-limit exception).
 
 18. Dependency Version Policy
 
@@ -144,13 +144,13 @@ Every new feature or capability introduced into the project must be documented i
 - Get the real window bounds with `GetWindowRect` and size the bitmap with a margin: width `max(2000, right + 40)`, height `max(1200, bottom + 40)`. Never capture a fixed `1536x864`: DPI virtualization reports smaller screen metrics than the actual window, so the right edge (top-bar buttons, page counter, scrollbar) and the bottom edge get cut off.
 - Capture from the top-left corner with `Graphics.CopyFromScreen(0, 0, 0, 0, bitmap.Size)`; use `PrintWindow` only as a fallback.
 - After capturing, verify that the right and bottom window edges are present in the image (e.g. the fullscreen button, page counter, bottom status bar). If any edge is missing, enlarge the capture and repeat.
-- Save screenshots to `%TEMP%\opencode\*.png` and inspect them with the image reader.
+- Save screenshots to `%TEMP%\quietreader_screenshots\*.png` and inspect them with the image reader.
 - Do not conclude that a UI element is missing, mispositioned, or unrendered until a full-window screenshot confirms it; clipped captures have repeatedly produced false conclusions.
 - For synthetic input: keep the window foreground, move the cursor with `SetCursorPos`, send events with `mouse_event`, and pass the wheel delta as a signed `int` (for example `-120`), not `uint32`. Wait 100–200 ms between events and 1–2 seconds before capturing.
 
 20. Testing Cadence
 
-- Do not run the full test suite after every small edit. During implementation use targeted checks only: `cargo check`, a single test by name (`cargo test --features enable_tests <module>::test::<name>`), or `cargo fmt --all`.
+- Do not run the full test suite after every small edit. During implementation use targeted checks only: `cargo check --features enable_tests --all-targets`, a single test by name (`cargo test --features enable_tests --all-targets <module>::test::<name>`), or `cargo fmt --all`. Note: `Cargo.toml` sets `test = false` on the binary target, so `--all-targets` is required for `cargo test` to build and run unit tests.
 - Run the full `cargo test --features enable_tests --all-targets` and `cargo fmt --all -- --check` only before finishing a task: before a release build, before replacing `QuietReader.exe`, before a commit, or when reporting completed work.
 - If a change touches shared layout, persistence, networking, or archive parsing, run the full suite once for that change even if it is not the final step.
 

@@ -24,14 +24,6 @@ pub enum LibraryMode {
     ReaderOnly,
 }
 
-impl LibraryMode {
-    pub const ALL: [LibraryMode; 3] = [
-        LibraryMode::Shelf,
-        LibraryMode::Folder,
-        LibraryMode::ReaderOnly,
-    ];
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UiDesignMode {
@@ -41,8 +33,6 @@ pub enum UiDesignMode {
 }
 
 impl UiDesignMode {
-    pub const ALL: [UiDesignMode; 2] = [UiDesignMode::Cozy, UiDesignMode::Studio];
-
     pub fn corner_radius(self) -> u8 {
         match self {
             UiDesignMode::Cozy => 12,
@@ -58,14 +48,6 @@ pub enum ShelfViewMode {
     #[default]
     Standard,
     Maxi,
-}
-
-impl ShelfViewMode {
-    pub const ALL: [ShelfViewMode; 3] = [
-        ShelfViewMode::Mini,
-        ShelfViewMode::Standard,
-        ShelfViewMode::Maxi,
-    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -88,6 +70,18 @@ pub struct LibraryEntry {
     pub status: LibraryReadingStatus,
     pub current_unit: usize,
     pub total_units: usize,
+}
+
+impl LibraryEntry {
+    pub fn progress_percent(&self) -> f32 {
+        if self.status == LibraryReadingStatus::Finished {
+            return 100.0;
+        }
+        if self.total_units == 0 {
+            return 0.0;
+        }
+        ((self.current_unit as f32 / self.total_units as f32) * 100.0).clamp(0.0, 100.0)
+    }
 }
 
 impl Default for LibraryEntry {
@@ -728,18 +722,7 @@ where
 }
 
 fn folder_book_title(path: &Path) -> String {
-    let name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default();
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".fb2.zip") {
-        return name[..name.len() - 8].to_string();
-    }
-    path.file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or(name)
-        .to_string()
+    crate::document::registry::document_file_stem(path)
 }
 
 pub const MAX_LIBRARY_SNAPSHOTS: usize = 20;

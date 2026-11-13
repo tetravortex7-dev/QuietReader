@@ -18,28 +18,44 @@ pub struct DjvuDocument {
     toc: Vec<TocItem>,
 }
 
+const MAX_DJVU_SIZE: u64 = 500 * 1024 * 1024;
+
+pub(crate) fn read_djvu_file_with_limit(
+    path_ref: &Path,
+    max_bytes: u64,
+) -> Result<Vec<u8>, DocumentError> {
+    let file = File::open(path_ref).map_err(|e| {
+        DocumentError::Io(crate::document::errors::io_open(
+            &path_ref.display().to_string(),
+            &e,
+        ))
+    })?;
+
+    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    if file_len > max_bytes {
+        return Err(DocumentError::LimitExceeded(
+            crate::document::errors::file_too_large_mb("DjVu", 500),
+        ));
+    }
+
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| DocumentError::Io(crate::document::errors::io_read("DjVu", &e)))?;
+
+    if bytes.len() as u64 > max_bytes {
+        return Err(DocumentError::LimitExceeded(
+            crate::document::errors::file_too_large_mb("DjVu", 500),
+        ));
+    }
+
+    Ok(bytes)
+}
+
 impl DjvuDocument {
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, DocumentError> {
         let path_ref = path.as_ref();
-        let mut file = File::open(path_ref).map_err(|e| {
-            DocumentError::Io(format!(
-                "Не удалось открыть DjVu файл {}: {e}",
-                path_ref.display()
-            ))
-        })?;
-
-        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
-        const MAX_DJVU_SIZE: u64 = 500 * 1024 * 1024;
-        if file_len > MAX_DJVU_SIZE {
-            return Err(DocumentError::LimitExceeded(
-                "Размер DjVu файла превышает максимально допустимый лимит 500 МБ".to_string(),
-            ));
-        }
-
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|e| DocumentError::Io(format!("Не удалось прочитать DjVu файл: {e}")))?;
-
+        let bytes = read_djvu_file_with_limit(path_ref, MAX_DJVU_SIZE)?;
         Self::from_bytes(bytes, path_ref)
     }
 
@@ -55,8 +71,7 @@ impl DjvuDocument {
             0
         } else {
             return Err(DocumentError::Corrupted(
-                "Файл не является валидным DjVu документом (отсутствует заголовок AT&TFORM)"
-                    .to_string(),
+                crate::document::errors::invalid_header("DjVu", "AT&TFORM"),
             ));
         };
 
@@ -67,7 +82,7 @@ impl DjvuDocument {
         };
         if data.len() < 12 {
             return Err(DocumentError::Corrupted(
-                "Файл DjVu слишком короткий для чтения заголовка".to_string(),
+                crate::document::errors::file_too_short("DjVu"),
             ));
         }
 
@@ -117,28 +132,28 @@ impl DjvuDocument {
         let doc = match parse_result {
             Ok(Ok(d)) => d,
             Ok(Err(e)) => {
-                return Err(DocumentError::Corrupted(format!(
-                    "Ошибка парсинга DjVu документа: {e:?}"
-                )));
+                return Err(DocumentError::Corrupted(
+                    crate::document::errors::parse_failed("DjVu", &format!("{e:?}")),
+                ));
             }
             Err(_) => {
                 return Err(DocumentError::Corrupted(
-                    "Аварийный сбой при разборе DjVu структуры".to_string(),
+                    crate::document::errors::decoder_panic("DjVu"),
                 ));
             }
         };
 
         let page_count = doc.page_count();
         if page_count == 0 {
-            return Err(DocumentError::Corrupted(
-                "DjVu документ не содержит ни одной страницы".to_string(),
-            ));
+            return Err(DocumentError::Corrupted(crate::document::errors::no_pages(
+                "DjVu",
+            )));
         }
 
         let default_title = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("Документ DjVu")
+            .unwrap_or(crate::document::errors::tokens::TITLE_DJVU)
             .to_string();
 
         let meta_opt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| doc.metadata()))
@@ -154,10 +169,13 @@ impl DjvuDocument {
             let a = meta
                 .author
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "Неизвестный автор".to_string());
+                .unwrap_or_else(|| crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string());
             (t, a)
         } else {
-            (default_title, "Неизвестный автор".to_string())
+            (
+                default_title,
+                crate::document::errors::tokens::UNKNOWN_AUTHOR.to_string(),
+            )
         };
 
         let mut page_names = Vec::with_capacity(page_count);
@@ -196,8 +214,8 @@ impl DjvuDocument {
             (0..page_count)
                 .map(|i| BookChapter {
                     id: Some(format!("page_{}", i + 1)),
-                    title: format!("Страница {}", i + 1),
-                    paragraphs: vec![format!("Страница {}", i + 1)],
+                    title: crate::document::errors::tokens::page(i + 1),
+                    paragraphs: vec![crate::document::errors::tokens::page(i + 1)],
                 })
                 .collect()
         } else {
@@ -206,10 +224,9 @@ impl DjvuDocument {
                 list.push(BookChapter {
                     id: item.id.clone(),
                     title: item.title.clone(),
-                    paragraphs: vec![format!(
-                        "Раздел {} (страница {})",
+                    paragraphs: vec![crate::document::errors::tokens::section_page(
                         i + 1,
-                        item.chapter_index + 1
+                        item.chapter_index + 1,
                     )],
                 });
             }
@@ -329,7 +346,7 @@ fn convert_djvu_bookmarks(
             TocItem {
                 id: Some(bm.url.clone()),
                 title: if bm.title.trim().is_empty() {
-                    format!("Страница {}", chapter_index + 1)
+                    crate::document::errors::tokens::page(chapter_index + 1)
                 } else {
                     bm.title.clone()
                 },
@@ -365,6 +382,10 @@ impl Document for DjvuDocument {
         DocumentViewKind::Pdf
     }
 
+    fn supports_search_highlight(&self) -> bool {
+        true
+    }
+
     fn page_content(&self) -> Option<&dyn PageContent> {
         Some(self)
     }
@@ -393,24 +414,22 @@ impl PageContent for DjvuDocument {
         scale: f32,
     ) -> Result<DecodedImage, DocumentError> {
         if index >= self.page_count {
-            return Err(DocumentError::Corrupted(format!(
-                "Страница {} выходит за пределы документа",
-                index + 1
-            )));
+            return Err(DocumentError::Corrupted(
+                crate::document::errors::page_out_of_bounds(index + 1),
+            ));
         }
 
         let render_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let page = self.doc.page(index).map_err(|e| {
-                DocumentError::Corrupted(format!("Ошибка получения страницы {}: {e:?}", index + 1))
+                DocumentError::Corrupted(crate::document::errors::page_get_error(index + 1, &e))
             })?;
 
             let page_w = page.width() as f32;
             let page_h = page.height() as f32;
             if page_w <= 0.0 || page_h <= 0.0 {
-                return Err(DocumentError::Corrupted(format!(
-                    "Страница {} имеет некорректные размеры (0x0)",
-                    index + 1
-                )));
+                return Err(DocumentError::Corrupted(
+                    crate::document::errors::page_invalid_dims(index + 1),
+                ));
             }
 
             let mut render_scale = scale.clamp(0.1, 4.0);
@@ -437,29 +456,30 @@ impl PageContent for DjvuDocument {
             };
 
             let pixmap = djvu_rs::djvu_render::render_pixmap(page, &opts).map_err(|e| {
-                DocumentError::Corrupted(format!(
-                    "Ошибка отрисовки страницы {} DjVu: {e:?}",
-                    index + 1
+                DocumentError::Corrupted(crate::document::errors::page_render_error(
+                    "DjVu",
+                    index + 1,
+                    &e,
                 ))
             })?;
 
             if pixmap.width == 0 || pixmap.height == 0 {
-                return Err(DocumentError::Corrupted(format!(
-                    "Страница {} имеет нулевой размер",
-                    index + 1
-                )));
+                return Err(DocumentError::Corrupted(
+                    crate::document::errors::page_zero_size(index + 1),
+                ));
             }
 
             let expected_len = (pixmap.width as usize)
                 .saturating_mul(pixmap.height as usize)
                 .saturating_mul(4);
             if pixmap.data.len() != expected_len {
-                return Err(DocumentError::Corrupted(format!(
-                    "Некорректный размер буфера страницы {}: ожидается {}, получено {}",
-                    index + 1,
-                    expected_len,
-                    pixmap.data.len()
-                )));
+                return Err(DocumentError::Corrupted(
+                    crate::document::errors::page_buffer_mismatch(
+                        index + 1,
+                        expected_len,
+                        pixmap.data.len(),
+                    ),
+                ));
             }
 
             Ok(DecodedImage {
@@ -473,10 +493,9 @@ impl PageContent for DjvuDocument {
 
         match render_result {
             Ok(res) => res,
-            Err(_) => Err(DocumentError::Corrupted(format!(
-                "Аварийный сбой декодера при отрисовке страницы {}",
-                index + 1
-            ))),
+            Err(_) => Err(DocumentError::Corrupted(
+                crate::document::errors::page_render_panic(index + 1),
+            )),
         }
     }
 

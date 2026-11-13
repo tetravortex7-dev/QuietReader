@@ -1,3 +1,6 @@
+pub mod catalog;
+pub use catalog::*;
+
 use crate::document::comic::zip_contains_supported_image;
 use crate::document::fb2::zip_contains_fb2;
 use crate::document::{
@@ -5,6 +8,7 @@ use crate::document::{
     Fb2Document, HtmlDocument, MobiDocument, PdfDocument, RtfDocument, TxtDocument,
 };
 use std::path::Path;
+use std::sync::LazyLock;
 
 pub trait DocumentFormat: Send + Sync {
     #[allow(dead_code)]
@@ -20,6 +24,15 @@ pub trait DocumentFormat: Send + Sync {
         let _ = password;
         self.open(path)
     }
+    fn open_with_options(
+        &self,
+        path: &Path,
+        encoding: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<Box<dyn Document>, DocumentError> {
+        let _ = encoding;
+        self.open_with_password(path, password)
+    }
 }
 
 pub struct PdfFormat;
@@ -28,7 +41,9 @@ impl DocumentFormat for PdfFormat {
         "PDF"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["pdf"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Pdf));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
@@ -62,7 +77,9 @@ impl DocumentFormat for DjvuFormat {
         "DjVu"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["djvu", "djv"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Djvu));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
@@ -89,7 +106,9 @@ impl DocumentFormat for Fb2ZipFormat {
         "FB2.ZIP"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["fb2.zip", "zip"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Fb2Zip));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         path.is_file() && zip_contains_fb2(path)
@@ -106,25 +125,20 @@ impl DocumentFormat for ComicFormat {
         "Comic / Manga"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "tar"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Comic));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if path.is_dir() {
             return true;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
-        if matches!(
-            ext.as_str(),
-            "cbz" | "cbr" | "cb7" | "cbt" | "rar" | "7z" | "tar"
-        ) {
-            return true;
-        }
+        let ext = extension_lower(path);
         if ext == "zip" {
             return zip_contains_supported_image(path);
+        }
+        if self.extensions().contains(&ext.as_str()) {
+            return true;
         }
         use std::io::Read;
         if let Ok(mut f) = std::fs::File::open(path) {
@@ -156,7 +170,9 @@ impl DocumentFormat for EpubFormat {
         "EPUB"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["epub"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Epub));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
@@ -183,7 +199,9 @@ impl DocumentFormat for Fb2Format {
         "FB2"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["fb2"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Fb2));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
@@ -211,18 +229,16 @@ impl DocumentFormat for DocxFormat {
         "DOCX"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["docx"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Docx));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
             return false;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
-        if ext == "docx" {
+        let ext = extension_lower(path);
+        if self.extensions().contains(&ext.as_str()) {
             return true;
         }
         use std::io::Read;
@@ -246,7 +262,9 @@ impl DocumentFormat for RtfFormat {
         "RTF"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["rtf"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Rtf));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
@@ -274,7 +292,9 @@ impl DocumentFormat for DocFormat {
         "DOC"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["doc", "dot"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Doc));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
@@ -301,21 +321,27 @@ impl DocumentFormat for TxtFormat {
         "TXT / MD / LOG"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["txt", "md", "markdown", "log"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Txt));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
             return false;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
+        let ext = extension_lower(path);
         self.extensions().contains(&ext.as_str())
     }
     fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
-        let doc = TxtDocument::from_file(path)?;
+        self.open_with_options(path, None, None)
+    }
+    fn open_with_options(
+        &self,
+        path: &Path,
+        encoding: Option<&str>,
+        _password: Option<&str>,
+    ) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = TxtDocument::from_file_with_encoding(path, encoding)?;
         Ok(Box::new(doc))
     }
 }
@@ -326,17 +352,15 @@ impl DocumentFormat for HtmlFormat {
         "HTML"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["html", "htm", "xhtml"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Html));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
             return false;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
+        let ext = extension_lower(path);
         if self.extensions().contains(&ext.as_str()) {
             return true;
         }
@@ -353,7 +377,15 @@ impl DocumentFormat for HtmlFormat {
         false
     }
     fn open(&self, path: &Path) -> Result<Box<dyn Document>, DocumentError> {
-        let doc = HtmlDocument::from_file(path)?;
+        self.open_with_options(path, None, None)
+    }
+    fn open_with_options(
+        &self,
+        path: &Path,
+        encoding: Option<&str>,
+        _password: Option<&str>,
+    ) -> Result<Box<dyn Document>, DocumentError> {
+        let doc = HtmlDocument::from_file_with_encoding(path, encoding)?;
         Ok(Box::new(doc))
     }
 }
@@ -364,18 +396,16 @@ impl DocumentFormat for MobiFormat {
         "MOBI / AZW / AZW3"
     }
     fn extensions(&self) -> &'static [&'static str] {
-        &["mobi", "prc", "azw", "azw3"]
+        static EXTS: LazyLock<Vec<&'static str>> =
+            LazyLock::new(|| collect_backend_extensions(FormatBackend::Mobi));
+        &EXTS
     }
     fn probe(&self, path: &Path) -> bool {
         if !path.is_file() {
             return false;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
-        if matches!(ext.as_str(), "mobi" | "prc" | "azw" | "azw3") {
+        let ext = extension_lower(path);
+        if self.extensions().contains(&ext.as_str()) {
             return true;
         }
         use std::io::Read;
@@ -414,21 +444,6 @@ pub static FORMAT_REGISTRY: &[&dyn DocumentFormat] = &[
     &TxtFormat,
 ];
 
-fn extension_lower(path: &Path) -> String {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if name.ends_with(".fb2.zip") {
-        return "fb2.zip".to_string();
-    }
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default()
-}
-
 pub fn is_supported_document_path(path: &Path) -> bool {
     let Ok(metadata) = std::fs::symlink_metadata(path) else {
         return false;
@@ -450,40 +465,8 @@ pub fn open_with_registry_and_encoding_and_password(
     encoding: Option<&str>,
     password: Option<&str>,
 ) -> Result<Box<dyn Document>, DocumentError> {
-    if encoding.is_some()
-        && matches!(
-            extension_lower(path).as_str(),
-            "txt" | "md" | "markdown" | "log"
-        )
-    {
-        let doc = TxtDocument::from_file_with_encoding(path, encoding)?;
-        return Ok(Box::new(doc));
-    }
-    if encoding.is_some() && matches!(extension_lower(path).as_str(), "html" | "htm" | "xhtml") {
-        let doc = HtmlDocument::from_file_with_encoding(path, encoding)?;
-        return Ok(Box::new(doc));
-    }
-    open_with_registry_and_password(path, password)
-}
-
-#[allow(dead_code)]
-pub fn open_with_registry_and_encoding(
-    path: &Path,
-    encoding: Option<&str>,
-) -> Result<Box<dyn Document>, DocumentError> {
-    open_with_registry_and_encoding_and_password(path, encoding, None)
-}
-
-pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentError> {
-    open_with_registry_and_password(path, None)
-}
-
-pub fn open_with_registry_and_password(
-    path: &Path,
-    password: Option<&str>,
-) -> Result<Box<dyn Document>, DocumentError> {
     if path.is_dir() {
-        return ComicFormat.open(path);
+        return ComicFormat.open_with_options(path, encoding, password);
     }
 
     let ext = extension_lower(path);
@@ -492,7 +475,7 @@ pub fn open_with_registry_and_password(
     if !ext.is_empty() {
         for fmt in FORMAT_REGISTRY {
             if fmt.extensions().contains(&ext.as_str()) {
-                match fmt.open_with_password(path, password) {
+                match fmt.open_with_options(path, encoding, password) {
                     Ok(doc) => return Ok(doc),
                     Err(e) => {
                         if matches!(e, DocumentError::PasswordRequired) {
@@ -507,7 +490,7 @@ pub fn open_with_registry_and_password(
 
     for fmt in FORMAT_REGISTRY {
         if fmt.probe(path) {
-            match fmt.open_with_password(path, password) {
+            match fmt.open_with_options(path, encoding, password) {
                 Ok(doc) => return Ok(doc),
                 Err(e) => {
                     if matches!(e, DocumentError::PasswordRequired) {
@@ -520,6 +503,28 @@ pub fn open_with_registry_and_password(
     }
 
     Err(last_err.unwrap_or_else(|| {
-        DocumentError::Unsupported(format!("Неподдерживаемый формат файла: {}", path.display()))
+        DocumentError::Unsupported(crate::document::errors::unsupported_format(
+            &path.display().to_string(),
+        ))
     }))
+}
+
+#[allow(dead_code)]
+pub fn open_with_registry_and_encoding(
+    path: &Path,
+    encoding: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
+    open_with_registry_and_encoding_and_password(path, encoding, None)
+}
+
+pub fn open_with_registry(path: &Path) -> Result<Box<dyn Document>, DocumentError> {
+    open_with_registry_and_encoding_and_password(path, None, None)
+}
+
+#[allow(dead_code)]
+pub fn open_with_registry_and_password(
+    path: &Path,
+    password: Option<&str>,
+) -> Result<Box<dyn Document>, DocumentError> {
+    open_with_registry_and_encoding_and_password(path, None, password)
 }

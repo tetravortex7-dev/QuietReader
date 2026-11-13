@@ -308,3 +308,154 @@ fn test_opds_limit_errors_are_localized() {
     assert!(en.contains("1024"));
     assert_ne!(ru, en);
 }
+
+#[test]
+fn test_resolve_relative_url_query_fragment_and_protocol_relative() {
+    assert_eq!(
+        resolve_relative_url("https://example.com/opds/catalog.atom?sort=new", "?page=2"),
+        "https://example.com/opds/catalog.atom?page=2"
+    );
+    assert_eq!(
+        resolve_relative_url("https://example.com/opds/catalog.atom?page=2", "#chapter2"),
+        "https://example.com/opds/catalog.atom?page=2#chapter2"
+    );
+    assert_eq!(
+        resolve_relative_url("https://example.com/opds", "//cdn.example.com/book.epub"),
+        "https://cdn.example.com/book.epub"
+    );
+    assert_eq!(
+        resolve_relative_url("HTTPS://example.com/opds", "//cdn.example.com/book.epub"),
+        "https://cdn.example.com/book.epub"
+    );
+    assert_eq!(
+        resolve_relative_url("http://example.com/opds", "//cdn.example.com/book.epub"),
+        "http://cdn.example.com/book.epub"
+    );
+    assert_eq!(
+        resolve_relative_url(
+            "https://example.com/opds/v1/feed.atom",
+            "../search?q={searchTerms}"
+        ),
+        "https://example.com/opds/search?q={searchTerms}"
+    );
+}
+
+#[test]
+fn test_parse_opds_decodes_attribute_entities_and_nested_summary_tags() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>urn:catalog:entities</id>
+  <title>Entities &amp; Nesting</title>
+  <link rel="next" href="/opds?cat=1&amp;page=2" type="application/atom+xml"/>
+  <entry>
+    <id>urn:book:42</id>
+    <title>Mixed Book &amp; Series</title>
+    <author><name>Author One</name></author>
+    <category label="Sci-Fi &amp; Fantasy"/>
+    <summary type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>First <b>paragraph</b>.</p><p>Second paragraph.</p></div></summary>
+    <link rel="http://opds-spec.org/acquisition" href="/dl/book.fb2.zip?token=1&amp;fmt=fb2" type="application/octet-stream" title="Download &quot;FB2&quot;"/>
+    <link rel="subsection" href="/opds/series/42?ref=a&amp;b=2" type="application/atom+xml;profile=opds-catalog"/>
+  </entry>
+</feed>"#;
+
+    let feed = parse_opds_feed(xml, "https://example.com/opds/root.atom").expect("parse feed");
+    assert_eq!(feed.title, "Entities & Nesting");
+    assert_eq!(
+        feed.next_url.as_deref(),
+        Some("https://example.com/opds?cat=1&page=2")
+    );
+    assert_eq!(feed.entries.len(), 1);
+    let entry = &feed.entries[0];
+    assert_eq!(entry.categories, vec!["Sci-Fi & Fantasy".to_string()]);
+    assert_eq!(
+        entry.summary.as_deref(),
+        Some("First paragraph. Second paragraph.")
+    );
+    assert_eq!(entry.acquisition_links.len(), 1);
+    assert_eq!(entry.acquisition_links[0].format_label, "FB2.ZIP");
+    assert_eq!(
+        entry.acquisition_links[0].href,
+        "https://example.com/dl/book.fb2.zip?token=1&fmt=fb2"
+    );
+    assert_eq!(entry.acquisition_links[0].title, "Download \"FB2\"");
+    assert_eq!(
+        entry.navigation_link.as_deref(),
+        Some("https://example.com/opds/series/42?ref=a&b=2")
+    );
+
+    let os_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <Url type="application/atom+xml" template="/search?scope=books&amp;q={searchTerms}"/>
+</OpenSearchDescription>"#;
+    let tmpl = parse_opensearch_template(os_xml, "https://example.com/opds/").unwrap();
+    assert_eq!(
+        tmpl,
+        "https://example.com/search?scope=books&q={searchTerms}"
+    );
+}
+
+#[test]
+fn test_unique_temp_download_paths_under_concurrent_creation() {
+    use crate::opds::client::create_unique_temp_file;
+    use std::collections::HashSet;
+
+    let dir = unique_test_dir("opds_parallel_temp");
+    let target_hint = dir.join("Author - Same Book.epub");
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let hint = target_hint.clone();
+        handles.push(std::thread::spawn(move || {
+            create_unique_temp_file(&hint).expect("unique temp file")
+        }));
+    }
+
+    let mut seen_paths = HashSet::new();
+    for h in handles {
+        let (path, file) = h.join().expect("thread join");
+        drop(file);
+        assert!(path.exists());
+        assert!(seen_paths.insert(path));
+    }
+    assert_eq!(seen_paths.len(), 8);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_opds_cover_manager_bounds_entries_and_bytes_with_lru() {
+    let mut mgr = OpdsCoverManager::with_limits(3, 20);
+    let cover_8 = |tag: u8| CoverImage {
+        width: 2,
+        height: 1,
+        rgba: vec![tag; 8],
+    };
+
+    mgr.insert_cached("u1".to_string(), Some(cover_8(1)));
+    mgr.insert_cached("u2".to_string(), Some(cover_8(2)));
+    assert_eq!(mgr.cache_len(), 2);
+    assert_eq!(mgr.cache_bytes(), 16);
+
+    assert_eq!(mgr.get_cover("u1", None).unwrap().rgba[0], 1);
+
+    mgr.insert_cached("u3".to_string(), Some(cover_8(3)));
+    assert_eq!(mgr.cache_len(), 2);
+    assert_eq!(mgr.cache_bytes(), 16);
+    assert_eq!(mgr.get_cover("u1", None).unwrap().rgba[0], 1);
+    assert_eq!(mgr.get_cover("u3", None).unwrap().rgba[0], 3);
+
+    mgr.insert_cached("n1".to_string(), None);
+    mgr.insert_cached("n2".to_string(), None);
+    assert_eq!(mgr.cache_len(), 3);
+
+    let oversized = CoverImage {
+        width: 4,
+        height: 2,
+        rgba: vec![9; 32],
+    };
+    mgr.insert_cached("big".to_string(), Some(oversized));
+    assert!(mgr.cache_bytes() <= 20);
+
+    mgr.clear();
+    assert_eq!(mgr.cache_len(), 0);
+    assert_eq!(mgr.cache_bytes(), 0);
+}

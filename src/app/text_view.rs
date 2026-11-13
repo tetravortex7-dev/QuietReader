@@ -6,16 +6,64 @@ use eframe::egui::{self, Color32, RichText, ScrollArea, Stroke, StrokeKind, Vec2
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-mod footnotes;
+pub(crate) mod footnotes;
 pub(crate) mod layout;
 
-use footnotes::{ParagraphStyle, collect_numbers, show_hover_card};
+use footnotes::{FootnoteFrameState, ParagraphStyle, collect_numbers, show_hover_card};
 pub use layout::create_sample_preview_job;
 use layout::{
     append_with_highlight, create_paragraph_layout_job, selectable_label_preserving_on_secondary,
 };
 
+pub(crate) fn should_record_text_progress(
+    settings: &AppSettings,
+    path: &std::path::Path,
+    chapter: usize,
+    scroll_y: f32,
+) -> bool {
+    settings
+        .get_book_progress(path)
+        .is_none_or(|(saved_chapter, saved_scroll_y)| {
+            saved_chapter != chapter || (saved_scroll_y - scroll_y).abs() > 20.0
+        })
+}
+
 pub struct TextView;
+
+fn render_copy_menu_buttons(
+    ui: &mut egui::Ui,
+    doc: &dyn Document,
+    current_chapter: usize,
+    can_copy: bool,
+    single_text: &str,
+    selected_text: &Option<String>,
+    t: &crate::i18n::Translations,
+) {
+    let copy_btn = ui
+        .add_enabled(can_copy, egui::Button::new(t.copy))
+        .on_disabled_hover_text(t.extra.copy_restricted);
+    if copy_btn.clicked() && can_copy {
+        let sel = selected_text
+            .clone()
+            .or_else(|| crate::app::selection::get_selected_text(ui.ctx()));
+        if let Some(text) = sel {
+            ui.ctx().copy_text(text);
+        } else {
+            ui.ctx().copy_text(single_text.to_string());
+        }
+        ui.close();
+    }
+
+    let copy_section_btn = ui
+        .add_enabled(can_copy, egui::Button::new(t.copy_section))
+        .on_disabled_hover_text(t.extra.copy_restricted);
+    if copy_section_btn.clicked() && can_copy {
+        if let Some(full) = crate::core::ReaderCore::extract_chapter_text(doc, current_chapter) {
+            ui.ctx().copy_text(full);
+        }
+        ui.close();
+    }
+}
 
 impl TextView {
     pub fn render(
@@ -73,6 +121,8 @@ impl TextView {
         let mut note_jump: Option<(usize, usize)> =
             ui.ctx().data(|data| data.get_temp(note_jump_id));
         if let Some(doc) = document {
+            let can_copy = doc.can_copy();
+            crate::app::selection::set_copy_restricted(ui.ctx(), !can_copy);
             text_images.ensure_document(doc);
             text_images.poll(ui.ctx());
             let total_chapters = doc.chapters().len();
@@ -238,28 +288,15 @@ impl TextView {
                                     } else {
                                         sel_btn.on_disabled_hover_text(t.translate_selection_tip);
                                     }
-                                    if ui.button(t.copy).clicked() {
-                                        let sel = selected_text.clone().or_else(|| {
-                                            crate::app::selection::get_selected_text(ui.ctx())
-                                        });
-                                        if let Some(text) = sel {
-                                            ui.ctx().copy_text(text);
-                                        } else {
-                                            ui.ctx().copy_text(clean_title.clone());
-                                        }
-                                        ui.close();
-                                    }
-                                    if ui.button(t.copy_section).clicked() {
-                                        if let Some(full) =
-                                            crate::core::ReaderCore::extract_chapter_text(
-                                                doc.as_ref(),
-                                                *current_chapter,
-                                            )
-                                        {
-                                            ui.ctx().copy_text(full);
-                                        }
-                                        ui.close();
-                                    }
+                                    render_copy_menu_buttons(
+                                        ui,
+                                        doc.as_ref(),
+                                        *current_chapter,
+                                        can_copy,
+                                        &clean_title,
+                                        &selected_text,
+                                        t,
+                                    );
                                 });
                                 ui.add_space(24.0);
                             }
@@ -302,6 +339,7 @@ impl TextView {
                                 }
                             }
 
+                            let mut footnote_state = FootnoteFrameState::begin(ui.ctx());
                             let mut render_paragraphs =
                                 |ui: &mut egui::Ui,
                                  range: std::ops::Range<usize>,
@@ -444,6 +482,7 @@ impl TextView {
                                                     t,
                                                     font_size,
                                                     &mut pinned_note,
+                                                    &mut footnote_state,
                                                 )
                                                 && let Some(location) = doc.note_location(&note_id)
                                             {
@@ -574,28 +613,15 @@ impl TextView {
                                     } else {
                                         sel_btn.on_disabled_hover_text(t.translate_selection_tip);
                                     }
-                                    if ui.button(t.copy).clicked() {
-                                        let sel = selected_text.clone().or_else(|| {
-                                            crate::app::selection::get_selected_text(ui.ctx())
-                                        });
-                                        if let Some(text) = sel {
-                                            ui.ctx().copy_text(text);
-                                        } else {
-                                            ui.ctx().copy_text(clean_paragraph.clone());
-                                        }
-                                        ui.close();
-                                    }
-                                    if ui.button(t.copy_section).clicked() {
-                                        if let Some(full) =
-                                            crate::core::ReaderCore::extract_chapter_text(
-                                                doc.as_ref(),
-                                                *current_chapter,
-                                            )
-                                        {
-                                            ui.ctx().copy_text(full);
-                                        }
-                                        ui.close();
-                                    }
+                                    render_copy_menu_buttons(
+                                        ui,
+                                        doc.as_ref(),
+                                        *current_chapter,
+                                        can_copy,
+                                        &clean_paragraph,
+                                        &selected_text,
+                                        t,
+                                    );
                                 });
                                             ui.add_space(para_spacing);
                                         }
@@ -629,6 +655,11 @@ impl TextView {
                             } else {
                                 render_paragraphs(ui, 0..paragraph_count, chars_per_line);
                             }
+                            footnote_state.finish(
+                                ui.ctx(),
+                                ui.input(|i| i.pointer.primary_clicked()),
+                                &mut pinned_note,
+                            );
 
                             if *current_chapter + 1 >= total_chapters
                                 && let Some(footer) = doc.footer_text()
@@ -731,7 +762,9 @@ impl TextView {
                 );
             }
 
-            if let Some(path) = current_file_path {
+            if let Some(path) = current_file_path
+                && should_record_text_progress(settings, path, *current_chapter, *current_scroll_y)
+            {
                 let meta = doc.metadata();
                 settings.record_book_progress(
                     path,

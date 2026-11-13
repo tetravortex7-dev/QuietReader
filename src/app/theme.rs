@@ -76,14 +76,6 @@ impl ReaderTheme {
         }
     }
 
-    pub fn button_stroke_color(&self) -> Option<Color32> {
-        None
-    }
-
-    pub fn create_visuals(&self) -> eframe::egui::Visuals {
-        self.create_visuals_for(UiDesignMode::Cozy)
-    }
-
     pub fn create_visuals_for(&self, design: UiDesignMode) -> eframe::egui::Visuals {
         use eframe::egui;
         let mut visuals = if self.is_dark() {
