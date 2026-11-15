@@ -320,3 +320,72 @@ fn test_should_record_text_progress_throttles_scroll_deltas() {
     assert!(should_record_text_progress(&settings, path, 1, 125.0));
     assert!(should_record_text_progress(&settings, path, 2, 100.0));
 }
+
+#[test]
+fn test_spread_pagination_alignment_and_slicing() {
+    use crate::app::text_view::footnotes::FootnoteMarker;
+    use crate::app::text_view::spread::{
+        align_page, compute_last_spread_start, test_rebase_markers, test_slice_layout_job,
+    };
+    use eframe::egui::{self, Color32, text::LayoutJob};
+
+    assert_eq!(compute_last_spread_start(1, true), 0);
+    assert_eq!(compute_last_spread_start(2, true), 0);
+    assert_eq!(compute_last_spread_start(3, true), 2);
+    assert_eq!(compute_last_spread_start(4, true), 2);
+    assert_eq!(compute_last_spread_start(5, true), 4);
+    assert_eq!(compute_last_spread_start(5, false), 4);
+
+    assert_eq!(align_page(0, true, 4), 0);
+    assert_eq!(align_page(1, true, 4), 0);
+    assert_eq!(align_page(2, true, 4), 2);
+    assert_eq!(align_page(3, true, 4), 2);
+    assert_eq!(align_page(99, true, 4), 4);
+    assert_eq!(align_page(3, false, 4), 3);
+
+    let mut job = LayoutJob::default();
+    job.first_row_min_height = 24.0;
+    let fmt = egui::TextFormat {
+        font_id: egui::FontId::proportional(16.0),
+        color: Color32::BLACK,
+        ..Default::default()
+    };
+    job.append("Привет ", 22.0, fmt.clone());
+    job.append("мир книга", 0.0, fmt);
+    let prefix_bytes = "Привет ".len();
+    let sliced_head = test_slice_layout_job(&job, 0, prefix_bytes, true);
+    assert_eq!(sliced_head.text, "Привет ");
+    assert_eq!(sliced_head.first_row_min_height, 24.0);
+    assert_eq!(sliced_head.sections.len(), 1);
+    assert_eq!(sliced_head.sections[0].leading_space, 22.0);
+
+    let sliced_tail = test_slice_layout_job(&job, prefix_bytes, job.text.len(), false);
+    assert_eq!(sliced_tail.text, "мир книга");
+    assert_eq!(sliced_tail.first_row_min_height, 0.0);
+    assert_eq!(sliced_tail.sections.len(), 1);
+    assert_eq!(
+        sliced_tail.sections[0].byte_range,
+        egui::text::ByteIndex(0)..egui::text::ByteIndex("мир книга".len())
+    );
+    assert_eq!(sliced_tail.sections[0].leading_space, 0.0);
+
+    let markers = vec![
+        FootnoteMarker {
+            id: "n1".into(),
+            number: 1,
+            start_char: 2,
+            end_char: 5,
+        },
+        FootnoteMarker {
+            id: "n2".into(),
+            number: 2,
+            start_char: 8,
+            end_char: 12,
+        },
+    ];
+    let rebased = test_rebase_markers(&markers, 7, 15);
+    assert_eq!(rebased.len(), 1);
+    assert_eq!(rebased[0].id, "n2");
+    assert_eq!(rebased[0].start_char, 1);
+    assert_eq!(rebased[0].end_char, 5);
+}

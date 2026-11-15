@@ -6,7 +6,7 @@ use super::types::OpdsFeed;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::Duration;
@@ -33,6 +33,7 @@ pub enum OpdsError {
     WriteFile(String),
     Flush(String),
     MoveFile(String),
+    Cancelled,
 }
 
 impl From<String> for OpdsError {
@@ -69,6 +70,7 @@ pub enum OpdsCommand {
         ext: String,
         auth: Option<OpdsAuth>,
         downloads_dir: PathBuf,
+        cancel: Arc<AtomicBool>,
     },
 }
 
@@ -161,6 +163,7 @@ impl OpdsClient {
                             ext,
                             auth,
                             downloads_dir,
+                            cancel,
                         } => {
                             let tx_dl = tx_evt_clone.clone();
                             let dl_id = download_id.clone();
@@ -176,6 +179,7 @@ impl OpdsClient {
                                         &ext,
                                         auth.as_ref(),
                                         &downloads_dir,
+                                        &cancel,
                                         |downloaded, total| {
                                             let _ = tx_dl.send(OpdsEvent::DownloadProgress {
                                                 download_id: dl_id.clone(),
@@ -253,6 +257,7 @@ impl OpdsClient {
         id
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn download(
         &self,
         download_id: &str,
@@ -262,7 +267,8 @@ impl OpdsClient {
         ext: &str,
         auth: Option<OpdsAuth>,
         downloads_dir: PathBuf,
-    ) {
+    ) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
         if !self.worker_started {
             let _ = self.tx_event.send(OpdsEvent::DownloadFinished {
                 download_id: download_id.to_string(),
@@ -270,7 +276,7 @@ impl OpdsClient {
                     "OPDS worker thread is unavailable".to_string(),
                 )),
             });
-            return;
+            return cancel;
         }
         let _ = self.tx_cmd.send(OpdsCommand::DownloadBook {
             download_id: download_id.to_string(),
@@ -280,7 +286,9 @@ impl OpdsClient {
             ext: ext.to_string(),
             auth,
             downloads_dir,
+            cancel: cancel.clone(),
         });
+        cancel
     }
 
     #[cfg(all(test, feature = "enable_tests"))]
@@ -512,6 +520,7 @@ fn finalize_unique_download_path(
     Err(OpdsError::MoveFile(msg))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn download_book_sync<F>(
     agent: &ureq::Agent,
     url: &str,
@@ -520,11 +529,15 @@ fn download_book_sync<F>(
     ext: &str,
     auth: Option<&OpdsAuth>,
     downloads_dir: &Path,
+    cancel: &AtomicBool,
     mut on_progress: F,
 ) -> Result<PathBuf, OpdsError>
 where
     F: FnMut(usize, Option<usize>),
 {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(OpdsError::Cancelled);
+    }
     std::fs::create_dir_all(downloads_dir).map_err(|e| OpdsError::CreateFile(e.to_string()))?;
 
     let ua = crate::net::user_agent(Some("OPDS Downloader"));
@@ -535,6 +548,9 @@ where
     let mut resp = req
         .call()
         .map_err(|e| OpdsError::DownloadConnect(e.to_string()))?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(OpdsError::Cancelled);
+    }
     if !resp.status().is_success() {
         return Err(OpdsError::DownloadServer(resp.status().as_u16()));
     }
@@ -560,9 +576,15 @@ where
     let mut last_progress_report: usize = 0;
 
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpdsError::Cancelled);
+        }
         let bytes_read = reader
             .read(&mut buffer)
             .map_err(|e| OpdsError::Transfer(e.to_string()))?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OpdsError::Cancelled);
+        }
         if bytes_read == 0 {
             break;
         }
@@ -581,6 +603,9 @@ where
         }
     }
 
+    if cancel.load(Ordering::Relaxed) {
+        return Err(OpdsError::Cancelled);
+    }
     file.flush().map_err(|e| OpdsError::Flush(e.to_string()))?;
     drop(file);
     on_progress(downloaded, content_len);

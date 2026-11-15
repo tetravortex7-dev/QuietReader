@@ -1,107 +1,237 @@
-use crate::app::license_view::status_text;
-use crate::app::theme::ReaderTheme;
+use super::icons::{Icon, IconButton, IconLabel};
+use super::license_view::{LicenseNotice, ProUpgradeState, error_text, feature_name, status_text};
+use super::settings_view::widgets::{
+    SectionBadge, SettingsPalette, pill_badge, row_card, section_card, themed_button,
+};
+use crate::core::license::{LicenseStatus, ProFeature};
+use crate::i18n::fill;
 use crate::settings::AppSettings;
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, RichText, Vec2};
 
-pub fn render_hotkeys_tab(ui: &mut egui::Ui, theme: &ReaderTheme, lang: crate::i18n::UiLanguage) {
-    let t = lang.t();
-    let text_color = theme.text_color();
-    ui.label(
-        RichText::new(t.tab_hotkeys)
-            .size(17.0)
-            .strong()
-            .color(text_color),
-    );
-    ui.add_space(6.0);
+pub fn render_about_tab(
+    ui: &mut egui::Ui,
+    p: &SettingsPalette,
+    settings: &mut AppSettings,
+    pro: &mut ProUpgradeState,
+    on_save_settings: &mut bool,
+) {
+    let t = settings.ui_language.t();
 
-    let stroke = egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.2));
-    for hotkey in t.hotkeys {
-        egui::Frame::new()
-            .fill(theme.bg_color())
-            .stroke(stroke)
-            .corner_radius(4.0)
-            .inner_margin(egui::Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(hotkey.keys)
-                            .strong()
-                            .color(theme.accent_color()),
-                    );
-                    ui.label("—");
-                    ui.label(RichText::new(hotkey.description).color(text_color));
-                });
-            });
-        ui.add_space(2.0);
-    }
+    render_pro_section(ui, p, &t, settings, pro, on_save_settings);
+    ui.add_space(14.0);
+    render_version_and_licenses_section(ui, p, &t);
 }
 
-pub fn render_about_tab(ui: &mut egui::Ui, settings: &AppSettings, theme: &ReaderTheme) {
-    let t = settings.ui_language.t();
-    let text_color = theme.text_color();
-    let secondary = text_color.gamma_multiply(0.78);
+pub(super) fn render_pro_section(
+    ui: &mut egui::Ui,
+    p: &SettingsPalette,
+    t: &crate::i18n::Translations,
+    settings: &mut AppSettings,
+    pro: &mut ProUpgradeState,
+    on_save_settings: &mut bool,
+) {
     let status = settings.license_status();
-    let tier = if status.is_pro_active() {
-        t.license_pro_badge
-    } else {
-        t.license_free_status
-    };
+    let is_active = status.is_pro_active();
+    section_card(
+        ui,
+        p,
+        t.license_title,
+        Some(SectionBadge::Pro(t.license_pro_badge)),
+        Some(t.license_upgrade_subtitle),
+        |ui| {
+            row_card(ui, p, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(status_text(t, &status))
+                            .size(13.5)
+                            .strong()
+                            .color(p.text),
+                    );
+                    if is_active {
+                        pill_badge(ui, p.tertiary_bg, p.tertiary, t.license_pro_badge, 10.0);
+                    }
+                });
+                if let LicenseStatus::ProActivated { email, .. } = &status {
+                    ui.add_space(3.0);
+                    ui.label(
+                        RichText::new(fill(t.license_licensed_to, &[("{email}", email)]))
+                            .size(11.5)
+                            .color(p.text_variant),
+                    );
+                }
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(t.license_features_title)
+                        .size(12.0)
+                        .strong()
+                        .color(p.text),
+                );
+                ui.add_space(4.0);
 
-    ui.label(
-        RichText::new(t.tab_about)
-            .size(17.0)
-            .strong()
-            .color(text_color),
+                let cols = if ui.available_width() >= 500.0 { 2 } else { 1 };
+                for chunk in ProFeature::ALL.chunks(cols) {
+                    if cols == 2 {
+                        ui.columns(2, |cols_ui| {
+                            for (idx, &feat) in chunk.iter().enumerate() {
+                                cols_ui[idx].add(
+                                    IconLabel::new(Icon::Check, feature_name(t, feat))
+                                        .size(12.0)
+                                        .color(p.text),
+                                );
+                            }
+                        });
+                    } else {
+                        for &feat in chunk {
+                            ui.add(
+                                IconLabel::new(Icon::Check, feature_name(t, feat))
+                                    .size(12.0)
+                                    .color(p.text),
+                            );
+                        }
+                    }
+                    ui.add_space(2.0);
+                }
+
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(t.license_free_forever)
+                        .size(11.0)
+                        .color(p.text_variant),
+                );
+            });
+
+            if !is_active {
+                ui.add_space(10.0);
+                row_card(ui, p, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        if settings.trial_started_at_unix.is_none() {
+                            if themed_button(ui, t.license_try_trial, true, p).clicked() {
+                                pro.start_trial(settings, on_save_settings);
+                            }
+                        } else {
+                            ui.label(
+                                RichText::new(t.license_trial_one_time)
+                                    .size(11.5)
+                                    .color(p.text_variant),
+                            );
+                        }
+                    });
+                    if pro.trial_error {
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(t.license_trial_error)
+                                .size(11.5)
+                                .color(p.error),
+                        );
+                    }
+
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(t.license_key_label)
+                            .size(12.0)
+                            .strong()
+                            .color(p.text),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut pro.key_input)
+                                .hint_text(t.license_key_hint)
+                                .desired_width((ui.available_width() - 140.0).clamp(180.0, 360.0)),
+                        );
+                        let submitted = resp.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                        let activate_clicked = ui
+                            .add(
+                                IconButton::new(Icon::Key, t.license_activate)
+                                    .min_size(Vec2::new(115.0, 28.0)),
+                            )
+                            .clicked();
+                        if (activate_clicked || submitted) && !pro.key_input.trim().is_empty() {
+                            pro.activate(settings, on_save_settings);
+                        }
+                    });
+                    ui.add_space(3.0);
+                    ui.label(
+                        RichText::new(t.license_enter_key_hint)
+                            .size(11.0)
+                            .color(p.text_variant),
+                    );
+                    if let Some(error) = pro.error {
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(error_text(t, error))
+                                .size(11.5)
+                                .color(p.error),
+                        );
+                    }
+                    if let Some(notice) = pro.notice {
+                        ui.add_space(4.0);
+                        let msg = match notice {
+                            LicenseNotice::TrialStarted => t.license_trial_started,
+                            LicenseNotice::Activated => t.license_activated_thanks,
+                        };
+                        ui.add(
+                            IconLabel::new(Icon::Check, msg)
+                                .size(12.0)
+                                .color(p.tertiary)
+                                .strong(),
+                        );
+                    }
+                });
+            }
+        },
     );
-    ui.add_space(8.0);
-    ui.label(
-        RichText::new(format!(
-            "{}: v{}",
-            t.about_version,
-            crate::updater::CURRENT_VERSION
-        ))
-        .color(text_color),
-    );
-    ui.add_space(4.0);
-    ui.label(RichText::new(format!("{}: {}", t.about_license_status, tier)).color(text_color));
-    ui.label(
-        RichText::new(status_text(&t, &status))
-            .size(12.0)
-            .color(secondary),
-    );
-    ui.add_space(12.0);
-    ui.separator();
-    ui.add_space(8.0);
-    ui.label(
-        RichText::new(t.about_third_party)
-            .size(15.0)
-            .strong()
-            .color(text_color),
-    );
-    ui.add_space(6.0);
-    let stroke = egui::Stroke::new(1.0, theme.accent_color().gamma_multiply(0.25));
-    egui::Frame::new()
-        .fill(theme.bg_color())
-        .stroke(stroke)
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(12, 10))
-        .show(ui, |ui| {
+}
+
+pub(super) fn render_version_and_licenses_section(
+    ui: &mut egui::Ui,
+    p: &SettingsPalette,
+    t: &crate::i18n::Translations,
+) {
+    section_card(ui, p, t.tab_about, None, None, |ui| {
+        row_card(ui, p, |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{}: v{}",
+                    t.about_version,
+                    crate::updater::CURRENT_VERSION
+                ))
+                .size(13.0)
+                .strong()
+                .color(p.text),
+            );
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(t.about_third_party)
+                    .size(12.5)
+                    .strong()
+                    .color(p.text),
+            );
+            ui.add_space(6.0);
             ui.label(
                 RichText::new(t.about_unrar_title)
+                    .size(12.0)
                     .strong()
-                    .color(theme.accent_color()),
+                    .color(p.accent),
             );
             ui.label(
                 RichText::new(t.about_unrar_text)
-                    .size(12.0)
-                    .color(secondary),
+                    .size(11.5)
+                    .color(p.text_variant),
             );
             ui.add_space(8.0);
             ui.label(
                 RichText::new(t.about_sil_title)
+                    .size(12.0)
                     .strong()
-                    .color(theme.accent_color()),
+                    .color(p.accent),
             );
-            ui.label(RichText::new(t.about_sil_text).size(12.0).color(secondary));
+            ui.label(
+                RichText::new(t.about_sil_text)
+                    .size(11.5)
+                    .color(p.text_variant),
+            );
         });
+    });
 }

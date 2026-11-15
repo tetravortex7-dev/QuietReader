@@ -406,6 +406,7 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                     let mut mime_type = String::new();
                     let mut title = String::new();
                     let mut template = None;
+                    let mut length = None;
 
                     for attr in e.attributes().flatten() {
                         let k = attr.key.local_name();
@@ -420,6 +421,8 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                             title = v;
                         } else if k.as_ref().eq_ignore_ascii_case("template") {
                             template = Some(v);
+                        } else if k.as_ref().eq_ignore_ascii_case("length") {
+                            length = v.trim().parse::<u64>().ok().filter(|&n| n > 0);
                         }
                     }
 
@@ -451,6 +454,7 @@ pub fn parse_opds_feed(xml_str: &str, base_url: &str) -> Result<OpdsFeed, String
                                     },
                                     format_label: badge.to_string(),
                                     extension: ext.to_string(),
+                                    length,
                                 });
                             }
                         } else if rel_lower.contains("subsection")

@@ -42,7 +42,7 @@ impl ProUpgradeState {
         self.notice = None;
     }
 
-    fn start_trial(&mut self, settings: &mut AppSettings, on_save: &mut bool) {
+    pub(crate) fn start_trial(&mut self, settings: &mut AppSettings, on_save: &mut bool) {
         match settings.start_trial(unix_now()) {
             Ok(()) => {
                 *on_save = true;
@@ -55,7 +55,7 @@ impl ProUpgradeState {
         }
     }
 
-    fn activate(&mut self, settings: &mut AppSettings, on_save: &mut bool) {
+    pub(crate) fn activate(&mut self, settings: &mut AppSettings, on_save: &mut bool) {
         match settings.activate_license(&self.key_input) {
             Ok(_) => {
                 *on_save = true;
@@ -378,7 +378,7 @@ pub(crate) fn status_text(t: &Translations, status: &LicenseStatus) -> String {
     }
 }
 
-fn error_text(t: &Translations, error: LicenseError) -> &'static str {
+pub(crate) fn error_text(t: &Translations, error: LicenseError) -> &'static str {
     match error {
         LicenseError::InvalidFormat => t.license_invalid_format,
         LicenseError::InvalidSignature => t.license_invalid_signature,
@@ -387,7 +387,7 @@ fn error_text(t: &Translations, error: LicenseError) -> &'static str {
     }
 }
 
-fn feature_name(t: &Translations, feature: ProFeature) -> &'static str {
+pub(crate) fn feature_name(t: &Translations, feature: ProFeature) -> &'static str {
     match feature {
         ProFeature::NeuralTts => t.license_feature_neural_tts,
         ProFeature::Translation => t.license_feature_translation,

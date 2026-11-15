@@ -1,55 +1,82 @@
+use super::shelf_card::{ShelfCardLayout, render_shelf_card};
 use super::shelf_cover::{render_add_book_card, shelf_cover};
 use super::wood_shelf::paint_wood_shelf;
 use super::*;
-use crate::app::icons::{Icon, IconButton, IconLabel, icon_button, paint_icon};
+use crate::app::icons::{Icon, IconButton, IconLabel, icon_button};
 use crate::app::theme::{CozyPalette, ReaderTheme};
-use crate::core::library::{LibraryEntry, LibraryReadingStatus, ShelfViewMode, UiDesignMode};
+use crate::core::library::{
+    LibraryEntry, LibraryReadingStatus, LibrarySortMode, ShelfViewMode, UiDesignMode,
+};
 use crate::i18n::Translations;
-use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke, StrokeKind, Vec2};
+use eframe::egui::{self, Color32, RichText, Stroke, StrokeKind, Vec2};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const MINI_COVER_WIDTH: f32 = 56.0;
 const MINI_COVER_HEIGHT: f32 = 84.0;
 const MINI_ACTION_WIDTH: f32 = 120.0;
 
-#[derive(Clone, Copy)]
-struct CardMetrics {
-    width: f32,
-    cover_height: f32,
-    min_height: f32,
-    title_size: f32,
-    secondary_size: f32,
-    status_size: f32,
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ShelfGridMetrics {
+    pub cols: usize,
+    pub gap: f32,
+    pub card_outer_w: f32,
+    pub card_outer_h: f32,
+    pub card_inner_w: f32,
+    pub card_inner_h: f32,
+    pub cover_h: f32,
+    pub title_size: f32,
+    pub secondary_size: f32,
+    pub status_size: f32,
 }
 
-impl CardMetrics {
-    fn for_view(view: ShelfViewMode) -> Self {
-        match view {
-            ShelfViewMode::Maxi => Self {
-                width: 220.0,
-                cover_height: 310.0,
-                min_height: 440.0,
-                title_size: 15.0,
-                secondary_size: 11.5,
-                status_size: 11.0,
-            },
-            ShelfViewMode::Mini => Self {
-                width: 130.0,
-                cover_height: 180.0,
-                min_height: 280.0,
-                title_size: 12.5,
-                secondary_size: 10.5,
-                status_size: 10.0,
-            },
-            ShelfViewMode::Standard => Self {
-                width: 148.0,
-                cover_height: 215.0,
-                min_height: 325.0,
-                title_size: 13.0,
-                secondary_size: 10.5,
-                status_size: 10.5,
-            },
-        }
+pub(crate) fn compute_shelf_grid(avail_w: f32, view: ShelfViewMode) -> ShelfGridMetrics {
+    let avail_w = avail_w.max(240.0);
+    let gap = if avail_w < 540.0 { 10.0 } else { 14.0 };
+    let (min_outer, max_cols, aspect, title_size, secondary_size, status_size) = match view {
+        ShelfViewMode::Maxi => (
+            if avail_w < 540.0 { 168.0 } else { 240.0 },
+            4.0,
+            1.34,
+            15.0,
+            11.5,
+            11.0,
+        ),
+        ShelfViewMode::Mini | ShelfViewMode::Standard => (
+            if avail_w < 540.0 { 144.0 } else { 166.0 },
+            6.0,
+            1.28,
+            13.0,
+            10.5,
+            10.5,
+        ),
+    };
+
+    let cols = ((avail_w + gap) / (min_outer + gap))
+        .floor()
+        .clamp(1.0, max_cols) as usize;
+    let card_outer_w = ((avail_w - (cols - 1) as f32 * gap) / cols as f32)
+        .floor()
+        .max(132.0);
+    let card_inner_w = (card_outer_w - 20.0).max(112.0);
+    let cover_h = match view {
+        ShelfViewMode::Maxi => (card_inner_w * aspect).clamp(215.0, 340.0).round(),
+        _ => (card_inner_w * aspect).clamp(164.0, 198.0).round(),
+    };
+    let card_inner_h = cover_h + 98.0;
+    let card_outer_h = card_inner_h + 20.0;
+
+    ShelfGridMetrics {
+        cols,
+        gap,
+        card_outer_w,
+        card_outer_h,
+        card_inner_w,
+        card_inner_h,
+        cover_h,
+        title_size,
+        secondary_size,
+        status_size,
     }
 }
 
@@ -63,11 +90,13 @@ impl LibraryViewState {
         actions: &mut LibraryActions,
     ) {
         let query = self.search_query.trim().to_lowercase();
-        let in_progress_paths: std::collections::HashSet<PathBuf> = if library.design
-            == UiDesignMode::Cozy
+        let skip_hero_dups = library.entries.len() > 6
+            && library.design == UiDesignMode::Cozy
             && self.filter == LibraryFilter::All
             && query.is_empty()
-        {
+            && library.sort_mode == LibrarySortMode::RecentlyOpened;
+
+        let in_progress_paths: HashSet<PathBuf> = if skip_hero_dups {
             library
                 .sorted_entries()
                 .into_iter()
@@ -76,45 +105,17 @@ impl LibraryViewState {
                 .map(|e| e.path.clone())
                 .collect()
         } else {
-            std::collections::HashSet::new()
+            HashSet::new()
         };
 
-        let mut entries: Vec<LibraryEntry> = library
-            .sorted_entries()
+        let entries: Vec<LibraryEntry> = library
+            .sorted_entries_by(library.sort_mode)
             .into_iter()
             .filter(|entry| !in_progress_paths.contains(&entry.path))
             .filter(|entry| self.matches_filter(entry))
             .filter(|entry| self.matches_query(entry, &query))
             .cloned()
             .collect();
-
-        if library.design == UiDesignMode::Cozy
-            && self.filter == LibraryFilter::All
-            && query.is_empty()
-        {
-            const SHOWCASE_ORDER: [&str; 11] = [
-                "Невидимые города",
-                "Дюна",
-                "Левая рука Тьмы",
-                "Хранители",
-                "Вымышленные истории",
-                "Поэтика пространства",
-                "Норвежский лес",
-                "Обделённые",
-                "Дзен и искусство ухода за мотоциклом",
-                "Пиранези",
-                "Полиция памяти",
-            ];
-            let mut shelf_books: Vec<LibraryEntry> = Vec::new();
-            for title in SHOWCASE_ORDER {
-                if let Some(pos) = entries.iter().position(|e| e.title == title) {
-                    shelf_books.push(entries.remove(pos));
-                }
-            }
-            let other_books = entries;
-            entries = shelf_books;
-            entries.extend(other_books);
-        }
 
         if entries.is_empty() {
             if !query.is_empty() || self.filter != LibraryFilter::All {
@@ -136,7 +137,8 @@ impl LibraryViewState {
         let mut remove_path = None;
         let mut status_change = None;
         let view = library.shelf_view;
-        let radius = card_radius(library.design);
+        let design = library.design;
+        let radius = card_radius(design);
         let shelf_width = ui.available_width().max(240.0);
 
         let mut keyboard_open = None;
@@ -167,6 +169,7 @@ impl LibraryViewState {
                 ui,
                 &entries,
                 view,
+                design,
                 radius,
                 theme,
                 t,
@@ -182,15 +185,15 @@ impl LibraryViewState {
         if let Some(path) = open_path {
             actions.open_path = Some(path);
         }
-        if let Some(path) = remove_path {
-            if library.remove(&path) {
-                actions.save_library = true;
-            }
+        if let Some(path) = remove_path
+            && library.remove(&path)
+        {
+            actions.save_library = true;
         }
-        if let Some((path, status)) = status_change {
-            if library.set_status(&path, status) {
-                actions.save_library = true;
-            }
+        if let Some((path, status)) = status_change
+            && library.set_status(&path, status)
+        {
+            actions.save_library = true;
         }
     }
 
@@ -263,8 +266,7 @@ impl LibraryViewState {
         let columns = if view == ShelfViewMode::Mini {
             1
         } else {
-            let step = CardMetrics::for_view(view).width + 20.0;
-            ((shelf_width + 4.0) / step).floor().max(1.0) as usize
+            compute_shelf_grid(shelf_width, view).cols
         };
         if let Some(target) = shelf_move_target(current, entries.len(), columns, movement) {
             self.keyboard_selection = Some(entries[target].path.clone());
@@ -278,6 +280,7 @@ impl LibraryViewState {
         ui: &mut egui::Ui,
         entries: &[LibraryEntry],
         view: ShelfViewMode,
+        design: UiDesignMode,
         radius: f32,
         theme: &ReaderTheme,
         t: &Translations,
@@ -288,115 +291,106 @@ impl LibraryViewState {
         scroll_to_selection: &mut bool,
         actions: &mut LibraryActions,
     ) {
-        let is_cozy = !theme.is_dark();
-        let metrics = CardMetrics::for_view(view);
+        let is_cozy_palette = !theme.is_dark();
+        let draw_wood = design == UiDesignMode::Cozy;
         let avail_w = ui.available_width();
-        let item_w = metrics.width + 12.0;
-        let cols = ((avail_w + 10.0) / item_w).floor().max(1.0) as usize;
-
-        let is_showcase_layout = is_cozy
-            && self.filter == LibraryFilter::All
-            && self.search_query.trim().is_empty()
-            && cols >= 6
-            && entries.len() >= 11;
+        let grid = compute_shelf_grid(avail_w, view);
+        let card_layout = ShelfCardLayout {
+            inner_w: grid.card_inner_w,
+            cover_h: grid.cover_h,
+            inner_h: grid.card_inner_h,
+            title_size: grid.title_size,
+            secondary_size: grid.secondary_size,
+            status_size: grid.status_size,
+        };
 
         let mut chunks: Vec<Vec<&LibraryEntry>> = Vec::new();
-        let mut has_add_card_in_row = None;
-
-        if is_showcase_layout {
-            chunks.push(entries[0..6].iter().collect());
-            chunks.push(entries[6..11].iter().collect());
-            has_add_card_in_row = Some(1);
-            let mut remaining = &entries[11..];
-            while !remaining.is_empty() {
-                let take = remaining.len().min(cols);
-                chunks.push(remaining[..take].iter().collect());
-                remaining = &remaining[take..];
-            }
-        } else {
-            for c in entries.chunks(cols) {
-                chunks.push(c.iter().collect());
-            }
+        for c in entries.chunks(grid.cols) {
+            chunks.push(c.iter().collect());
         }
+
+        let card_stroke = Stroke::new(
+            1.0,
+            if is_cozy_palette {
+                CozyPalette::OUTLINE.gamma_multiply(0.35)
+            } else {
+                theme.accent_color().gamma_multiply(0.28)
+            },
+        );
 
         for (row_idx, chunk) in chunks.iter().enumerate() {
             let is_last_row = row_idx + 1 == chunks.len();
             let row_min_x = ui.cursor().left();
-            let row_w = ui.available_width();
-            let row_h = metrics.min_height + 12.0;
+            let row_w = avail_w;
 
             let row_resp = ui.allocate_ui_with_layout(
-                Vec2::new(row_w, row_h),
+                Vec2::new(row_w, grid.card_outer_h),
                 egui::Layout::left_to_right(egui::Align::Min),
                 |ui| {
-                    for entry in chunk {
+                    for (col_idx, entry) in chunk.iter().enumerate() {
+                        if col_idx > 0 {
+                            ui.add_space(grid.gap);
+                        }
                         self.cover_loader.queue(&entry.path);
-                        let inner = ui.allocate_ui_with_layout(
-                            Vec2::new(metrics.width + 12.0, metrics.min_height + 12.0),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                egui::Frame::new()
-                                    .fill(card_fill(theme))
-                                    .stroke(Stroke::new(
-                                        1.0,
-                                        if is_cozy {
-                                            CozyPalette::OUTLINE.gamma_multiply(0.35)
-                                        } else {
-                                            theme.accent_color().gamma_multiply(0.28)
-                                        },
-                                    ))
-                                    .corner_radius(radius)
-                                    .inner_margin(egui::Margin::same(10))
-                                    .show(ui, |ui| {
-                                        ui.set_width(metrics.width);
-                                        ui.set_min_height(metrics.min_height);
-                                        self.render_shelf_card(
-                                            ui,
-                                            entry,
-                                            metrics,
-                                            theme,
-                                            t,
-                                            radius,
-                                            open_path,
-                                            remove_path,
-                                            status_change,
-                                        );
-                                    });
-                            },
+                        let (slot_rect, _) = ui.allocate_exact_size(
+                            Vec2::new(grid.card_outer_w, grid.card_outer_h),
+                            egui::Sense::hover(),
                         );
-
-                        let card_rect = inner.response.rect;
+                        let mut card_ui = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(slot_rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        egui::Frame::new()
+                            .fill(card_fill(theme))
+                            .stroke(card_stroke)
+                            .corner_radius(radius)
+                            .inner_margin(egui::Margin::same(10))
+                            .show(&mut card_ui, |ui| {
+                                ui.set_width(grid.card_inner_w);
+                                ui.set_min_height(grid.card_inner_h);
+                                render_shelf_card(
+                                    ui,
+                                    slot_rect,
+                                    entry,
+                                    card_layout,
+                                    theme,
+                                    t,
+                                    &mut self.cover_loader,
+                                    open_path,
+                                    remove_path,
+                                    status_change,
+                                );
+                            });
 
                         if selected == Some(entry.path.as_path()) {
-                            let accent = if is_cozy {
+                            let accent = if is_cozy_palette {
                                 CozyPalette::PRIMARY
                             } else {
                                 theme.accent_color()
                             };
                             ui.painter().rect_filled(
-                                card_rect.expand(1.0),
+                                slot_rect.expand(1.0),
                                 radius + 1.0,
                                 accent.gamma_multiply(0.08),
                             );
                             ui.painter().rect_stroke(
-                                card_rect.expand(1.0),
+                                slot_rect.expand(1.0),
                                 radius + 1.0,
                                 Stroke::new(2.5, accent),
                                 StrokeKind::Inside,
                             );
                             if *scroll_to_selection {
-                                ui.scroll_to_rect(card_rect, Some(egui::Align::Center));
+                                ui.scroll_to_rect(slot_rect, Some(egui::Align::Center));
                                 *scroll_to_selection = false;
                             }
                         }
-                        ui.add_space(8.0);
                     }
 
-                    let should_render_add = has_add_card_in_row == Some(row_idx)
-                        || (!is_showcase_layout && is_last_row && chunk.len() < cols);
-                    if should_render_add {
-                        let (add_rect, _add_resp) = ui.allocate_exact_size(
-                            Vec2::new(metrics.width + 12.0, metrics.min_height + 12.0),
+                    if is_last_row && chunk.len() < grid.cols {
+                        ui.add_space(grid.gap);
+                        let (add_rect, _) = ui.allocate_exact_size(
+                            Vec2::new(grid.card_outer_w, grid.card_outer_h),
                             egui::Sense::hover(),
                         );
                         let mut child_ui = ui.new_child(
@@ -406,10 +400,10 @@ impl LibraryViewState {
                         );
                         render_add_book_card(
                             &mut child_ui,
-                            metrics.width,
-                            metrics.min_height,
+                            grid.card_outer_w,
+                            grid.card_outer_h,
                             t,
-                            is_cozy,
+                            is_cozy_palette,
                             theme,
                             actions,
                         );
@@ -417,26 +411,25 @@ impl LibraryViewState {
                 },
             );
 
-            if is_cozy {
-                let shelf_y = row_resp.response.rect.max.y;
-                paint_wood_shelf(ui.painter(), row_min_x, row_min_x + row_w, shelf_y);
+            if draw_wood {
+                let shelf_y = row_resp.response.rect.max.y + 1.0;
+                paint_wood_shelf(ui.painter(), row_min_x, row_min_x + row_w, shelf_y, theme);
+                ui.add_space(24.0);
+            } else {
+                ui.add_space(16.0);
             }
-            ui.add_space(26.0);
         }
 
-        if !is_showcase_layout
-            && (chunks.is_empty() || (chunks.last().map(|c| c.len() == cols).unwrap_or(false)))
-        {
+        if chunks.is_empty() || chunks.last().is_some_and(|c| c.len() == grid.cols) {
             let row_min_x = ui.cursor().left();
-            let row_w = ui.available_width();
-            let row_h = metrics.min_height + 12.0;
+            let row_w = avail_w;
 
             let row_resp = ui.allocate_ui_with_layout(
-                Vec2::new(row_w, row_h),
+                Vec2::new(row_w, grid.card_outer_h),
                 egui::Layout::left_to_right(egui::Align::Min),
                 |ui| {
                     let (add_rect, _) = ui.allocate_exact_size(
-                        Vec2::new(metrics.width + 12.0, metrics.min_height + 12.0),
+                        Vec2::new(grid.card_outer_w, grid.card_outer_h),
                         egui::Sense::hover(),
                     );
                     let mut child_ui = ui.new_child(
@@ -446,21 +439,23 @@ impl LibraryViewState {
                     );
                     render_add_book_card(
                         &mut child_ui,
-                        metrics.width,
-                        metrics.min_height,
+                        grid.card_outer_w,
+                        grid.card_outer_h,
                         t,
-                        is_cozy,
+                        is_cozy_palette,
                         theme,
                         actions,
                     );
                 },
             );
 
-            if is_cozy {
-                let shelf_y = row_resp.response.rect.max.y;
-                paint_wood_shelf(ui.painter(), row_min_x, row_min_x + row_w, shelf_y);
+            if draw_wood {
+                let shelf_y = row_resp.response.rect.max.y + 1.0;
+                paint_wood_shelf(ui.painter(), row_min_x, row_min_x + row_w, shelf_y, theme);
+                ui.add_space(24.0);
+            } else {
+                ui.add_space(16.0);
             }
-            ui.add_space(26.0);
         }
     }
 
@@ -632,193 +627,6 @@ impl LibraryViewState {
                 }
             });
             ui.add_space(4.0);
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn render_shelf_card(
-        &mut self,
-        ui: &mut egui::Ui,
-        entry: &LibraryEntry,
-        metrics: CardMetrics,
-        theme: &ReaderTheme,
-        t: &Translations,
-        _radius: f32,
-        open_path: &mut Option<PathBuf>,
-        _remove_path: &mut Option<PathBuf>,
-        _status_change: &mut Option<(PathBuf, LibraryReadingStatus)>,
-    ) {
-        let is_cozy = !theme.is_dark();
-        let file_name = entry
-            .path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let display_title = if entry.title.trim().is_empty() {
-            file_name.as_str()
-        } else {
-            entry.title.as_str()
-        };
-
-        let cover_response = shelf_cover(
-            ui,
-            &entry.path,
-            display_title,
-            &entry.author,
-            Vec2::new(metrics.width, metrics.cover_height),
-            8.0,
-            theme,
-            &mut self.cover_loader,
-            t.extra.default_book_title,
-        );
-        if cover_response.clicked() {
-            *open_path = Some(entry.path.clone());
-        }
-
-        ui.add_space(8.0);
-        let title_response = ui.add(
-            egui::Label::new(
-                RichText::new(display_title)
-                    .strong()
-                    .size(metrics.title_size)
-                    .color(if is_cozy {
-                        CozyPalette::ON_SURFACE
-                    } else {
-                        theme.text_color()
-                    }),
-            )
-            .sense(egui::Sense::click())
-            .truncate(),
-        );
-        if title_response.clicked() {
-            *open_path = Some(entry.path.clone());
-        }
-
-        let secondary = if entry.author.trim().is_empty() {
-            file_name
-        } else {
-            entry.author.clone()
-        };
-        ui.add(
-            egui::Label::new(RichText::new(secondary).size(metrics.secondary_size).color(
-                if is_cozy {
-                    CozyPalette::ON_SURFACE_VARIANT
-                } else {
-                    theme.secondary_text_color()
-                },
-            ))
-            .truncate(),
-        );
-
-        ui.add_space(6.0);
-        let percent = entry.progress_percent().round() as u32;
-        let is_finished = entry.status == LibraryReadingStatus::Finished || percent == 100;
-        let fraction = percent as f32 / 100.0;
-        let status_color = if is_finished {
-            if is_cozy {
-                CozyPalette::TERTIARY
-            } else {
-                Color32::from_rgb(72, 187, 120)
-            }
-        } else if is_cozy {
-            CozyPalette::PRIMARY
-        } else {
-            theme.accent_color()
-        };
-
-        let (prog_r, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 14.0), egui::Sense::hover());
-        let label = if is_finished {
-            t.library_status_finished
-        } else {
-            t.library_progress_label
-        };
-        let font_id = egui::FontId::proportional(metrics.status_size);
-        ui.painter().text(
-            prog_r.left_center(),
-            egui::Align2::LEFT_CENTER,
-            label,
-            font_id.clone(),
-            if is_cozy {
-                CozyPalette::ON_SURFACE_VARIANT
-            } else {
-                theme.secondary_text_color()
-            },
-        );
-        ui.painter().text(
-            prog_r.right_center(),
-            egui::Align2::RIGHT_CENTER,
-            format!("{percent}%"),
-            font_id,
-            status_color,
-        );
-
-        ui.add_space(3.0);
-        let bar_h = 4.0;
-        let (bar_rect, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), bar_h), egui::Sense::hover());
-        ui.painter().rect_filled(
-            bar_rect,
-            2.0,
-            if is_cozy {
-                CozyPalette::SURFACE_CONTAINER
-            } else {
-                theme.panel_bg_color().gamma_multiply(1.3)
-            },
-        );
-        if fraction > 0.0 {
-            let fill_w = bar_rect.width() * fraction;
-            ui.painter().rect_filled(
-                Rect::from_min_size(bar_rect.min, Vec2::new(fill_w, bar_h)),
-                2.0,
-                status_color,
-            );
-        }
-
-        ui.add_space(8.0);
-        let (read_btn_rect, read_btn_resp) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), egui::Sense::click());
-        let is_h = read_btn_resp.hovered();
-
-        let is_primary_btn = !is_finished
-            && (entry.title == "Дюна" || entry.status == LibraryReadingStatus::Reading);
-        let btn_fill = if is_primary_btn {
-            if is_h {
-                CozyPalette::PRIMARY_CONTAINER
-            } else {
-                CozyPalette::PRIMARY
-            }
-        } else if is_h {
-            CozyPalette::SURFACE_HIGH
-        } else {
-            CozyPalette::SURFACE_CONTAINER
-        };
-
-        let btn_text_color = if is_primary_btn {
-            Color32::WHITE
-        } else {
-            CozyPalette::ON_SURFACE
-        };
-
-        ui.painter().rect_filled(read_btn_rect, 6.0, btn_fill);
-        let play_pos = Pos2::new(read_btn_rect.center().x - 24.0, read_btn_rect.center().y);
-        paint_icon(
-            ui.painter(),
-            Icon::Play,
-            Rect::from_center_size(play_pos, Vec2::splat(11.0)),
-            btn_text_color,
-        );
-        ui.painter().text(
-            Pos2::new(read_btn_rect.center().x + 2.0, read_btn_rect.center().y),
-            egui::Align2::CENTER_CENTER,
-            t.library_read_action,
-            egui::FontId::proportional(11.5),
-            btn_text_color,
-        );
-
-        if read_btn_resp.clicked() {
-            *open_path = Some(entry.path.clone());
         }
     }
 

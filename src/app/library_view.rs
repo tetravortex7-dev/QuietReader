@@ -17,7 +17,8 @@ mod dashboard;
 mod filter_bar;
 mod greeting;
 pub(crate) mod rhythm;
-mod shelf;
+pub(crate) mod shelf;
+mod shelf_card;
 pub(crate) mod shelf_cover;
 pub(crate) mod wood_shelf;
 
@@ -205,6 +206,7 @@ pub enum LibraryFilter {
 pub struct LibraryActions {
     pub open_file: bool,
     pub open_folder: bool,
+    pub open_opds: bool,
     pub pick_library_folder: bool,
     pub open_path: Option<PathBuf>,
     pub save_library: bool,
@@ -215,6 +217,7 @@ pub struct LibraryActions {
 pub struct LibraryViewState {
     pub search_query: String,
     pub filter: LibraryFilter,
+    pub continue_page: usize,
     folder_books: Vec<FolderBook>,
     folder_loading: bool,
     folder_error: Option<FolderScanError>,
@@ -232,6 +235,7 @@ impl Default for LibraryViewState {
         Self {
             search_query: String::new(),
             filter: LibraryFilter::All,
+            continue_page: 0,
             folder_books: Vec::new(),
             folder_loading: false,
             folder_error: None,
@@ -344,44 +348,67 @@ impl LibraryViewState {
         } else {
             theme.bg_color()
         };
+        let avail_w = ui.available_width();
+        let margin_x: i8 = if avail_w < 540.0 { 12 } else { 24 };
 
         egui::Frame::new()
             .fill(bg_fill)
-            .inner_margin(egui::Margin::symmetric(24, 16))
+            .inner_margin(egui::Margin::symmetric(margin_x, 12))
             .show(ui, |ui| {
                 ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        greeting::render_greeting(ui, library, theme, t, actions);
+                        let inner_avail = ui.available_width();
+                        let max_canvas_w = inner_avail.min(1260.0).max(240.0);
+                        let side_pad = ((inner_avail - max_canvas_w) * 0.5).max(0.0);
+                        ui.horizontal(|ui| {
+                            if side_pad > 0.0 {
+                                ui.add_space(side_pad);
+                            }
+                            ui.allocate_ui_with_layout(
+                                egui::Vec2::new(max_canvas_w, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    greeting::render_greeting(ui, library, theme, t, actions);
 
-                        if library.design == UiDesignMode::Cozy
-                            || library.mode == LibraryMode::Shelf
-                        {
-                            dashboard::render_dashboard(
-                                ui,
-                                library,
-                                theme,
-                                t,
-                                lang,
-                                &mut self.cover_loader,
-                                &mut actions.open_path,
+                                    if library.design == UiDesignMode::Cozy
+                                        || library.mode == LibraryMode::Shelf
+                                    {
+                                        dashboard::render_dashboard(
+                                            ui,
+                                            library,
+                                            theme,
+                                            t,
+                                            lang,
+                                            &mut self.continue_page,
+                                            &mut self.cover_loader,
+                                            &mut actions.open_path,
+                                        );
+                                        ui.add_space(10.0);
+                                        let save = filter_bar::render_filter_bar(
+                                            ui, self, library, theme, t,
+                                        );
+                                        if save {
+                                            actions.save_library = true;
+                                        }
+                                        ui.add_space(10.0);
+                                        if library.mode == LibraryMode::Folder {
+                                            self.render_folder(
+                                                ui, settings, library, theme, t, actions,
+                                            );
+                                        } else {
+                                            self.render_shelf(ui, library, theme, t, actions);
+                                        }
+                                    } else if library.mode == LibraryMode::Folder {
+                                        self.render_folder(
+                                            ui, settings, library, theme, t, actions,
+                                        );
+                                    } else {
+                                        self.render_reader_only(ui, theme, t, actions);
+                                    }
+                                },
                             );
-                            ui.add_space(10.0);
-                            let save = filter_bar::render_filter_bar(ui, self, library, theme, t);
-                            if save {
-                                actions.save_library = true;
-                            }
-                            ui.add_space(10.0);
-                            if library.mode == LibraryMode::Folder {
-                                self.render_folder(ui, settings, library, theme, t, actions);
-                            } else {
-                                self.render_shelf(ui, library, theme, t, actions);
-                            }
-                        } else if library.mode == LibraryMode::Folder {
-                            self.render_folder(ui, settings, library, theme, t, actions);
-                        } else {
-                            self.render_reader_only(ui, theme, t, actions);
-                        }
+                        });
                     });
             });
         if self.cover_loader.has_pending() {
@@ -398,53 +425,96 @@ impl LibraryViewState {
         t: &Translations,
         actions: &mut LibraryActions,
     ) {
+        let is_cozy = !theme.is_dark();
+        let panel_fill = if is_cozy {
+            super::theme::CozyPalette::SURFACE_LOW
+        } else {
+            theme.panel_bg_color()
+        };
+        let row_fill = if is_cozy {
+            super::theme::CozyPalette::CARD_BG
+        } else {
+            theme.bg_color().gamma_multiply(1.15)
+        };
+        let border_color = if is_cozy {
+            super::theme::CozyPalette::OUTLINE.gamma_multiply(0.55)
+        } else {
+            theme.accent_color().gamma_multiply(0.28)
+        };
+
         let folder = library.library_folder.clone();
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                IconLabel::new(Icon::Folder, t.library_mode_folder)
-                    .size(18.0)
-                    .strong()
-                    .color(theme.accent_color()),
-            );
-            if let Some(folder) = &folder {
-                ui.label(
-                    RichText::new(folder.display().to_string())
-                        .size(11.0)
-                        .color(theme.secondary_text_color()),
-                );
-            }
-            if ui
-                .add(IconButton::new(Icon::Folder, t.library_choose_folder))
-                .clicked()
-            {
-                actions.pick_library_folder = true;
-            }
-            if let Some(folder) = &folder
-                && ui
-                    .add(IconButton::new(Icon::Refresh, t.library_refresh_folder))
-                    .clicked()
-            {
-                self.request_scan(folder.clone());
-            }
-        });
+        egui::Frame::new()
+            .fill(panel_fill)
+            .stroke(egui::Stroke::new(1.0, border_color))
+            .corner_radius(10.0)
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        IconLabel::new(Icon::Folder, t.library_mode_folder)
+                            .size(15.0)
+                            .strong()
+                            .color(if is_cozy {
+                                super::theme::CozyPalette::PRIMARY
+                            } else {
+                                theme.accent_color()
+                            }),
+                    );
+                    if let Some(folder) = &folder {
+                        ui.label(
+                            RichText::new(folder.display().to_string())
+                                .size(11.5)
+                                .color(theme.secondary_text_color()),
+                        );
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .add(IconButton::new(Icon::Folder, t.library_choose_folder).font_size(12.0))
+                        .clicked()
+                    {
+                        actions.pick_library_folder = true;
+                    }
+                    if let Some(folder) = &folder
+                        && ui
+                            .add(
+                                IconButton::new(Icon::Refresh, t.library_refresh_folder)
+                                    .font_size(12.0),
+                            )
+                            .clicked()
+                    {
+                        self.request_scan(folder.clone());
+                    }
+                });
+            });
         ui.add_space(10.0);
 
         if folder.is_none() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(70.0);
-                ui.label(
-                    RichText::new(t.library_no_folder)
-                        .size(13.0)
-                        .color(theme.secondary_text_color()),
-                );
-                ui.add_space(12.0);
-                if ui
-                    .add(IconButton::new(Icon::Folder, t.library_choose_folder))
-                    .clicked()
-                {
-                    actions.pick_library_folder = true;
-                }
-            });
+            egui::Frame::new()
+                .fill(panel_fill)
+                .stroke(egui::Stroke::new(1.0, border_color))
+                .corner_radius(12.0)
+                .inner_margin(egui::Margin::symmetric(24, 36))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new(t.library_no_folder)
+                                .size(13.0)
+                                .color(theme.secondary_text_color()),
+                        );
+                        ui.add_space(12.0);
+                        if ui
+                            .add(
+                                IconButton::new(Icon::Folder, t.library_choose_folder)
+                                    .font_size(12.5),
+                            )
+                            .clicked()
+                        {
+                            actions.pick_library_folder = true;
+                        }
+                    });
+                });
             return;
         }
 
@@ -481,69 +551,80 @@ impl LibraryViewState {
             .filter(|book| !recent_paths.contains(&book.path))
             .collect();
 
-        ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if !settings.recent_books.is_empty() {
-                    ui.label(
-                        RichText::new(t.library_recent_section)
-                            .size(13.0)
-                            .strong()
-                            .color(theme.text_color()),
-                    );
-                    for book in settings.recent_books.iter().take(8) {
-                        ui.horizontal(|ui| {
-                            ui.add(IconLabel::new(Icon::Recent, book.title.as_str()).size(12.0));
-                            ui.add_space(4.0);
-                            if ui.small_button(t.library_open_book).clicked() {
-                                actions.open_path = Some(book.path.clone());
-                            }
-                        });
-                    }
-                    ui.add_space(10.0);
-                }
+        if !settings.recent_books.is_empty() {
+            ui.label(
+                RichText::new(t.library_recent_section)
+                    .size(13.0)
+                    .strong()
+                    .color(theme.text_color()),
+            );
+            ui.add_space(6.0);
+            for book in settings.recent_books.iter().take(8) {
+                render_folder_book_row(
+                    ui,
+                    Icon::Recent,
+                    &book.title,
+                    None,
+                    &book.path,
+                    row_fill,
+                    border_color,
+                    theme,
+                    t,
+                    actions,
+                );
+                ui.add_space(4.0);
+            }
+            ui.add_space(10.0);
+        }
 
-                if !folder_books.is_empty() {
-                    ui.label(
-                        RichText::new(t.library_folder_section)
-                            .size(13.0)
-                            .strong()
-                            .color(theme.text_color()),
-                    );
-                    for book in folder_books {
-                        let relative = book.path.strip_prefix(&folder).unwrap_or(&book.path);
-                        ui.horizontal(|ui| {
-                            ui.add(IconLabel::new(Icon::Book, book.title.as_str()).size(12.0));
-                            ui.label(
-                                RichText::new(relative.display().to_string())
-                                    .size(10.0)
-                                    .color(theme.secondary_text_color()),
-                            );
-                            if ui.small_button(t.library_open_book).clicked() {
-                                actions.open_path = Some(book.path.clone());
-                            }
-                        });
-                    }
-                } else if self.folder_books.is_empty() {
-                    ui.label(
-                        RichText::new(t.library_folder_empty)
-                            .size(12.0)
-                            .color(theme.secondary_text_color()),
-                    );
-                }
+        if !folder_books.is_empty() {
+            ui.label(
+                RichText::new(t.library_folder_section)
+                    .size(13.0)
+                    .strong()
+                    .color(theme.text_color()),
+            );
+            ui.add_space(6.0);
+            for book in folder_books {
+                let relative = book
+                    .path
+                    .strip_prefix(&folder)
+                    .unwrap_or(&book.path)
+                    .display()
+                    .to_string();
+                render_folder_book_row(
+                    ui,
+                    Icon::Book,
+                    &book.title,
+                    Some(&relative),
+                    &book.path,
+                    row_fill,
+                    border_color,
+                    theme,
+                    t,
+                    actions,
+                );
+                ui.add_space(4.0);
+            }
+        } else if self.folder_books.is_empty() {
+            ui.label(
+                RichText::new(t.library_folder_empty)
+                    .size(12.0)
+                    .color(theme.secondary_text_color()),
+            );
+        }
 
-                if self.folder_truncated {
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(
-                            t.library_folder_truncated
-                                .replace("{count}", &self.folder_books.len().to_string()),
-                        )
-                        .size(11.0)
-                        .color(Color32::from_rgb(220, 160, 80)),
-                    );
-                }
-            });
+        if self.folder_truncated {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(
+                    t.library_folder_truncated
+                        .replace("{count}", &self.folder_books.len().to_string()),
+                )
+                .size(11.0)
+                .color(Color32::from_rgb(220, 160, 80)),
+            );
+        }
     }
 
     fn render_reader_only(
@@ -614,6 +695,73 @@ impl LibraryViewState {
             .map(|name| name.to_lowercase().contains(query))
             .unwrap_or(false)
     }
+}
+
+fn render_folder_book_row(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    title: &str,
+    subpath: Option<&str>,
+    path: &Path,
+    row_fill: Color32,
+    border_color: Color32,
+    theme: &ReaderTheme,
+    t: &Translations,
+    actions: &mut LibraryActions,
+) {
+    let btn_font = egui::FontId::proportional(11.5);
+    let btn_text_w = ui.fonts_mut(|f| {
+        f.layout_no_wrap(
+            t.library_open_book.to_string(),
+            btn_font,
+            theme.text_color(),
+        )
+        .size()
+        .x
+    });
+    let btn_w = (btn_text_w + 32.0).max(80.0);
+
+    egui::Frame::new()
+        .fill(row_fill)
+        .stroke(egui::Stroke::new(1.0, border_color))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let info_w = (ui.available_width() - btn_w - 10.0).max(80.0);
+                ui.allocate_ui_with_layout(
+                    egui::Vec2::new(info_w, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.add(
+                            IconLabel::new(icon, title)
+                                .size(12.5)
+                                .color(theme.text_color()),
+                        );
+                        if let Some(sub) = subpath {
+                            ui.label(
+                                RichText::new(sub)
+                                    .size(10.5)
+                                    .color(theme.secondary_text_color()),
+                            );
+                        }
+                    },
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            IconButton::new(Icon::OpenFile, t.library_open_book)
+                                .font_size(11.5)
+                                .min_size(egui::Vec2::new(btn_w, 26.0)),
+                        )
+                        .clicked()
+                    {
+                        actions.open_path = Some(path.to_path_buf());
+                    }
+                });
+            });
+        });
 }
 
 #[allow(dead_code)]

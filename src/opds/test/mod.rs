@@ -378,6 +378,7 @@ fn test_parse_opds_decodes_attribute_entities_and_nested_summary_tags() {
         "https://example.com/dl/book.fb2.zip?token=1&fmt=fb2"
     );
     assert_eq!(entry.acquisition_links[0].title, "Download \"FB2\"");
+    assert_eq!(entry.acquisition_links[0].length, None);
     assert_eq!(
         entry.navigation_link.as_deref(),
         Some("https://example.com/opds/series/42?ref=a&b=2")
@@ -458,4 +459,38 @@ fn test_opds_cover_manager_bounds_entries_and_bytes_with_lru() {
     mgr.clear();
     assert_eq!(mgr.cache_len(), 0);
     assert_eq!(mgr.cache_bytes(), 0);
+}
+
+#[test]
+fn test_parse_opds_acquisition_length_and_cancel_flag() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>urn:catalog:len</id>
+  <title>Length Test</title>
+  <entry>
+    <id>urn:book:len</id>
+    <title>Test Book</title>
+    <author><name>Test Author</name></author>
+    <link rel="http://opds-spec.org/acquisition" href="/dl/book.epub" type="application/epub+zip" length="1468006" title="EPUB"/>
+    <link rel="http://opds-spec.org/acquisition" href="/dl/book.fb2" type="application/x-fictionbook+xml" length="0"/>
+  </entry>
+</feed>"#;
+    let feed = parse_opds_feed(xml, "https://example.com/root").expect("parse");
+    assert_eq!(feed.entries[0].acquisition_links.len(), 2);
+    assert_eq!(feed.entries[0].acquisition_links[0].length, Some(1_468_006));
+    assert_eq!(feed.entries[0].acquisition_links[1].length, None);
+
+    let client = OpdsClient::new_without_worker_for_test();
+    let cancel = client.download(
+        "dl-1",
+        "https://example.com/book.epub",
+        "Book",
+        "Author",
+        "epub",
+        None,
+        std::env::temp_dir(),
+    );
+    assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
+    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(cancel.load(std::sync::atomic::Ordering::SeqCst));
 }

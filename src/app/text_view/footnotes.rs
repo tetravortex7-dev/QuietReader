@@ -1,13 +1,16 @@
 use super::append_with_highlight;
-use crate::app::theme::ReaderTheme;
+use crate::app::icons::{Icon, paint_icon};
+use crate::app::reader_chrome::ReaderSurfaceColors;
+use crate::core::library::UiDesignMode;
 use crate::document::{BookChapter, Document, footnote_tokens, strip_formatting_tags};
 use crate::i18n::Translations;
-use eframe::egui::{self, Color32, RichText, Stroke};
+use eframe::egui::{self, Color32, RichText, Stroke, StrokeKind, Vec2};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
-pub(super) struct FootnoteMarker {
+pub(crate) struct FootnoteMarker {
     pub id: String,
+    pub number: usize,
     pub start_char: usize,
     pub end_char: usize,
 }
@@ -21,6 +24,8 @@ pub(super) struct ParagraphStyle<'a> {
     pub is_active_hit: bool,
     pub is_rtl: bool,
     pub bionic_reading: bool,
+    pub is_opening: bool,
+    pub is_blockquote: bool,
     pub quotes: &'a [(&'a str, Color32)],
     pub footnote_numbers: &'a HashMap<String, usize>,
     pub note_available: &'a HashSet<String>,
@@ -56,13 +61,14 @@ pub(super) fn append_text_with_footnotes(
         let start_char = job.text.chars().count();
         let mut marker_format = base_format.clone();
         marker_format.color = style.accent_color;
-        marker_format.background = style.accent_color.gamma_multiply(0.08);
-        marker_format.underline = Stroke::new(1.0, style.accent_color.gamma_multiply(0.65));
+        marker_format.background = style.accent_color.gamma_multiply(0.14);
+        marker_format.underline = Stroke::new(1.0, style.accent_color.gamma_multiply(0.55));
         marker_format.line_height = Some(style.line_height);
         job.append(&marker_text, 0.0, marker_format);
         let end_char = job.text.chars().count();
         markers.push(FootnoteMarker {
             id: id.to_string(),
+            number,
             start_char,
             end_char,
         });
@@ -200,7 +206,8 @@ pub(super) fn show_hover_card(
     response: &egui::Response,
     galley: &egui::Galley,
     markers: &[FootnoteMarker],
-    theme: &ReaderTheme,
+    colors: &ReaderSurfaceColors,
+    design: UiDesignMode,
     t: &Translations,
     font_size: f32,
     pinned: &mut Option<String>,
@@ -213,6 +220,9 @@ pub(super) fn show_hover_card(
         egui::Align::RIGHT => response.rect.right_top(),
         egui::Align::Center => egui::pos2(response.rect.center().x, response.rect.top()),
     };
+    let suppressed_id_key = egui::Id::unique("quietreader_footnote_suppressed");
+    let mut suppressed: Option<String> = ui.ctx().data(|d| d.get_temp(suppressed_id_key));
+
     let mut rects = Vec::with_capacity(markers.len());
     let mut hovered = Vec::with_capacity(markers.len());
     let mut over_card = Vec::with_capacity(markers.len());
@@ -232,10 +242,21 @@ pub(super) fn show_hover_card(
                 .iter()
                 .any(|(id, card_rect)| id == &marker.id && card_rect.expand(4.0).contains(position))
         });
+        if suppressed.as_deref() == Some(marker.id.as_str()) && !is_hovered {
+            suppressed = None;
+        }
         rects.push(rect);
         hovered.push(is_hovered);
         over_card.push(is_over_card);
         marker_ids.push(marker.id.as_str());
+    }
+
+    if clicked {
+        for (idx, marker) in markers.iter().enumerate() {
+            if hovered[idx] && suppressed.as_deref() == Some(marker.id.as_str()) {
+                suppressed = None;
+            }
+        }
     }
 
     if update_pinned_on_markers(&marker_ids, &hovered, &over_card, clicked, pinned) {
@@ -244,27 +265,49 @@ pub(super) fn show_hover_card(
 
     let mut jump_to = None;
     for (idx, marker) in markers.iter().enumerate() {
-        if hovered[idx] || over_card[idx] || pinned.as_deref() == Some(marker.id.as_str()) {
+        let is_pinned = pinned.as_deref() == Some(marker.id.as_str());
+        let is_suppressed = suppressed.as_deref() == Some(marker.id.as_str());
+        if (hovered[idx] && !is_suppressed) || over_card[idx] || is_pinned {
             let text = document.footnote(&marker.id);
             let can_jump = document.note_location(&marker.id).is_some();
-            if let Some(note_id) = show_card(
+            let outcome = show_card(
                 ui,
                 marker,
                 rects[idx],
+                response.rect,
                 text,
                 can_jump,
-                theme,
+                colors,
+                design,
                 t,
                 font_size,
                 frame_state,
-            ) {
+            );
+            if outcome.dismiss {
+                *pinned = None;
+                suppressed = Some(marker.id.clone());
+                break;
+            }
+            if let Some(note_id) = outcome.jump_to {
                 *pinned = None;
                 jump_to = Some(note_id);
                 break;
             }
         }
     }
+    ui.ctx().data_mut(|d| {
+        if let Some(val) = suppressed {
+            d.insert_temp(suppressed_id_key, val);
+        } else {
+            d.remove_temp::<String>(suppressed_id_key);
+        }
+    });
     jump_to
+}
+
+struct FootnoteCardOutcome {
+    jump_to: Option<String>,
+    dismiss: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -272,24 +315,39 @@ fn show_card(
     ui: &mut egui::Ui,
     marker: &FootnoteMarker,
     marker_rect: egui::Rect,
+    column_bounds: egui::Rect,
     text: Option<&str>,
     can_jump: bool,
-    theme: &ReaderTheme,
+    colors: &ReaderSurfaceColors,
+    design: UiDesignMode,
     t: &Translations,
     font_size: f32,
     frame_state: &mut FootnoteFrameState,
-) -> Option<String> {
-    let mut jump_to = None;
+) -> FootnoteCardOutcome {
+    let mut outcome = FootnoteCardOutcome {
+        jump_to: None,
+        dismiss: false,
+    };
     let screen = ui.ctx().content_rect();
-    let card_width = 360.0_f32.min((screen.width() - 24.0).max(220.0));
-    let mut position = egui::pos2(marker_rect.left(), marker_rect.bottom() + 6.0);
+    let card_width = 340.0_f32.min((screen.width() - 32.0).max(220.0));
+    let (min_x, max_right) =
+        if design == UiDesignMode::Cozy && column_bounds.width() >= card_width * 0.85 {
+            (
+                (column_bounds.min.x - 8.0).max(screen.left() + 16.0),
+                (column_bounds.max.x + 8.0).min(screen.right() - 28.0),
+            )
+        } else {
+            (screen.left() + 12.0, screen.right() - 12.0)
+        };
+    let mut position = egui::pos2(marker_rect.left() - 10.0, marker_rect.bottom() + 6.0);
     position.x = position
         .x
-        .min(screen.right() - card_width - 12.0)
-        .max(screen.left() + 12.0);
+        .min((max_right - card_width).max(min_x))
+        .max(min_x);
     if position.y + 220.0 > screen.bottom() {
-        position.y = (marker_rect.top() - 220.0).max(screen.top() + 12.0);
+        position.y = (marker_rect.top() - 200.0).max(screen.top() + 12.0);
     }
+    let radius = design.corner_radius() as f32;
     let area_id = ui
         .scope_id()
         .with(("footnote_card", marker.id.as_str(), marker.start_char));
@@ -297,49 +355,158 @@ fn show_card(
         .order(egui::Order::Tooltip)
         .fixed_pos(position)
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(theme.panel_bg_color())
-                .stroke(Stroke::new(1.0, theme.accent_color().gamma_multiply(0.55)))
-                .corner_radius(8.0)
-                .inner_margin(egui::Margin::symmetric(12, 10))
-                .show(ui, |ui| {
-                    ui.set_max_width(card_width);
-                    ui.label(
-                        RichText::new(t.footnote_title)
-                            .size(11.0)
-                            .strong()
-                            .color(theme.accent_color()),
+            let frame = egui::Frame::new()
+                .fill(colors.card_bg)
+                .stroke(Stroke::new(1.0, colors.card_border))
+                .corner_radius(radius)
+                .inner_margin(egui::Margin::symmetric(14, 12))
+                .shadow(egui::epaint::Shadow {
+                    offset: [0, 6],
+                    blur: 16,
+                    spread: 0,
+                    color: Color32::from_black_alpha(if colors.is_dark { 90 } else { 26 }),
+                });
+            frame.show(ui, |ui| {
+                ui.set_max_width(card_width);
+                ui.horizontal(|ui| {
+                    let (badge_rect, _) =
+                        ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                    ui.painter()
+                        .circle_filled(badge_rect.center(), 10.0, colors.accent_soft_bg);
+                    ui.painter().text(
+                        badge_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        marker.number.to_string(),
+                        egui::FontId::proportional(10.5),
+                        colors.accent,
                     );
-                    ui.add_space(3.0);
-                    if let Some(text) = text {
-                        egui::ScrollArea::vertical()
-                            .max_height(240.0)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new(strip_formatting_tags(text))
-                                        .size((font_size * 0.72).clamp(12.0, 16.0))
-                                        .color(theme.text_color()),
-                                );
-                            });
-                    } else {
-                        ui.label(
-                            RichText::new(t.footnote_not_found)
-                                .size((font_size * 0.72).clamp(12.0, 16.0))
-                                .italics()
-                                .color(theme.text_color().gamma_multiply(0.7)),
+                    ui.label(
+                        RichText::new(t.footnote_title.to_uppercase())
+                            .size(10.5)
+                            .strong()
+                            .color(colors.page_muted),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (xr, xresp) =
+                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
+                        if xresp.hovered() {
+                            ui.painter().circle_filled(xr.center(), 9.0, colors.pill_bg);
+                        }
+                        paint_icon(
+                            ui.painter(),
+                            Icon::Cross,
+                            egui::Rect::from_center_size(xr.center(), Vec2::splat(9.0)),
+                            colors.page_muted,
                         );
-                    }
+                        if xresp.clicked() {
+                            outcome.dismiss = true;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                if let Some(text) = text {
+                    egui::ScrollArea::vertical()
+                        .max_height(210.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(strip_formatting_tags(text))
+                                    .size((font_size * 0.72).clamp(12.5, 16.0))
+                                    .color(colors.page_ink),
+                            );
+                        });
+                } else {
+                    ui.label(
+                        RichText::new(t.footnote_not_found)
+                            .size((font_size * 0.72).clamp(12.5, 16.0))
+                            .italics()
+                            .color(colors.page_muted),
+                    );
+                }
+                ui.add_space(8.0);
+                let div_y = ui.cursor().min.y;
+                let div_left = ui.cursor().min.x;
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(div_left, div_y),
+                        egui::pos2(div_left + card_width - 28.0, div_y),
+                    ],
+                    Stroke::new(1.0, colors.bar_border.gamma_multiply(0.55)),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
                     if can_jump {
-                        ui.add_space(6.0);
-                        if ui.button(t.footnote_go_to).clicked() {
-                            jump_to = Some(marker.id.clone());
+                        let font = egui::FontId::proportional(11.5);
+                        let label_galley = ui.painter().layout_no_wrap(
+                            t.footnote_go_to.to_string(),
+                            font,
+                            colors.accent,
+                        );
+                        let w = label_galley.size().x + 18.0;
+                        let (lr, lresp) =
+                            ui.allocate_exact_size(Vec2::new(w, 22.0), egui::Sense::click());
+                        if lresp.hovered() {
+                            ui.painter().rect_filled(lr, 6.0, colors.accent_soft_bg);
+                        }
+                        ui.painter().galley(
+                            egui::pos2(lr.min.x + 2.0, lr.center().y - label_galley.size().y * 0.5),
+                            label_galley,
+                            colors.accent,
+                        );
+                        paint_icon(
+                            ui.painter(),
+                            Icon::ArrowRight,
+                            egui::Rect::from_center_size(
+                                egui::pos2(lr.max.x - 7.0, lr.center().y),
+                                Vec2::splat(10.0),
+                            ),
+                            colors.accent,
+                        );
+                        if lresp.clicked() {
+                            outcome.jump_to = Some(marker.id.clone());
                         }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let hide_font = egui::FontId::proportional(11.5);
+                        let hide_g = ui.painter().layout_no_wrap(
+                            t.extra.reader_footnote_hide.to_string(),
+                            hide_font,
+                            colors.page_muted,
+                        );
+                        let (hr, hresp) = ui.allocate_exact_size(
+                            Vec2::new(hide_g.size().x + 14.0, 22.0),
+                            egui::Sense::click(),
+                        );
+                        if hresp.hovered() {
+                            ui.painter().rect(
+                                hr,
+                                6.0,
+                                colors.pill_bg,
+                                Stroke::new(1.0, colors.card_border),
+                                StrokeKind::Inside,
+                            );
+                        }
+                        ui.painter().galley(
+                            egui::pos2(
+                                hr.center().x - hide_g.size().x * 0.5,
+                                hr.center().y - hide_g.size().y * 0.5,
+                            ),
+                            hide_g,
+                            if hresp.hovered() {
+                                colors.page_ink
+                            } else {
+                                colors.page_muted
+                            },
+                        );
+                        if hresp.clicked() {
+                            outcome.dismiss = true;
+                        }
+                    });
                 });
+            });
         });
     frame_state
         .next_cards
         .push((marker.id.clone(), card.response.rect));
-    jump_to
+    outcome
 }

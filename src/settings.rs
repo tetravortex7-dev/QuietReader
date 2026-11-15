@@ -15,7 +15,7 @@ pub const OPEN_DYSLEXIC_FONT: &str = "OpenDyslexic";
 static LAST_SAVE_ERROR: Mutex<Option<String>> = Mutex::new(None);
 static PORTABLE_OVERRIDE: AtomicBool = AtomicBool::new(false);
 
-pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
 
 fn default_schema_version() -> u32 {
     0
@@ -73,7 +73,7 @@ fn default_text_paged_scroll() -> bool {
 }
 
 fn default_text_two_columns() -> bool {
-    false
+    true
 }
 
 fn default_rsvp_wpm() -> u32 {
@@ -376,6 +376,9 @@ impl AppSettings {
         self.font_size = self.font_size.clamp(10.0, 48.0);
         self.line_height_scale = self.line_height_scale.clamp(1.1, 2.0);
         self.max_column_width = self.max_column_width.clamp(520.0, 1200.0);
+        if self.schema_version < 4 {
+            self.text_two_columns = true;
+        }
         self.rsvp_wpm = self.rsvp_wpm.clamp(100, 1000);
         self.schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
     }

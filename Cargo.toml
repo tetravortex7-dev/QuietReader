@@ -15,6 +15,10 @@ name = "QuietReader"
 path = "src/main.rs"
 test = false
 
+[[bin]]
+name = "qr-keygen"
+path = "src/bin/qr_keygen/main.rs"
+
 [dependencies]
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "clipboard"] }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }

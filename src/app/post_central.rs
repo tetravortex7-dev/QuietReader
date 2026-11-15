@@ -45,6 +45,10 @@ pub(super) fn render(
     if actions.library_actions.open_folder {
         app.open_folder_dialog();
     }
+    if actions.library_actions.open_opds {
+        app.show_opds_dialog = true;
+        app.opds_state.ensure_initial_catalog_loaded(&app.settings);
+    }
     if let Some(path) = actions.library_actions.open_path.take() {
         app.load_file(path);
     }
@@ -169,10 +173,9 @@ pub(super) fn render(
             app.settings.ambient = app.ambient.settings.clone();
             app.mark_settings_dirty();
         }
-        if !app.show_library
-            && app
-                .ambient
-                .render(ctx, &app.theme, app.settings.ui_language)
+        if app
+            .ambient
+            .render(ctx, &app.theme, app.settings.ui_language)
         {
             app.settings.ambient = app.ambient.settings.clone();
             app.mark_settings_dirty();
@@ -224,16 +227,23 @@ pub(super) fn render(
 
     app.opds_state.poll(&mut app.settings);
     let mut opds_file_to_open = None;
+    let is_cozy_design = app.library.design == crate::core::library::UiDesignMode::Cozy;
+    let mut opds_window_open = app.show_opds_dialog && !is_cozy_design;
     app.opds_state.render(
         ctx,
-        &mut app.show_opds_dialog,
+        &mut opds_window_open,
         &mut app.settings,
         &app.theme,
         &mut opds_file_to_open,
         &mut actions.pro_required,
     );
+    if !is_cozy_design && !opds_window_open {
+        app.show_opds_dialog = false;
+    }
     if let Some(path) = opds_file_to_open {
         app.load_file(path);
+        app.show_opds_dialog = false;
+        app.show_library = false;
         app.status_message = Some(
             app.settings
                 .ui_language

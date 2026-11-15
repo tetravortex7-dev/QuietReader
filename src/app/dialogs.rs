@@ -4,13 +4,13 @@ use crate::settings::AppSettings;
 use eframe::egui::{self, Color32, RichText, ScrollArea};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsTab {
-    Fonts,
     Appearance,
-    AutoScroll,
-    ComicsAndManga,
-    Hotkeys,
+    Fonts,
+    Reading,
+    AmbienceSpeech,
+    DictionariesTranslation,
     System,
     About,
 }

@@ -2,6 +2,9 @@ pub mod bookmarks_export;
 pub mod library;
 pub mod library_export;
 pub mod license;
+pub mod license_codec;
+#[cfg(all(test, feature = "enable_tests"))]
+pub mod license_sign;
 
 use crate::document::Document;
 use serde::{Deserialize, Serialize};
@@ -770,7 +773,7 @@ impl ReaderCore {
                     return true;
                 }
             }
-            Command::PageDown => {
+            Command::PageDown | Command::NextPage => {
                 if current_scroll_y + 15.0 >= max_scroll_y {
                     if let Some(next_idx) = next_non_empty {
                         *current_chapter = next_idx;
@@ -783,7 +786,7 @@ impl ReaderCore {
                     return true;
                 }
             }
-            Command::PageUp => {
+            Command::PageUp | Command::PrevPage => {
                 if current_scroll_y <= 5.0 {
                     if let Some(prev_idx) = prev_non_empty {
                         *current_chapter = prev_idx;

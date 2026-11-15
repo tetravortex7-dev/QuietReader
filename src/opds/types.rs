@@ -1,6 +1,8 @@
 pub use crate::settings_config::{OpdsCatalog, default_opds_catalogs};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpdsAcquisitionLink {
@@ -9,6 +11,8 @@ pub struct OpdsAcquisitionLink {
     pub title: String,
     pub format_label: String,
     pub extension: String,
+    #[serde(default)]
+    pub length: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +69,8 @@ pub struct DownloadItem {
     pub author: String,
     pub format_label: String,
     pub status: DownloadStatus,
+    pub size_bytes: Option<u64>,
+    pub cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

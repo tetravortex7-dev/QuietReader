@@ -365,6 +365,7 @@ pub fn format_opds_error(err: &OpdsError, lang: UiLanguage) -> String {
         OpdsError::MoveFile(message) => {
             super::fill(t.extra.opds_move_file_error, &[("{error}", message)])
         }
+        OpdsError::Cancelled => t.extra.opds_download_cancelled.to_string(),
     }
 }
 

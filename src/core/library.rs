@@ -59,6 +59,17 @@ pub enum LibraryReadingStatus {
     Finished,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LibrarySortMode {
+    #[default]
+    RecentlyOpened,
+    Title,
+    Author,
+    Progress,
+    RecentlyAdded,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibraryEntry {
@@ -106,6 +117,8 @@ pub struct LibraryStore {
     pub mode: LibraryMode,
     pub design: UiDesignMode,
     pub shelf_view: ShelfViewMode,
+    #[serde(default)]
+    pub sort_mode: LibrarySortMode,
     pub library_folder: Option<PathBuf>,
     pub recent_imported: bool,
     pub entries: Vec<LibraryEntry>,
@@ -120,6 +133,7 @@ impl Default for LibraryStore {
             mode: LibraryMode::Shelf,
             design: UiDesignMode::Cozy,
             shelf_view: ShelfViewMode::Standard,
+            sort_mode: LibrarySortMode::RecentlyOpened,
             library_folder: None,
             recent_imported: false,
             entries: Vec::new(),
@@ -144,7 +158,18 @@ impl LibraryStore {
     pub fn import_folder_books(&mut self, books: &[FolderBook], now_unix: u64) -> bool {
         let mut changed = false;
         for book in books {
-            changed |= self.ensure_book(&book.path, &book.title, &book.author, now_unix);
+            if let Some(entry) = self.entry_mut(&book.path) {
+                if entry.title.trim().is_empty() && !book.title.trim().is_empty() {
+                    entry.title = book.title.clone();
+                    changed = true;
+                }
+                if entry.author.trim().is_empty() && !book.author.trim().is_empty() {
+                    entry.author = book.author.clone();
+                    changed = true;
+                }
+            } else {
+                changed |= self.ensure_book(&book.path, &book.title, &book.author, now_unix);
+            }
         }
         changed
     }
@@ -313,11 +338,38 @@ impl LibraryStore {
     }
 
     pub fn sorted_entries(&self) -> Vec<&LibraryEntry> {
+        self.sorted_entries_by(LibrarySortMode::RecentlyOpened)
+    }
+
+    pub fn sorted_entries_by(&self, mode: LibrarySortMode) -> Vec<&LibraryEntry> {
         let mut entries: Vec<&LibraryEntry> = self.entries.iter().collect();
-        entries.sort_by(|a, b| {
-            b.last_opened_unix
+        entries.sort_by(|a, b| match mode {
+            LibrarySortMode::RecentlyOpened => b
+                .last_opened_unix
                 .cmp(&a.last_opened_unix)
-                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+            LibrarySortMode::Title => a
+                .title
+                .to_lowercase()
+                .cmp(&b.title.to_lowercase())
+                .then_with(|| b.last_opened_unix.cmp(&a.last_opened_unix)),
+            LibrarySortMode::Author => a
+                .author
+                .trim()
+                .is_empty()
+                .cmp(&b.author.trim().is_empty())
+                .then_with(|| a.author.to_lowercase().cmp(&b.author.to_lowercase()))
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+            LibrarySortMode::Progress => b
+                .progress_percent()
+                .total_cmp(&a.progress_percent())
+                .then_with(|| b.last_opened_unix.cmp(&a.last_opened_unix))
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+            LibrarySortMode::RecentlyAdded => b
+                .added_at_unix
+                .cmp(&a.added_at_unix)
+                .then_with(|| b.last_opened_unix.cmp(&a.last_opened_unix))
+                .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
         });
         entries
     }
@@ -358,6 +410,10 @@ impl LibraryStore {
 
 pub fn unix_day_index(unix_seconds: u64) -> u64 {
     unix_seconds / SECONDS_PER_DAY
+}
+
+pub fn weekday_index_from_unix_day(day_index: u64) -> usize {
+    ((day_index + 3) % 7) as usize
 }
 
 pub fn estimate_minutes_left_in_chapter(

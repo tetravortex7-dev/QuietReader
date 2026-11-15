@@ -142,15 +142,49 @@ pub(super) fn create_paragraph_layout_job(
     if style.is_rtl {
         job.halign = egui::Align::RIGHT;
     }
+    let use_drop_cap = style.is_opening
+        && !style.is_blockquote
+        && !style.is_rtl
+        && !style.bionic_reading
+        && style.query.trim().is_empty()
+        && style.tts_word_range.is_none();
+    let indent_str = if style.is_opening || style.is_blockquote {
+        ""
+    } else {
+        "    "
+    };
+    let mut drop_cap_done = false;
     for (idx, span) in spans.iter().enumerate() {
-        let text = if idx == 0 {
+        let mut span_str = span.text;
+        if idx == 0 && use_drop_cap && !drop_cap_done {
+            let trimmed = span_str.trim_start();
+            if let Some(first_ch) = trimmed.chars().next()
+                && first_ch.is_alphabetic()
+            {
+                let ch_len = first_ch.len_utf8();
+                let (cap_slice, rest_slice) = trimmed.split_at(ch_len);
+                let cap_format = egui::TextFormat {
+                    font_id: egui::FontId::new(
+                        style.font_size * 1.48,
+                        egui::FontFamily::Name(crate::app::fonts::FONT_FAMILY_BOLD.into()),
+                    ),
+                    color: style.accent_color,
+                    line_height: Some(style.line_height),
+                    ..Default::default()
+                };
+                job.append(cap_slice, 0.0, cap_format);
+                span_str = rest_slice;
+                drop_cap_done = true;
+            }
+        }
+        let text = if idx == 0 && !drop_cap_done && !indent_str.is_empty() {
             if style.is_rtl {
-                format!("{}    ", span.text)
+                format!("{span_str}{indent_str}")
             } else {
-                format!("    {}", span.text)
+                format!("{indent_str}{span_str}")
             }
         } else {
-            span.text.to_string()
+            span_str.to_string()
         };
         if text.is_empty() {
             continue;
@@ -164,7 +198,14 @@ pub(super) fn create_paragraph_layout_job(
             (false, false) => egui::FontFamily::Proportional,
         };
         let format = egui::TextFormat {
-            font_id: egui::FontId::new(style.font_size, family),
+            font_id: egui::FontId::new(
+                if style.is_blockquote {
+                    style.font_size * 0.96
+                } else {
+                    style.font_size
+                },
+                family,
+            ),
             color: style.text_color,
             italics: span.italic,
             line_height: Some(style.line_height),
@@ -182,9 +223,9 @@ pub(super) fn create_paragraph_layout_job(
     }
     if job.sections.is_empty() {
         let text = if style.is_rtl {
-            format!("{paragraph}    ")
+            format!("{paragraph}{indent_str}")
         } else {
-            format!("    {paragraph}")
+            format!("{indent_str}{paragraph}")
         };
         let format = egui::TextFormat {
             font_id: egui::FontId::proportional(style.font_size),
@@ -197,7 +238,11 @@ pub(super) fn create_paragraph_layout_job(
         );
     }
     if let Some((w_start, w_end)) = style.tts_word_range {
-        let indent = if style.is_rtl { 0 } else { 4 };
+        let indent = if style.is_rtl || indent_str.is_empty() {
+            0
+        } else {
+            4
+        };
         let target_start = (w_start + indent).min(job.text.len());
         let target_end = (w_end + indent).min(job.text.len());
         let safe_start = job.text.floor_char_boundary(target_start);
@@ -282,6 +327,8 @@ pub fn create_sample_preview_job(
         is_active_hit: false,
         is_rtl,
         bionic_reading,
+        is_opening: false,
+        is_blockquote: false,
         quotes: &[],
         footnote_numbers: &footnote_numbers,
         note_available: &note_available,
@@ -370,19 +417,30 @@ pub(crate) fn page_offset(index: usize, page_height: f32, max_scroll: f32) -> f3
     (index as f32 * page_height).min(max_scroll.max(0.0))
 }
 
+#[cfg(all(test, feature = "enable_tests"))]
 pub(crate) fn split_paragraphs(paragraphs: &[String]) -> usize {
+    split_paragraphs_weighted(paragraphs, 0)
+}
+
+#[cfg(all(test, feature = "enable_tests"))]
+pub(crate) fn split_paragraphs_weighted(paragraphs: &[String], left_weight: usize) -> usize {
     if paragraphs.len() < 2 {
         return paragraphs.len();
     }
-    let total: usize = paragraphs.iter().map(|text| text.chars().count()).sum();
-    if total == 0 {
+    let body_total: usize = paragraphs.iter().map(|text| text.chars().count()).sum();
+    if body_total == 0 {
         return paragraphs.len() / 2;
     }
+    let total = body_total + left_weight;
     let half = total / 2;
-    let mut accumulated = 0usize;
+    let mut accumulated = left_weight;
     for (index, text) in paragraphs.iter().enumerate() {
+        let prev = accumulated;
         accumulated += text.chars().count();
         if accumulated >= half {
+            if left_weight > 0 && index > 0 && half.saturating_sub(prev) < accumulated - half {
+                return index;
+            }
             return (index + 1).min(paragraphs.len());
         }
     }

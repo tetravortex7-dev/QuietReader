@@ -58,6 +58,8 @@ pub enum Icon {
     Soundwave,
     Grid,
     Sort,
+    Scroll,
+    Spread,
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
@@ -666,6 +668,33 @@ pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color3
             painter.line_segment([p(0.16, 0.26), p(0.84, 0.26)], bold_stroke);
             painter.line_segment([p(0.28, 0.50), p(0.72, 0.50)], stroke);
             painter.line_segment([p(0.40, 0.74), p(0.60, 0.74)], thin_stroke);
+        }
+        Icon::Scroll => {
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.24, 0.14), p(0.76, 0.86)),
+                2.0,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.line_segment([p(0.35, 0.32), p(0.63, 0.32)], thin_stroke);
+            painter.line_segment([p(0.35, 0.48), p(0.63, 0.48)], thin_stroke);
+            painter.line_segment([p(0.35, 0.64), p(0.55, 0.64)], thin_stroke);
+            painter.line_segment([p(0.68, 0.28), p(0.68, 0.56)], bold_stroke);
+        }
+        Icon::Spread => {
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.10, 0.20), p(0.90, 0.80)),
+                1.5,
+                stroke,
+                StrokeKind::Inside,
+            );
+            painter.line_segment([p(0.50, 0.20), p(0.50, 0.80)], stroke);
+            painter.line_segment([p(0.19, 0.38), p(0.41, 0.38)], thin_stroke);
+            painter.line_segment([p(0.19, 0.54), p(0.41, 0.54)], thin_stroke);
+            painter.line_segment([p(0.19, 0.68), p(0.34, 0.68)], thin_stroke);
+            painter.line_segment([p(0.59, 0.38), p(0.81, 0.38)], thin_stroke);
+            painter.line_segment([p(0.59, 0.54), p(0.81, 0.54)], thin_stroke);
+            painter.line_segment([p(0.59, 0.68), p(0.74, 0.68)], thin_stroke);
         }
     }
 }

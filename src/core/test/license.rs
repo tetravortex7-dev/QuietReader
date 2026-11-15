@@ -1,8 +1,9 @@
 use crate::core::license::{
-    LicenseClaims, LicenseError, LicenseStatus, ProFeature, SECONDS_PER_DAY, TrialError,
-    sign_license_key, start_trial, verify_license_key, verify_license_key_with_verifying_key,
+    DEVELOPER_VERIFYING_KEY_BYTES, LicenseClaims, LicenseError, LicenseStatus,
+    PUBLIC_VERIFYING_KEY_BYTES, ProFeature, SECONDS_PER_DAY, TrialError, sign_license_key,
+    start_trial, verify_license_key, verify_license_key_with_verifying_keys,
 };
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{SigningKey, VerifyingKey};
 
 const VALID_KEY: &str = "QR1.7b22656d61696c223a227265616465724071756965747265616465722e617070222c226973737565645f61745f756e6978223a313730303030303030307d.066c69a2d8f01300708695e73c1d9942bd66108aa40a3df49b0eaa77151992b7beaa7c459120a61f8f38ba40ef0cde812599a6df90bcb5979c8ea4dbc7a10309";
 const VALID_PAYLOAD_BASE64: &str =
@@ -43,7 +44,7 @@ fn sign_license_key_roundtrip() {
     let verifying_key_bytes = SigningKey::from_bytes(&signing_key_bytes)
         .verifying_key()
         .to_bytes();
-    let verified = verify_license_key_with_verifying_key(&key, &verifying_key_bytes)
+    let verified = verify_license_key_with_verifying_keys(&key, &[&verifying_key_bytes])
         .expect("signed key verifies");
     assert_eq!(verified, claims);
 }
@@ -158,4 +159,53 @@ fn trial_status_unlocks_all_pro_features() {
 fn invalid_stored_key_falls_back_to_trial() {
     let status = LicenseStatus::from_stored(Some("QR1.invalid"), Some(1_000), 1_000);
     assert!(status.is_trial_active());
+}
+
+#[test]
+fn developer_verifying_key_is_valid_and_distinct() {
+    assert_ne!(DEVELOPER_VERIFYING_KEY_BYTES, PUBLIC_VERIFYING_KEY_BYTES);
+    assert!(VerifyingKey::from_bytes(&PUBLIC_VERIFYING_KEY_BYTES).is_ok());
+    assert!(VerifyingKey::from_bytes(&DEVELOPER_VERIFYING_KEY_BYTES).is_ok());
+}
+
+#[test]
+fn multiple_verifying_keys_accept_either_trusted_signer() {
+    let primary_pub = SigningKey::from_bytes(&[7u8; 32])
+        .verifying_key()
+        .to_bytes();
+    let secondary_seed = [9u8; 32];
+    let secondary_pub = SigningKey::from_bytes(&secondary_seed)
+        .verifying_key()
+        .to_bytes();
+    let unrelated_pub = SigningKey::from_bytes(&[13u8; 32])
+        .verifying_key()
+        .to_bytes();
+
+    let claims = LicenseClaims {
+        email: "dev@quietreader.app".to_string(),
+        issued_at_unix: 1_750_000_000,
+    };
+    let token = sign_license_key(&claims, &secondary_seed);
+
+    let verified = verify_license_key_with_verifying_keys(&token, &[&primary_pub, &secondary_pub])
+        .expect("secondary key validates");
+    assert_eq!(verified, claims);
+
+    assert_eq!(
+        verify_license_key_with_verifying_keys(&token, &[&primary_pub, &unrelated_pub]),
+        Err(LicenseError::InvalidSignature)
+    );
+}
+
+#[test]
+fn verify_license_key_with_no_trusted_keys_returns_invalid_public_key() {
+    let claims = LicenseClaims {
+        email: "dev@quietreader.app".to_string(),
+        issued_at_unix: 1_750_000_000,
+    };
+    let token = sign_license_key(&claims, &[9u8; 32]);
+    assert_eq!(
+        verify_license_key_with_verifying_keys(&token, &[]),
+        Err(LicenseError::InvalidPublicKey)
+    );
 }

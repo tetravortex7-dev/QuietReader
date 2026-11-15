@@ -500,5 +500,12 @@ fn test_no_forbidden_ui_symbols_in_translations() {
         assert!(!t.fonts[5].badge_tag.is_empty());
         assert!(!t.fonts[7].badge_tag.is_empty());
         assert!(!t.fonts[8].badge_tag.is_empty());
+        assert!(!t.extra.text_mode_scroll.is_empty());
+        assert!(!t.extra.text_mode_spread.is_empty());
+        assert_ne!(t.extra.text_mode_scroll, t.extra.text_mode_spread);
+        assert!(!t.extra.text_scroll_tip.is_empty());
+        assert!(!t.extra.text_spread_tip.is_empty());
+        assert!(!t.extra.text_layout_title.is_empty());
+        assert!(!t.extra.text_layout_desc.is_empty());
     }
 }

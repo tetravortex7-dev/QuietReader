@@ -1,7 +1,7 @@
 use crate::core::library::{
-    CURRENT_LIBRARY_SCHEMA_VERSION, LibraryMode, LibraryReadingStatus, LibraryStore, ShelfViewMode,
-    UiDesignMode, estimate_minutes_left_in_chapter, read_calibre_metadata, scan_folder,
-    unix_day_index,
+    CURRENT_LIBRARY_SCHEMA_VERSION, LibraryMode, LibraryReadingStatus, LibrarySortMode,
+    LibraryStore, ShelfViewMode, UiDesignMode, estimate_minutes_left_in_chapter,
+    read_calibre_metadata, scan_folder, unix_day_index, weekday_index_from_unix_day,
 };
 use crate::test::util::unique_test_dir;
 use std::fs;
@@ -331,6 +331,69 @@ fn test_unix_day_index() {
     assert_eq!(unix_day_index(0), 0);
     assert_eq!(unix_day_index(86_399), 0);
     assert_eq!(unix_day_index(86_400), 1);
+    assert_eq!(weekday_index_from_unix_day(0), 3);
+    assert_eq!(weekday_index_from_unix_day(3), 6);
+    assert_eq!(weekday_index_from_unix_day(4), 0);
+    assert_eq!(weekday_index_from_unix_day(20_770), 4);
+}
+
+#[test]
+fn test_library_sort_modes_and_folder_metadata_preservation() {
+    let mut store = LibraryStore::default();
+    store.ensure_book(Path::new("b.epub"), "Beta", "Zeta", 100);
+    store.touch(Path::new("b.epub"), 300);
+    store.record_progress(Path::new("b.epub"), "Beta", "Zeta", 2, 10, 300);
+
+    store.ensure_book(Path::new("a.epub"), "Alpha", "Aaron", 200);
+    store.record_progress(Path::new("a.epub"), "Alpha", "Aaron", 8, 10, 250);
+
+    store.ensure_book(Path::new("c.epub"), "Gamma", "", 400);
+
+    let by_recent: Vec<&str> = store
+        .sorted_entries_by(LibrarySortMode::RecentlyOpened)
+        .iter()
+        .map(|e| e.title.as_str())
+        .collect();
+    assert_eq!(by_recent, vec!["Gamma", "Beta", "Alpha"]);
+
+    let by_title: Vec<&str> = store
+        .sorted_entries_by(LibrarySortMode::Title)
+        .iter()
+        .map(|e| e.title.as_str())
+        .collect();
+    assert_eq!(by_title, vec!["Alpha", "Beta", "Gamma"]);
+
+    let by_author: Vec<&str> = store
+        .sorted_entries_by(LibrarySortMode::Author)
+        .iter()
+        .map(|e| e.title.as_str())
+        .collect();
+    assert_eq!(by_author, vec!["Alpha", "Beta", "Gamma"]);
+
+    let by_progress: Vec<&str> = store
+        .sorted_entries_by(LibrarySortMode::Progress)
+        .iter()
+        .map(|e| e.title.as_str())
+        .collect();
+    assert_eq!(by_progress, vec!["Alpha", "Beta", "Gamma"]);
+
+    let by_added: Vec<&str> = store
+        .sorted_entries_by(LibrarySortMode::RecentlyAdded)
+        .iter()
+        .map(|e| e.title.as_str())
+        .collect();
+    assert_eq!(by_added, vec!["Gamma", "Alpha", "Beta"]);
+
+    let folder_scan = [crate::core::library::FolderBook {
+        path: PathBuf::from("a.epub"),
+        title: "a".to_string(),
+        author: String::new(),
+    }];
+    assert!(!store.import_folder_books(&folder_scan, 9_999));
+    let a = store.entry(Path::new("a.epub")).unwrap();
+    assert_eq!(a.title, "Alpha");
+    assert_eq!(a.author, "Aaron");
+    assert_eq!(a.last_opened_unix, 250);
 }
 
 fn create_file_symlink(source: &Path, target: &Path) -> bool {

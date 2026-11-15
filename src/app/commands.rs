@@ -115,7 +115,11 @@ impl QuietReaderApp {
                 self.set_fullscreen_mode(ctx, !self.is_fullscreen);
             }
             Command::ToggleSearch => {
-                if matches!(view_kind, DocumentViewKind::Text | DocumentViewKind::Pdf)
+                if self.show_settings_dialog {
+                    ctx.data_mut(|d| {
+                        d.insert_temp(egui::Id::unique("settings_focus_search_requested"), true);
+                    });
+                } else if matches!(view_kind, DocumentViewKind::Text | DocumentViewKind::Pdf)
                     && self.document.is_some()
                 {
                     self.search.toggle();
@@ -361,19 +365,120 @@ impl QuietReaderApp {
                     }
                     DocumentViewKind::Text => {
                         if !self.focus_nav_command(nav_cmd) {
-                            if self.settings.text_paged_scroll
-                                && matches!(nav_cmd, Command::PageDown | Command::PageUp)
+                            if self.settings.text_two_columns
+                                && self.viewport_height > 1.0
+                                && matches!(
+                                    nav_cmd,
+                                    Command::PageDown
+                                        | Command::NextPage
+                                        | Command::PageUp
+                                        | Command::PrevPage
+                                        | Command::Home
+                                        | Command::End
+                                )
+                            {
+                                if matches!(nav_cmd, Command::Home) {
+                                    self.pending_scroll_y = Some(0.0);
+                                    self.current_scroll_y = 0.0;
+                                    self.mark_settings_dirty();
+                                } else if matches!(nav_cmd, Command::End) {
+                                    self.pending_scroll_y = Some(self.max_scroll_y);
+                                    self.current_scroll_y = self.max_scroll_y;
+                                    self.mark_settings_dirty();
+                                } else if let Some(doc) = &self.document {
+                                    let forward =
+                                        matches!(nav_cmd, Command::PageDown | Command::NextPage);
+                                    let two_cols = super::reader_chrome::last_effective_spread(
+                                        ctx, 1200.0, true,
+                                    );
+                                    if forward && self.current_scroll_y + 2.0 >= self.max_scroll_y {
+                                        if let Some(next_idx) =
+                                            ReaderCore::find_next_non_empty_chapter(
+                                                doc.as_ref(),
+                                                self.current_chapter,
+                                            )
+                                        {
+                                            self.current_chapter = next_idx;
+                                            self.last_rendered_chapter = next_idx;
+                                            self.pending_scroll_y = Some(0.0);
+                                            self.current_scroll_y = 0.0;
+                                            self.mark_settings_dirty();
+                                        }
+                                    } else if !forward && self.current_scroll_y <= 2.0 {
+                                        if let Some(prev_idx) =
+                                            ReaderCore::find_prev_non_empty_chapter(
+                                                doc.as_ref(),
+                                                self.current_chapter,
+                                            )
+                                        {
+                                            self.current_chapter = prev_idx;
+                                            self.last_rendered_chapter = prev_idx;
+                                            self.pending_scroll_y = Some(999_999.0);
+                                            self.mark_settings_dirty();
+                                        }
+                                    } else {
+                                        let step =
+                                            self.viewport_height * if two_cols { 2.0 } else { 1.0 };
+                                        let target = if forward {
+                                            (self.current_scroll_y + step).min(self.max_scroll_y)
+                                        } else {
+                                            (self.current_scroll_y - step).max(0.0)
+                                        };
+                                        self.pending_scroll_y = Some(target);
+                                        self.current_scroll_y = target;
+                                        self.mark_settings_dirty();
+                                    }
+                                }
+                            } else if self.settings.text_paged_scroll
+                                && matches!(
+                                    nav_cmd,
+                                    Command::PageDown
+                                        | Command::NextPage
+                                        | Command::PageUp
+                                        | Command::PrevPage
+                                )
                                 && self.viewport_height > 1.0
                             {
-                                let step = self.viewport_height;
-                                let target = if matches!(nav_cmd, Command::PageDown) {
-                                    (self.current_scroll_y + step).min(self.max_scroll_y)
-                                } else {
-                                    (self.current_scroll_y - step).max(0.0)
-                                };
-                                self.pending_scroll_y = Some(target);
-                                self.current_scroll_y = target;
-                                self.mark_settings_dirty();
+                                let forward =
+                                    matches!(nav_cmd, Command::PageDown | Command::NextPage);
+                                if let Some(doc) = &self.document {
+                                    if forward && self.current_scroll_y + 2.0 >= self.max_scroll_y {
+                                        if let Some(next_idx) =
+                                            ReaderCore::find_next_non_empty_chapter(
+                                                doc.as_ref(),
+                                                self.current_chapter,
+                                            )
+                                        {
+                                            self.current_chapter = next_idx;
+                                            self.last_rendered_chapter = next_idx;
+                                            self.pending_scroll_y = Some(0.0);
+                                            self.current_scroll_y = 0.0;
+                                            self.mark_settings_dirty();
+                                        }
+                                    } else if !forward && self.current_scroll_y <= 2.0 {
+                                        if let Some(prev_idx) =
+                                            ReaderCore::find_prev_non_empty_chapter(
+                                                doc.as_ref(),
+                                                self.current_chapter,
+                                            )
+                                        {
+                                            self.current_chapter = prev_idx;
+                                            self.last_rendered_chapter = prev_idx;
+                                            self.pending_scroll_y = Some(999_999.0);
+                                            self.mark_settings_dirty();
+                                        }
+                                    } else {
+                                        let step = self.viewport_height;
+                                        let target = if forward {
+                                            (self.current_scroll_y + step).min(self.max_scroll_y)
+                                        } else {
+                                            (self.current_scroll_y - step).max(0.0)
+                                        };
+                                        self.pending_scroll_y = Some(target);
+                                        self.current_scroll_y = target;
+                                        self.mark_settings_dirty();
+                                    }
+                                }
                             } else if let Some(doc) = &self.document {
                                 ReaderCore::apply_text_command(
                                     nav_cmd,

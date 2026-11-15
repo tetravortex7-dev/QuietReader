@@ -1,4 +1,36 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+pub fn reveal_downloaded_file(path: &Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if path.exists() {
+            let clean = path.display().to_string().replace('"', "");
+            let _ = std::process::Command::new("explorer.exe")
+                .raw_arg(format!("/select,\"{clean}\""))
+                .spawn();
+        } else if let Some(parent) = path.parent() {
+            let _ = std::process::Command::new("explorer.exe").arg(parent).spawn();
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if path.exists() {
+            let _ = std::process::Command::new("open")
+                .args(["-R"])
+                .arg(path)
+                .spawn();
+        } else if let Some(parent) = path.parent() {
+            let _ = std::process::Command::new("open").arg(parent).spawn();
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(parent) = path.parent() {
+            let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+        }
+    }
+}
 
 pub fn downloads_dir() -> PathBuf {
     let dir = resolve_downloads_dir();

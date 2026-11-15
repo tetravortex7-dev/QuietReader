@@ -1,955 +1,723 @@
+mod appearance;
+mod audio_dict;
+mod chrome;
+mod reading;
+mod search_reset;
+mod typography;
+pub mod widgets;
+
+#[cfg(all(test, feature = "enable_tests"))]
+pub use appearance::compute_theme_swatch_cols;
+#[cfg(all(test, feature = "enable_tests"))]
+pub use search_reset::{SettingsSectionId, apply_default_app_preferences, matching_sections};
+#[cfg(all(test, feature = "enable_tests"))]
+pub use typography::compute_font_grid_cols;
+
+use self::chrome::{
+    render_compact_nav_bar, render_left_rail, render_modal_footer, render_modal_header,
+    render_reset_confirm_banner,
+};
+use self::search_reset::apply_default_preferences;
+#[cfg(not(all(test, feature = "enable_tests")))]
+use self::search_reset::{SettingsSectionId, matching_sections};
+use self::widgets::SettingsPalette;
+use super::ambient::AmbientController;
 use super::dialogs::SettingsTab;
+use super::dictionary::DictionaryState;
 use super::fonts::apply_font_family;
-use super::icons::{Icon, IconButton, IconLabel, selectable_icon_button};
+use super::icons::{Icon, IconLabel};
 use super::license_view::ProUpgradeState;
+use super::settings_about::{
+    render_about_tab, render_pro_section, render_version_and_licenses_section,
+};
+use super::settings_system::{
+    render_associations_section, render_encoding_section, render_library_pin_section,
+    render_storage_section, render_system_tab, render_updates_section,
+};
 use super::theme::ReaderTheme;
-use crate::core::license::ProFeature;
-use crate::settings::{AppSettings, OPEN_DYSLEXIC_FONT};
-use eframe::egui::{self, Color32, RichText, ScrollArea};
+use super::tts::TtsController;
+use crate::core::library::LibraryStore;
+use crate::i18n::Translations;
+use crate::settings::AppSettings;
+use eframe::egui::{self, Color32, Margin, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Vec2};
+
+#[derive(Default)]
+pub struct SettingsActions {
+    pub close: bool,
+    pub toggle_autoscroll: bool,
+    pub save_settings: bool,
+    pub register_association: bool,
+    pub reload_text_encoding: bool,
+    pub open_ambient: bool,
+    pub open_tts: bool,
+    pub open_dictionary: bool,
+    pub open_vocabulary: bool,
+}
 
 pub struct SettingsView;
 
 impl SettingsView {
-    pub fn render(
-        ui: &mut egui::Ui,
+    pub(super) fn render_overlay(
+        app: &mut super::QuietReaderApp,
         ctx: &egui::Context,
-        show_settings: &mut bool,
+        bounds: Rect,
+        toggle_autoscroll: &mut bool,
+        save_settings: &mut bool,
+        register_assoc: &mut bool,
+    ) {
+        let mut is_autoscrolling_flag = app.autoscroll.is_active();
+        let actions = Self::render(
+            ctx,
+            bounds,
+            &mut app.settings_tab,
+            &mut app.settings,
+            &mut app.library,
+            &mut app.library_dirty,
+            &mut app.font_size,
+            &mut app.theme,
+            &mut app.keep_screen_on,
+            &mut is_autoscrolling_flag,
+            &mut app.ambient,
+            &mut app.tts,
+            &app.dictionary,
+            &app.updater,
+            &mut app.pro_upgrade,
+        );
+        if actions.close {
+            app.show_settings_dialog = false;
+        }
+        if actions.toggle_autoscroll {
+            *toggle_autoscroll = true;
+        }
+        if actions.save_settings {
+            *save_settings = true;
+        }
+        if actions.register_association {
+            *register_assoc = true;
+        }
+        if actions.reload_text_encoding {
+            app.reload_current_text_encoding();
+        }
+        if actions.open_ambient {
+            app.show_settings_dialog = false;
+            app.ambient.is_open = true;
+        }
+        if actions.open_tts {
+            app.show_settings_dialog = false;
+            app.tts.show_panel = true;
+        }
+        if actions.open_dictionary {
+            app.show_settings_dialog = false;
+            app.dictionary.visible = true;
+            app.dictionary.catalog_visible = false;
+        }
+        if actions.open_vocabulary {
+            app.show_settings_dialog = false;
+            app.dictionary.words_visible = true;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        ctx: &egui::Context,
+        bounds: Rect,
         settings_tab: &mut SettingsTab,
         settings: &mut AppSettings,
+        library: &mut LibraryStore,
+        library_dirty: &mut bool,
         font_size: &mut f32,
         theme: &mut ReaderTheme,
         keep_screen_on: &mut bool,
         is_autoscrolling: &mut bool,
-        on_toggle_autoscroll: &mut bool,
-        on_save_settings: &mut bool,
-        on_register_association: &mut bool,
-        on_reload_text_encoding: &mut bool,
+        ambient: &mut AmbientController,
+        tts: &mut TtsController,
+        dictionary: &DictionaryState,
         updater: &crate::updater::UpdateChecker,
         pro: &mut ProUpgradeState,
-    ) {
-        let text_color = theme.text_color();
-        let accent_color = theme.accent_color();
-        let card_bg = theme.panel_bg_color();
-        let card_stroke = egui::Stroke::new(1.0, accent_color.gamma_multiply(0.35));
-
+    ) -> SettingsActions {
+        let mut actions = SettingsActions::default();
+        let palette = SettingsPalette::from_theme(theme, library.design);
         let t = settings.ui_language.t();
-        ui.vertical_centered(|ui| {
-            ui.set_max_width(760.0);
-            ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
-                ui.add(
-                    IconLabel::new(Icon::Settings, t.settings_title)
-                        .size(22.0)
-                        .strong()
-                        .color(text_color),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(IconButton::new(Icon::Close, t.back_to_reading).font_size(14.0))
-                        .clicked()
-                    {
-                        *show_settings = false;
-                    }
-                });
-            });
+        let search_id = egui::Id::unique("settings_search_query");
+        let reset_confirm_id = egui::Id::unique("settings_reset_confirm");
+        let reset_done_id = egui::Id::unique("settings_reset_done");
+        let focus_search_flag_id = egui::Id::unique("settings_focus_search_requested");
 
-            ui.add_space(4.0);
-            if let Some(err) = AppSettings::last_save_error() {
-                ui.add(
-                    IconLabel::new(Icon::Warning, &t.save_settings_error.replace("{}", &err))
-                        .color(Color32::RED)
-                        .strong(),
-                );
-                ui.add_space(4.0);
-            } else if let Some(err) = AppSettings::last_secret_error() {
-                ui.add(
-                    IconLabel::new(Icon::Warning, &t.secrets_storage_error.replace("{}", &err))
-                        .color(Color32::RED)
-                        .strong(),
-                );
-                ui.add_space(4.0);
-            }
-            ui.separator();
-            ui.add_space(8.0);
-
-            ui.horizontal_wrapped(|ui| {
-                let tabs = [
-                    (SettingsTab::Fonts, Icon::Fonts, t.tab_fonts),
-                    (SettingsTab::Appearance, Icon::Appearance, t.tab_appearance),
-                    (SettingsTab::AutoScroll, Icon::AutoScroll, t.tab_autoscroll),
-                    (SettingsTab::ComicsAndManga, Icon::Book, t.tab_comics),
-                    (SettingsTab::Hotkeys, Icon::Keyboard, t.tab_hotkeys),
-                    (SettingsTab::System, Icon::Settings, t.tab_system),
-                    (SettingsTab::About, Icon::Info, t.tab_about),
-                ];
-
-                for (tab, icon, label) in tabs {
-                    let is_active = *settings_tab == tab;
-                    let btn = selectable_icon_button(ui, is_active, icon, label);
-                    if btn.clicked() {
-                        *settings_tab = tab;
-                    }
-                }
-            });
-
-            ui.add_space(10.0);
-
-            egui::Frame::new()
-                .fill(card_bg)
-                .stroke(card_stroke)
-                .corner_radius(8.0)
-                .inner_margin(egui::Margin::symmetric(20, 16))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-
-                    ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| match *settings_tab {
-                            SettingsTab::Fonts => Self::render_fonts_tab(
-                                ui,
-                                ctx,
-                                settings,
-                                font_size,
-                                theme,
-                                on_save_settings,
-                                pro,
-                            ),
-                            SettingsTab::Appearance => Self::render_appearance_tab(
-                                ui,
-                                theme,
-                                keep_screen_on,
-                                settings,
-                                on_save_settings,
-                            ),
-                            SettingsTab::AutoScroll => Self::render_autoscroll_tab(
-                                ui,
-                                settings,
-                                is_autoscrolling,
-                                on_toggle_autoscroll,
-                                theme,
-                                on_save_settings,
-                            ),
-                            SettingsTab::ComicsAndManga => {
-                                Self::render_comics_tab(ui, settings, theme, on_save_settings)
-                            }
-                            SettingsTab::Hotkeys => super::settings_about::render_hotkeys_tab(
-                                ui,
-                                theme,
-                                settings.ui_language,
-                            ),
-                            SettingsTab::System => super::settings_system::render_system_tab(
-                                ui,
-                                settings,
-                                on_register_association,
-                                on_save_settings,
-                                on_reload_text_encoding,
-                                theme,
-                                updater,
-                                pro,
-                            ),
-                            SettingsTab::About => {
-                                super::settings_about::render_about_tab(ui, settings, theme)
-                            }
-                        });
-                });
-        });
-    }
-
-    fn render_fonts_tab(
-        ui: &mut egui::Ui,
-        ctx: &egui::Context,
-        settings: &mut AppSettings,
-        font_size: &mut f32,
-        theme: &ReaderTheme,
-        on_save_settings: &mut bool,
-        pro: &mut ProUpgradeState,
-    ) {
-        let t = settings.ui_language.t();
-        let text_color = theme.text_color();
-
-        ui.label(
-            RichText::new(t.font_choice)
-                .size(17.0)
-                .strong()
-                .color(text_color),
-        );
-        ui.add_space(8.0);
-
-        for font_info in super::fonts::AVAILABLE_FONTS {
-            let is_selected = settings.effective_font_family() == font_info.id;
-            let card_family = egui::FontFamily::Name(font_info.id.into());
-            let card_frame = egui::Frame::new()
-                .fill(if is_selected {
-                    theme.panel_bg_color()
-                } else {
-                    theme.bg_color()
-                })
-                .stroke(egui::Stroke::new(
-                    if is_selected { 1.5 } else { 1.0 },
-                    if is_selected {
-                        theme.accent_color()
-                    } else {
-                        Color32::from_gray(120).gamma_multiply(0.3)
-                    },
-                ))
-                .corner_radius(6.0)
-                .inner_margin(egui::Margin::symmetric(12, 8));
-
-            let frame_response = card_frame.show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .radio(
-                            is_selected,
-                            RichText::new(font_info.name)
-                                .family(card_family.clone())
-                                .size(15.5)
-                                .strong()
-                                .color(text_color),
-                        )
-                        .clicked()
-                        && !is_selected
-                    {
-                        select_font(settings, ctx, font_info.id, on_save_settings, pro);
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (badge, tag) = font_info.badge_parts_for_lang(settings.ui_language);
-                        let segments: &[&str] = if tag.is_empty() {
-                            &[badge]
-                        } else {
-                            &[badge, tag]
-                        };
-                        let accent = theme.accent_color();
-                        super::icons::dotted_strip(
-                            ui,
-                            segments,
-                            11.5,
-                            accent,
-                            accent.gamma_multiply(0.7),
-                        );
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(
-                    RichText::new(font_info.desc_for_lang(settings.ui_language))
-                        .family(card_family)
-                        .size(12.5)
-                        .color(text_color.gamma_multiply(0.8)),
-                );
-            });
-
-            if frame_response
-                .response
-                .interact(egui::Sense::click())
-                .clicked()
-                && !is_selected
-            {
-                select_font(settings, ctx, font_info.id, on_save_settings, pro);
-            }
-
-            ui.add_space(4.0);
+        let mut search_query: String = ctx.data(|d| d.get_temp(search_id).unwrap_or_default());
+        let mut reset_confirm: bool = ctx.data(|d| d.get_temp(reset_confirm_id).unwrap_or(false));
+        let mut reset_done: bool = ctx.data(|d| d.get_temp(reset_done_id).unwrap_or(false));
+        let focus_search: bool = ctx.data(|d| d.get_temp(focus_search_flag_id).unwrap_or(false));
+        if focus_search {
+            ctx.data_mut(|d| d.insert_temp(focus_search_flag_id, false));
         }
 
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(t.font_size)
-                    .size(15.0)
-                    .strong()
-                    .color(text_color),
-            );
-            if ui
-                .add(IconButton::new(Icon::Minus, "").min_size(egui::Vec2::new(26.0, 22.0)))
-                .on_hover_text(t.font_decrease_tip)
-                .clicked()
-                && *font_size > 12.0
-            {
-                *font_size -= 1.0;
-                *on_save_settings = true;
-            }
-            let mut size_val = *font_size;
-            let resp = ui.add(egui::Slider::new(&mut size_val, 12.0..=36.0).suffix(" pt"));
-            if resp.changed() {
-                *font_size = size_val;
-            }
-            if resp.drag_stopped() || resp.lost_focus() {
-                *on_save_settings = true;
-            }
-            if ui
-                .add(IconButton::new(Icon::Plus, "").min_size(egui::Vec2::new(26.0, 22.0)))
-                .on_hover_text(t.font_increase_tip)
-                .clicked()
-                && *font_size < 36.0
-            {
-                *font_size += 1.0;
-                *on_save_settings = true;
-            }
-        });
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(t.line_height_label)
-                    .size(15.0)
-                    .strong()
-                    .color(text_color),
-            );
-            let mut value = settings.line_height_scale;
-            let resp = ui
-                .add(
-                    egui::Slider::new(&mut value, 1.1..=2.0)
-                        .step_by(0.05)
-                        .suffix("×"),
-                )
-                .on_hover_text(t.line_height_tooltip);
-            if resp.changed() {
-                settings.line_height_scale = value;
-            }
-            if resp.drag_stopped() || resp.lost_focus() {
-                *on_save_settings = true;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(t.column_width_label)
-                    .size(15.0)
-                    .strong()
-                    .color(text_color),
-            );
-            let mut value = settings.max_column_width;
-            let resp = ui
-                .add(
-                    egui::Slider::new(&mut value, 520.0..=1200.0)
-                        .step_by(10.0)
-                        .suffix(" px"),
-                )
-                .on_hover_text(t.column_width_tooltip);
-            if resp.changed() {
-                settings.max_column_width = value;
-            }
-            if resp.drag_stopped() || resp.lost_focus() {
-                *on_save_settings = true;
-            }
-        });
-
-        ui.add_space(8.0);
-        let bionic_enabled = settings.effective_bionic_reading();
-        egui::Frame::new()
-            .fill(if bionic_enabled {
-                theme.panel_bg_color()
-            } else {
-                theme.bg_color()
-            })
-            .stroke(egui::Stroke::new(
-                if bionic_enabled { 1.5 } else { 1.0 },
-                if bionic_enabled {
-                    theme.accent_color()
-                } else {
-                    Color32::from_gray(120).gamma_multiply(0.3)
-                },
-            ))
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::symmetric(12, 10))
-            .show(ui, |ui| {
-                let mut bionic = bionic_enabled;
-                ui.horizontal(|ui| {
-                    if ui
-                        .checkbox(
-                            &mut bionic,
-                            RichText::new(t.bionic_reading_title)
-                                .strong()
-                                .size(15.0)
-                                .color(text_color),
-                        )
-                        .changed()
-                    {
-                        if bionic && !settings.can_use(ProFeature::FocusTools) {
-                            pro.request(ProFeature::FocusTools);
-                        } else {
-                            settings.bionic_reading = bionic;
-                            *on_save_settings = true;
-                        }
-                    }
-                });
-                ui.add_space(2.0);
-                ui.label(
-                    RichText::new(t.bionic_reading_desc)
-                        .size(12.0)
-                        .color(text_color.gamma_multiply(0.75)),
-                );
-            });
-
-        ui.add_space(8.0);
-        let ruler_enabled = settings.effective_reading_ruler();
-        egui::Frame::new()
-            .fill(if ruler_enabled {
-                theme.panel_bg_color()
-            } else {
-                theme.bg_color()
-            })
-            .stroke(egui::Stroke::new(
-                if ruler_enabled { 1.5 } else { 1.0 },
-                if ruler_enabled {
-                    theme.accent_color()
-                } else {
-                    Color32::from_gray(120).gamma_multiply(0.3)
-                },
-            ))
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::symmetric(12, 10))
-            .show(ui, |ui| {
-                let mut ruler = ruler_enabled;
-                if ui
-                    .checkbox(
-                        &mut ruler,
-                        RichText::new(t.reading_ruler_title)
-                            .strong()
-                            .size(15.0)
-                            .color(text_color),
-                    )
-                    .changed()
-                {
-                    if ruler && !settings.can_use(ProFeature::FocusTools) {
-                        pro.request(ProFeature::FocusTools);
-                    } else {
-                        settings.reading_ruler = ruler;
-                        *on_save_settings = true;
-                    }
-                }
-                ui.add_space(2.0);
-                ui.label(
-                    RichText::new(t.reading_ruler_desc)
-                        .size(12.0)
-                        .color(text_color.gamma_multiply(0.75)),
-                );
-                if ruler {
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(t.reading_ruler_height_label)
-                                .size(13.0)
-                                .color(text_color),
-                        );
-                        let resp =
-                            ui.add(egui::Slider::new(&mut settings.reading_ruler_lines, 1..=5));
-                        if resp.changed() || resp.drag_stopped() {
-                            *on_save_settings = true;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(t.reading_ruler_dim_label)
-                                .size(13.0)
-                                .color(text_color),
-                        );
-                        let mut pct = (settings.reading_ruler_opacity * 100.0).round() as u32;
-                        let resp = ui.add(egui::Slider::new(&mut pct, 20..=80).suffix("%"));
-                        if resp.changed() {
-                            settings.reading_ruler_opacity = (pct as f32) / 100.0;
-                        }
-                        if resp.drag_stopped() || resp.lost_focus() {
-                            *on_save_settings = true;
-                        }
-                    });
-                }
-            });
-
-        ui.add_space(10.0);
-        egui::Frame::new()
-            .fill(theme.bg_color())
-            .stroke(egui::Stroke::new(
-                1.0,
-                theme.accent_color().gamma_multiply(0.25),
-            ))
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::symmetric(14, 10))
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(t.live_preview)
-                        .italics()
-                        .size(12.0)
-                        .color(text_color.gamma_multiply(0.65)),
-                );
-                ui.add_space(6.0);
-                let preview_job = super::text_view::create_sample_preview_job(
-                    t.sample_text,
-                    *font_size,
-                    text_color,
-                    settings.effective_line_height_scale(),
-                    settings.effective_bionic_reading(),
-                    settings.ui_language.is_rtl(),
-                );
-                ui.vertical_centered(|ui| {
-                    ui.set_max_width(settings.effective_max_column_width());
-                    ui.label(preview_job);
-                });
-            });
-    }
-
-    fn render_appearance_tab(
-        ui: &mut egui::Ui,
-        theme: &mut ReaderTheme,
-        keep_screen_on: &mut bool,
-        settings: &mut AppSettings,
-        on_save_settings: &mut bool,
-    ) {
-        let t = settings.ui_language.t();
-        let text_color = theme.text_color();
-
-        ui.label(
-            RichText::new(t.interface_language)
-                .size(17.0)
-                .strong()
-                .color(text_color),
-        );
-        ui.label(
-            RichText::new(t.interface_language_desc)
-                .size(13.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-        ui.add_space(6.0);
-
-        ui.horizontal_wrapped(|ui| {
-            for &lang in crate::i18n::UiLanguage::ALL.iter() {
-                let is_sel = settings.ui_language == lang;
-                let text = lang.label(t);
-                if ui.selectable_label(is_sel, text).clicked() && !is_sel {
-                    settings.ui_language = lang;
-                    *on_save_settings = true;
-                }
-            }
-        });
-
-        ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(10.0);
-
-        ui.label(
-            RichText::new(t.theme_title)
-                .size(17.0)
-                .strong()
-                .color(text_color),
-        );
-        ui.add_space(6.0);
-
-        let themes = [
-            (ReaderTheme::Sepia, t.theme_sepia, t.theme_sepia_desc),
-            (
-                ReaderTheme::Twilight,
-                t.theme_twilight,
-                t.theme_twilight_desc,
-            ),
-            (ReaderTheme::Warm, t.theme_warm, t.theme_warm_desc),
-            (ReaderTheme::Mint, t.theme_mint, t.theme_mint_desc),
-            (ReaderTheme::Light, t.theme_light, t.theme_light_desc),
-            (ReaderTheme::Dark, t.theme_dark, t.theme_dark_desc),
-            (ReaderTheme::Oled, t.theme_oled, t.theme_oled_desc),
-        ];
-
-        for (theme_variant, title, desc) in themes {
-            let is_sel = *theme == theme_variant;
-            let fill = if is_sel {
-                theme.panel_bg_color()
-            } else {
-                theme.bg_color()
-            };
-            let stroke = if is_sel {
-                egui::Stroke::new(1.5, theme.accent_color())
-            } else {
-                egui::Stroke::new(1.0, Color32::from_gray(120).gamma_multiply(0.3))
-            };
-            egui::Frame::new()
-                .fill(fill)
-                .stroke(stroke)
-                .corner_radius(6.0)
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    if ui
-                        .radio(
-                            is_sel,
-                            RichText::new(title).size(15.0).strong().color(text_color),
-                        )
-                        .clicked()
-                    {
-                        *theme = theme_variant;
-                        *on_save_settings = true;
-                    }
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(desc)
-                            .size(12.0)
-                            .color(text_color.gamma_multiply(0.75)),
-                    );
-                });
-            ui.add_space(4.0);
-        }
-
-        ui.add_space(8.0);
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(t.brightness_title)
-                    .size(15.0)
-                    .strong()
-                    .color(text_color),
-            );
-            let mut percent = (settings.reading_brightness.clamp(0.35, 1.0) * 100.0).round() as u32;
-            let resp = ui
-                .add(egui::Slider::new(&mut percent, 35..=100).suffix("%"))
-                .on_hover_text(t.brightness_desc);
-            if resp.changed() {
-                settings.reading_brightness = percent as f32 / 100.0;
-            }
-            if resp.drag_stopped() || resp.lost_focus() {
-                *on_save_settings = true;
-            }
-        });
-        ui.label(
-            RichText::new(t.brightness_desc)
-                .size(12.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-
-        ui.add_space(8.0);
-        if ui
-            .checkbox(
-                &mut settings.trackpad_swipe_pages,
-                RichText::new(t.trackpad_swipes_title)
-                    .strong()
-                    .size(15.0)
-                    .color(text_color),
-            )
-            .changed()
-        {
-            *on_save_settings = true;
-        }
-        ui.label(
-            RichText::new(t.trackpad_swipes_desc)
-                .size(12.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-
-        ui.add_space(8.0);
-        if ui
-            .checkbox(
-                &mut settings.text_paged_scroll,
-                RichText::new(t.paged_scroll_title)
-                    .strong()
-                    .size(15.0)
-                    .color(text_color),
-            )
-            .changed()
-        {
-            *on_save_settings = true;
-        }
-        ui.label(
-            RichText::new(t.paged_scroll_desc)
-                .size(12.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-
-        ui.add_space(8.0);
-        if ui
-            .checkbox(
-                &mut settings.text_two_columns,
-                RichText::new(t.two_columns_title)
-                    .strong()
-                    .size(15.0)
-                    .color(text_color),
-            )
-            .changed()
-        {
-            *on_save_settings = true;
-        }
-        ui.label(
-            RichText::new(t.two_columns_desc)
-                .size(12.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-
-        ui.add_space(8.0);
-        if ui
-            .checkbox(
-                &mut settings.text_paragraph_mode,
-                RichText::new(t.paragraph_mode)
-                    .strong()
-                    .size(15.0)
-                    .color(text_color),
-            )
-            .changed()
-        {
-            *on_save_settings = true;
-        }
-        ui.label(
-            RichText::new(t.paragraph_mode_desc)
-                .size(12.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(t.rsvp_speed)
-                    .strong()
-                    .size(15.0)
-                    .color(text_color),
-            );
-            let mut wpm = settings.rsvp_wpm.clamp(100, 1000);
-            let response = ui.add(egui::Slider::new(&mut wpm, 100..=1000).step_by(25.0));
-            if response.changed() {
-                settings.rsvp_wpm = wpm;
-                *on_save_settings = true;
-            }
-            if response.drag_stopped() || response.lost_focus() {
-                *on_save_settings = true;
-            }
-        });
-        ui.label(
-            RichText::new(t.rsvp_desc)
-                .size(12.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-        ui.add_space(4.0);
-        if ui
-            .checkbox(
-                &mut settings.rsvp_auto_accelerate,
-                RichText::new(t.rsvp_auto_accelerate)
-                    .size(13.0)
-                    .color(text_color),
-            )
-            .changed()
-        {
-            *on_save_settings = true;
-        }
-        ui.label(
-            RichText::new(t.rsvp_auto_accelerate_desc)
-                .size(11.0)
-                .color(text_color.gamma_multiply(0.7)),
-        );
-
-        ui.separator();
-        ui.add_space(8.0);
-
-        let label = RichText::new(t.keep_screen_on)
-            .size(14.0)
-            .strong()
-            .color(text_color);
-        if ui.checkbox(keep_screen_on, label).changed() {
-            crate::platform::set_keep_screen_on(*keep_screen_on);
-            settings.keep_screen_on = *keep_screen_on;
-            *on_save_settings = true;
-        }
-        ui.label(
-            RichText::new(t.keep_screen_on_desc)
-                .size(12.0)
-                .color(text_color.gamma_multiply(0.7)),
-        );
-    }
-
-    fn render_autoscroll_tab(
-        ui: &mut egui::Ui,
-        settings: &mut AppSettings,
-        is_autoscrolling: &mut bool,
-        on_toggle_autoscroll: &mut bool,
-        theme: &ReaderTheme,
-        on_save_settings: &mut bool,
-    ) {
-        let t = settings.ui_language.t();
-        let text_color = theme.text_color();
-
-        ui.label(
-            RichText::new(t.autoscroll_title)
-                .size(17.0)
-                .strong()
-                .color(text_color),
-        );
-        ui.label(
-            RichText::new(t.autoscroll_desc)
-                .size(13.0)
-                .color(text_color.gamma_multiply(0.75)),
-        );
-        ui.add_space(8.0);
-
-        let (scroll_icon, scroll_text) = if *is_autoscrolling {
-            (Icon::Pause, t.autoscroll_stop)
+        let outer_pad_x = if bounds.width() >= 960.0 {
+            28.0
+        } else if bounds.width() >= 600.0 {
+            16.0
         } else {
-            (Icon::Play, t.autoscroll_start)
+            8.0
         };
-        if ui
-            .add(IconButton::new(scroll_icon, scroll_text).font_size(14.0))
-            .clicked()
-        {
-            *on_toggle_autoscroll = true;
+        let outer_pad_y = if bounds.height() >= 760.0 { 22.0 } else { 10.0 };
+        let modal_w = (bounds.width() - outer_pad_x * 2.0).clamp(300.0, 1120.0);
+        let modal_h = (bounds.height() - outer_pad_y * 2.0).clamp(320.0, 860.0);
+        let modal_rect = Rect::from_center_size(bounds.center(), Vec2::new(modal_w, modal_h));
+
+        if !pro.is_open && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if reset_confirm {
+                reset_confirm = false;
+            } else if !search_query.trim().is_empty() {
+                search_query.clear();
+            } else {
+                actions.close = true;
+            }
         }
 
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(t.motion_type).strong().color(text_color));
-            if ui
-                .radio_value(&mut settings.auto_scroll.pause_mode, true, t.mode_pause)
-                .clicked()
-            {
-                *on_save_settings = true;
-            }
-            if ui
-                .radio_value(
-                    &mut settings.auto_scroll.pause_mode,
-                    false,
-                    t.mode_continuous,
-                )
-                .clicked()
-            {
-                *on_save_settings = true;
-            }
-        });
+        egui::Area::new(egui::Id::unique("settings_modal_overlay"))
+            .order(egui::Order::Middle)
+            .fixed_pos(bounds.min)
+            .interactable(!pro.is_open)
+            .show(ctx, |ui| {
+                ui.set_clip_rect(bounds);
+                ui.set_min_size(bounds.size());
+                ui.set_max_size(bounds.size());
+                ui.painter().rect_filled(bounds, 0.0, palette.scrim);
 
-        ui.add_space(8.0);
-        if settings.auto_scroll.pause_mode {
-            ui.horizontal(|ui| {
-                ui.label(t.pause_duration);
-                let resp = ui.add(
-                    egui::Slider::new(&mut settings.auto_scroll.pause_duration, 0.5..=15.0)
-                        .suffix(t.extra.seconds_suffix),
-                );
-                if resp.drag_stopped() || resp.lost_focus() {
-                    *on_save_settings = true;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(t.step_distance);
-                let resp = ui.add(
-                    egui::Slider::new(&mut settings.auto_scroll.step_distance, 30.0..=350.0)
-                        .suffix(" px"),
-                );
-                if resp.drag_stopped() || resp.lost_focus() {
-                    *on_save_settings = true;
-                }
-            });
-        } else {
-            ui.horizontal(|ui| {
-                ui.label(t.scroll_speed);
-                let resp = ui.add(
-                    egui::Slider::new(&mut settings.auto_scroll.continuous_speed, 10.0..=250.0)
-                        .suffix(t.extra.pixels_per_second_suffix),
-                );
-                if resp.drag_stopped() || resp.lost_focus() {
-                    *on_save_settings = true;
-                }
-            });
-        }
-    }
-
-    fn render_comics_tab(
-        ui: &mut egui::Ui,
-        settings: &mut AppSettings,
-        theme: &ReaderTheme,
-        on_save_settings: &mut bool,
-    ) {
-        let t = settings.ui_language.t();
-        let text_color = theme.text_color();
-        ui.label(
-            RichText::new(t.comics_title)
-                .size(17.0)
-                .strong()
-                .color(text_color),
-        );
-        ui.add_space(6.0);
-
-        let modes = [
-            ("Auto", t.mode_auto, t.mode_auto_desc),
-            ("Manga", t.mode_manga, t.mode_manga_desc),
-            ("Comic", t.mode_comic, t.mode_comic_desc),
-            ("Webtoon", t.mode_webtoon, t.mode_webtoon_desc),
-        ];
-
-        for (mode_key, title, desc) in modes {
-            let is_sel = settings.comic.reading_mode == mode_key;
-            let fill = if is_sel {
-                theme.panel_bg_color()
-            } else {
-                theme.bg_color()
-            };
-            let stroke = if is_sel {
-                egui::Stroke::new(1.5, theme.accent_color())
-            } else {
-                egui::Stroke::new(1.0, Color32::from_gray(120).gamma_multiply(0.3))
-            };
-            egui::Frame::new()
-                .fill(fill)
-                .stroke(stroke)
-                .corner_radius(6.0)
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    if ui
-                        .radio(is_sel, RichText::new(title).strong().color(text_color))
-                        .clicked()
-                    {
-                        settings.comic.reading_mode = mode_key.to_string();
-                        *on_save_settings = true;
+                let strips = [
+                    Rect::from_min_max(bounds.min, Pos2::new(bounds.max.x, modal_rect.min.y)),
+                    Rect::from_min_max(Pos2::new(bounds.min.x, modal_rect.max.y), bounds.max),
+                    Rect::from_min_max(
+                        Pos2::new(bounds.min.x, modal_rect.min.y),
+                        Pos2::new(modal_rect.min.x, modal_rect.max.y),
+                    ),
+                    Rect::from_min_max(
+                        Pos2::new(modal_rect.max.x, modal_rect.min.y),
+                        Pos2::new(bounds.max.x, modal_rect.max.y),
+                    ),
+                ];
+                for (idx, strip) in strips.iter().enumerate() {
+                    if strip.width() > 0.0 && strip.height() > 0.0 {
+                        let resp = ui.interact(
+                            *strip,
+                            ui.make_persistent_id(("settings_scrim_strip", idx)),
+                            Sense::click(),
+                        );
+                        if resp.clicked() {
+                            actions.close = true;
+                        }
                     }
-                    ui.label(
-                        RichText::new(desc)
-                            .size(11.5)
-                            .color(text_color.gamma_multiply(0.75)),
-                    );
-                });
-            ui.add_space(3.0);
-        }
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.add_space(6.0);
-        ui.label(RichText::new(t.layout_title).strong().color(text_color));
-        ui.horizontal(|ui| {
-            let s1 = ui.radio_value(
-                &mut settings.comic.page_layout,
-                "Single".to_string(),
-                t.layout_single,
-            );
-            let s2 = ui.radio_value(
-                &mut settings.comic.page_layout,
-                "Double".to_string(),
-                t.layout_double,
-            );
-            if s1.clicked() || s2.clicked() {
-                *on_save_settings = true;
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            for (val, label) in [
-                ("FitWindow", t.fit_window),
-                ("FitWidth", t.fit_width),
-                ("FitHeight", t.fit_height),
-                ("Original", "100%"),
-            ] {
-                if ui
-                    .radio_value(&mut settings.comic.fit_mode, val.to_string(), label)
-                    .clicked()
-                {
-                    *on_save_settings = true;
                 }
-            }
+
+                let mut modal_ui = ui.new_child(egui::UiBuilder::new().max_rect(modal_rect));
+                modal_ui.set_clip_rect(modal_rect);
+                let shadow = egui::epaint::Shadow {
+                    offset: [0, 10],
+                    blur: 28,
+                    spread: 0,
+                    color: Color32::from_black_alpha(if palette.is_dark { 150 } else { 44 }),
+                };
+
+                egui::Frame::new()
+                    .fill(palette.modal_bg)
+                    .stroke(Stroke::new(1.0, palette.border))
+                    .corner_radius(palette.corner_lg)
+                    .shadow(shadow)
+                    .show(&mut modal_ui, |ui| {
+                        ui.set_min_size(modal_rect.size());
+                        ui.set_max_size(modal_rect.size());
+                        ui.set_max_width(modal_w);
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                        render_modal_header(
+                            ui,
+                            &palette,
+                            &t,
+                            modal_w,
+                            &mut search_query,
+                            focus_search,
+                            &mut reset_confirm,
+                            &mut actions.close,
+                        );
+
+                        if reset_confirm {
+                            render_reset_confirm_banner(
+                                ui,
+                                &palette,
+                                &t,
+                                &mut reset_confirm,
+                                &mut reset_done,
+                                || {
+                                    apply_default_preferences(
+                                        settings,
+                                        library,
+                                        library_dirty,
+                                        theme,
+                                        font_size,
+                                        keep_screen_on,
+                                        ambient,
+                                        tts,
+                                    );
+                                    let effective = settings.effective_font_family();
+                                    apply_font_family(ctx, &effective);
+                                    actions.save_settings = true;
+                                },
+                            );
+                        }
+
+                        let footer_h = 46.0;
+                        let body_h = (ui.available_height() - footer_h).max(120.0);
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(modal_w, body_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_min_size(Vec2::new(modal_w, body_h));
+                                ui.set_max_size(Vec2::new(modal_w, body_h));
+
+                                let compact_nav = modal_w < 740.0;
+                                if compact_nav {
+                                    render_compact_nav_bar(
+                                        ui,
+                                        &palette,
+                                        &t,
+                                        settings_tab,
+                                        &mut search_query,
+                                        &mut reset_done,
+                                    );
+                                    render_scrollable_content(
+                                        ui,
+                                        ctx,
+                                        &palette,
+                                        &t,
+                                        settings_tab,
+                                        &search_query,
+                                        reset_done,
+                                        settings,
+                                        library,
+                                        library_dirty,
+                                        font_size,
+                                        theme,
+                                        keep_screen_on,
+                                        is_autoscrolling,
+                                        ambient,
+                                        tts,
+                                        dictionary,
+                                        updater,
+                                        pro,
+                                        &mut actions,
+                                    );
+                                } else {
+                                    let rail_w = 224.0;
+                                    let content_w = (modal_w - rail_w - 1.0).max(200.0);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(rail_w, body_h),
+                                            egui::Layout::top_down(egui::Align::Min),
+                                            |ui| {
+                                                render_left_rail(
+                                                    ui,
+                                                    &palette,
+                                                    &t,
+                                                    settings_tab,
+                                                    &mut search_query,
+                                                    &mut reset_done,
+                                                    settings,
+                                                    body_h,
+                                                );
+                                            },
+                                        );
+                                        let sep_rect = ui.allocate_space(Vec2::new(1.0, body_h)).1;
+                                        ui.painter().vline(
+                                            sep_rect.center().x,
+                                            sep_rect.min.y..=sep_rect.max.y,
+                                            Stroke::new(1.0, palette.border_subtle),
+                                        );
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(content_w, body_h),
+                                            egui::Layout::top_down(egui::Align::Min),
+                                            |ui| {
+                                                ui.set_min_size(Vec2::new(content_w, body_h));
+                                                render_scrollable_content(
+                                                    ui,
+                                                    ctx,
+                                                    &palette,
+                                                    &t,
+                                                    settings_tab,
+                                                    &search_query,
+                                                    reset_done,
+                                                    settings,
+                                                    library,
+                                                    library_dirty,
+                                                    font_size,
+                                                    theme,
+                                                    keep_screen_on,
+                                                    is_autoscrolling,
+                                                    ambient,
+                                                    tts,
+                                                    dictionary,
+                                                    updater,
+                                                    pro,
+                                                    &mut actions,
+                                                );
+                                            },
+                                        );
+                                    });
+                                }
+                            },
+                        );
+
+                        render_modal_footer(
+                            ui,
+                            &palette,
+                            &t,
+                            modal_w,
+                            footer_h,
+                            &mut actions.close,
+                        );
+                    });
+            });
+
+        ctx.data_mut(|d| {
+            d.insert_temp(search_id, search_query);
+            d.insert_temp(reset_confirm_id, reset_confirm);
+            d.insert_temp(reset_done_id, reset_done);
         });
+
+        actions
     }
 }
 
-fn select_font(
-    settings: &mut AppSettings,
+#[allow(clippy::too_many_arguments)]
+fn render_scrollable_content(
+    ui: &mut egui::Ui,
     ctx: &egui::Context,
-    font_id: &str,
-    on_save_settings: &mut bool,
+    p: &SettingsPalette,
+    t: &Translations,
+    settings_tab: &SettingsTab,
+    search_query: &str,
+    reset_done: bool,
+    settings: &mut AppSettings,
+    library: &mut LibraryStore,
+    library_dirty: &mut bool,
+    font_size: &mut f32,
+    theme: &mut ReaderTheme,
+    keep_screen_on: &mut bool,
+    is_autoscrolling: &mut bool,
+    ambient: &mut AmbientController,
+    tts: &mut TtsController,
+    dictionary: &DictionaryState,
+    updater: &crate::updater::UpdateChecker,
     pro: &mut ProUpgradeState,
+    actions: &mut SettingsActions,
 ) {
-    if font_id == OPEN_DYSLEXIC_FONT && !settings.can_use(ProFeature::FocusTools) {
-        pro.request(ProFeature::FocusTools);
-        return;
+    let pad = if ui.available_width() >= 560.0 {
+        20
+    } else {
+        12
+    };
+    egui::Frame::new()
+        .fill(p.modal_bg)
+        .inner_margin(Margin::symmetric(pad, 16))
+        .show(ui, |ui| {
+            ScrollArea::vertical()
+                .id_salt((
+                    "settings_content_scroll",
+                    *settings_tab,
+                    !search_query.trim().is_empty(),
+                ))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing = Vec2::new(12.0, 4.0);
+
+                    if let Some(err) = AppSettings::last_save_error() {
+                        ui.add(
+                            IconLabel::new(
+                                Icon::Warning,
+                                &t.save_settings_error.replace("{}", &err),
+                            )
+                            .color(p.error)
+                            .strong(),
+                        );
+                        ui.add_space(8.0);
+                    } else if let Some(err) = AppSettings::last_secret_error() {
+                        ui.add(
+                            IconLabel::new(
+                                Icon::Warning,
+                                &t.secrets_storage_error.replace("{}", &err),
+                            )
+                            .color(p.error)
+                            .strong(),
+                        );
+                        ui.add_space(8.0);
+                    }
+
+                    if reset_done {
+                        ui.add(
+                            IconLabel::new(Icon::Check, t.extra.settings_reset_done)
+                                .size(12.5)
+                                .color(p.tertiary)
+                                .strong(),
+                        );
+                        ui.add_space(8.0);
+                    }
+
+                    if !search_query.trim().is_empty() {
+                        let matches = matching_sections(search_query, t);
+                        if matches.is_empty() {
+                            ui.add_space(48.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new(t.extra.settings_search_empty)
+                                        .size(14.0)
+                                        .color(p.text_variant),
+                                );
+                            });
+                        } else {
+                            for (idx, sec) in matches.into_iter().enumerate() {
+                                if idx > 0 {
+                                    ui.add_space(14.0);
+                                }
+                                render_section_by_id(
+                                    sec,
+                                    ui,
+                                    ctx,
+                                    p,
+                                    t,
+                                    settings,
+                                    library,
+                                    library_dirty,
+                                    font_size,
+                                    theme,
+                                    keep_screen_on,
+                                    is_autoscrolling,
+                                    ambient,
+                                    tts,
+                                    dictionary,
+                                    updater,
+                                    pro,
+                                    actions,
+                                );
+                            }
+                        }
+                    } else {
+                        match settings_tab {
+                            SettingsTab::Appearance => appearance::render_appearance_tab(
+                                ui,
+                                p,
+                                t,
+                                theme,
+                                library,
+                                library_dirty,
+                                settings,
+                                &mut actions.save_settings,
+                            ),
+                            SettingsTab::Fonts => typography::render_typography_tab(
+                                ui,
+                                ctx,
+                                p,
+                                t,
+                                theme,
+                                settings,
+                                font_size,
+                                &mut actions.save_settings,
+                                pro,
+                            ),
+                            SettingsTab::Reading => reading::render_reading_tab(
+                                ui,
+                                p,
+                                t,
+                                settings,
+                                keep_screen_on,
+                                is_autoscrolling,
+                                &mut actions.toggle_autoscroll,
+                                &mut actions.save_settings,
+                                pro,
+                            ),
+                            SettingsTab::AmbienceSpeech => audio_dict::render_ambience_tts_tab(
+                                ui,
+                                p,
+                                t,
+                                settings,
+                                ambient,
+                                tts,
+                                &mut actions.save_settings,
+                                &mut actions.open_ambient,
+                                &mut actions.open_tts,
+                                pro,
+                            ),
+                            SettingsTab::DictionariesTranslation => {
+                                audio_dict::render_dict_translate_tab(
+                                    ui,
+                                    p,
+                                    t,
+                                    settings,
+                                    dictionary,
+                                    &mut actions.save_settings,
+                                    &mut actions.open_dictionary,
+                                    &mut actions.open_vocabulary,
+                                    pro,
+                                )
+                            }
+                            SettingsTab::System => render_system_tab(
+                                ui,
+                                p,
+                                settings,
+                                &mut actions.register_association,
+                                &mut actions.save_settings,
+                                &mut actions.reload_text_encoding,
+                                updater,
+                            ),
+                            SettingsTab::About => {
+                                render_about_tab(ui, p, settings, pro, &mut actions.save_settings)
+                            }
+                        }
+                    }
+
+                    ui.add_space(16.0);
+                });
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_section_by_id(
+    section: SettingsSectionId,
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    p: &SettingsPalette,
+    t: &Translations,
+    settings: &mut AppSettings,
+    library: &mut LibraryStore,
+    library_dirty: &mut bool,
+    font_size: &mut f32,
+    theme: &mut ReaderTheme,
+    keep_screen_on: &mut bool,
+    is_autoscrolling: &mut bool,
+    ambient: &mut AmbientController,
+    tts: &mut TtsController,
+    dictionary: &DictionaryState,
+    updater: &crate::updater::UpdateChecker,
+    pro: &mut ProUpgradeState,
+    actions: &mut SettingsActions,
+) {
+    match section {
+        SettingsSectionId::ThemeAndDisplay => appearance::render_theme_and_display_section(
+            ui,
+            p,
+            t,
+            theme,
+            library,
+            library_dirty,
+            settings,
+            &mut actions.save_settings,
+        ),
+        SettingsSectionId::Language => {
+            appearance::render_language_section(ui, p, t, settings, &mut actions.save_settings)
+        }
+        SettingsSectionId::Typography => typography::render_typography_section(
+            ui,
+            ctx,
+            p,
+            t,
+            theme,
+            settings,
+            font_size,
+            &mut actions.save_settings,
+            pro,
+        ),
+        SettingsSectionId::FocusTools => {
+            reading::render_focus_tools_section(ui, p, t, settings, &mut actions.save_settings, pro)
+        }
+        SettingsSectionId::NavigationDisplay => reading::render_navigation_display_section(
+            ui,
+            p,
+            t,
+            settings,
+            keep_screen_on,
+            &mut actions.save_settings,
+        ),
+        SettingsSectionId::AutoScroll => reading::render_autoscroll_section(
+            ui,
+            p,
+            t,
+            settings,
+            is_autoscrolling,
+            &mut actions.toggle_autoscroll,
+            &mut actions.save_settings,
+        ),
+        SettingsSectionId::ComicsAndPdf => reading::render_comics_and_pdf_section(
+            ui,
+            p,
+            t,
+            settings,
+            &mut actions.save_settings,
+            pro,
+        ),
+        SettingsSectionId::Hotkeys => reading::render_hotkeys_section(ui, p, t),
+        SettingsSectionId::Ambience => audio_dict::render_ambient_section(
+            ui,
+            p,
+            t,
+            settings,
+            ambient,
+            &mut actions.save_settings,
+            &mut actions.open_ambient,
+            pro,
+        ),
+        SettingsSectionId::TextToSpeech => audio_dict::render_tts_section(
+            ui,
+            p,
+            t,
+            settings,
+            tts,
+            &mut actions.save_settings,
+            &mut actions.open_tts,
+            pro,
+        ),
+        SettingsSectionId::Translation => audio_dict::render_translation_section(
+            ui,
+            p,
+            t,
+            settings,
+            &mut actions.save_settings,
+            pro,
+        ),
+        SettingsSectionId::DictionariesVocab => audio_dict::render_dictionary_vocab_section(
+            ui,
+            p,
+            t,
+            settings,
+            dictionary,
+            &mut actions.open_dictionary,
+            &mut actions.open_vocabulary,
+        ),
+        SettingsSectionId::Encoding => render_encoding_section(
+            ui,
+            p,
+            t,
+            settings,
+            &mut actions.save_settings,
+            &mut actions.reload_text_encoding,
+        ),
+        SettingsSectionId::LibraryPin => {
+            render_library_pin_section(ui, p, t, settings, &mut actions.save_settings)
+        }
+        SettingsSectionId::Updates => {
+            render_updates_section(ui, p, t, settings, &mut actions.save_settings, updater)
+        }
+        SettingsSectionId::FileAssociations => render_associations_section(
+            ui,
+            p,
+            t,
+            settings,
+            &mut actions.register_association,
+            &mut actions.save_settings,
+        ),
+        SettingsSectionId::Storage => render_storage_section(ui, p, t, &mut actions.save_settings),
+        SettingsSectionId::ProUpgrade => {
+            render_pro_section(ui, p, t, settings, pro, &mut actions.save_settings)
+        }
+        SettingsSectionId::AboutVersion => render_version_and_licenses_section(ui, p, t),
     }
-    settings.font_family = font_id.to_string();
-    let effective_font_family = settings.effective_font_family();
-    apply_font_family(ctx, &effective_font_family);
-    *on_save_settings = true;
 }

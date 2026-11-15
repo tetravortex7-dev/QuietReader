@@ -93,6 +93,11 @@ impl ReaderTheme {
         visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
         visuals.widgets.open.bg_stroke = egui::Stroke::NONE;
         visuals.selection.stroke = egui::Stroke::new(1.0, self.accent_color());
+        visuals.selection.bg_fill = if self.is_dark() {
+            self.accent_color().gamma_multiply(0.30)
+        } else {
+            self.accent_color().gamma_multiply(0.20)
+        };
 
         match self {
             ReaderTheme::Oled => {
@@ -209,6 +214,15 @@ pub fn bookmark_highlight_color(color: BookmarkColor, is_dark: bool) -> Color32 
     }
 }
 
+pub fn contrast_fg(bg: Color32) -> Color32 {
+    let lum = 0.2126 * bg.r() as f32 + 0.7152 * bg.g() as f32 + 0.0722 * bg.b() as f32;
+    if lum > 165.0 {
+        Color32::from_rgb(24, 20, 18)
+    } else {
+        Color32::WHITE
+    }
+}
+
 pub struct CozyPalette;
 
 #[allow(dead_code)]
@@ -223,10 +237,16 @@ impl CozyPalette {
     pub const ON_SURFACE_VARIANT: Color32 = Color32::from_rgb(85, 67, 62);
     pub const PRIMARY: Color32 = Color32::from_rgb(148, 69, 44);
     pub const PRIMARY_CONTAINER: Color32 = Color32::from_rgb(179, 92, 65);
+    pub const PRIMARY_FIXED: Color32 = Color32::from_rgb(255, 219, 208);
     pub const ON_PRIMARY: Color32 = Color32::from_rgb(255, 255, 255);
     pub const SECONDARY: Color32 = Color32::from_rgb(126, 87, 0);
     pub const SECONDARY_CONTAINER: Color32 = Color32::from_rgb(253, 190, 80);
+    pub const SECONDARY_FIXED: Color32 = Color32::from_rgb(255, 222, 173);
+    pub const ON_SECONDARY_FIXED: Color32 = Color32::from_rgb(40, 25, 0);
     pub const TERTIARY: Color32 = Color32::from_rgb(80, 96, 81);
     pub const TERTIARY_CONTAINER: Color32 = Color32::from_rgb(104, 121, 105);
+    pub const TERTIARY_FIXED: Color32 = Color32::from_rgb(213, 231, 213);
+    pub const ERROR: Color32 = Color32::from_rgb(186, 26, 26);
+    pub const ERROR_CONTAINER: Color32 = Color32::from_rgb(255, 218, 214);
     pub const OUTLINE: Color32 = Color32::from_rgb(219, 193, 186);
 }

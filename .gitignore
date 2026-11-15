@@ -57,3 +57,6 @@ $RECYCLE.BIN/
 *.swo
 *~
 *.bak
+
+# Local developer signing keys (never commit)
+.keys/

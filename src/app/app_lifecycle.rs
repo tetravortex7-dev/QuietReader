@@ -32,7 +32,13 @@ impl Default for QuietReaderApp {
 impl Drop for QuietReaderApp {
     fn drop(&mut self) {
         crate::platform::set_keep_screen_on(false);
-        self.flush_settings_now();
+        #[cfg(feature = "enable_tests")]
+        let skip_flush = super::test_capture::is_active();
+        #[cfg(not(feature = "enable_tests"))]
+        let skip_flush = false;
+        if !skip_flush {
+            self.flush_settings_now();
+        }
     }
 }
 
@@ -134,7 +140,7 @@ impl QuietReaderApp {
             dont_show_association_again: false,
             show_recent_dialog: false,
             show_settings_dialog: false,
-            settings_tab: SettingsTab::Fonts,
+            settings_tab: SettingsTab::Appearance,
             autoscroll: AutoscrollController::default(),
             focus_read: FocusReadState::default(),
             comic_view: ComicViewState::default(),
@@ -262,6 +268,10 @@ impl QuietReaderApp {
     }
 
     pub fn flush_settings_now(&mut self) {
+        #[cfg(feature = "enable_tests")]
+        if super::test_capture::is_active() {
+            return;
+        }
         self.save_active_to_tab();
         self.sync_settings_fields();
         let settings_result = self.settings.save();
@@ -279,6 +289,11 @@ impl QuietReaderApp {
     }
 
     pub fn save_library_now(&mut self) {
+        #[cfg(feature = "enable_tests")]
+        if super::test_capture::is_active() {
+            self.library_dirty = false;
+            return;
+        }
         match self.library.save_to_path(&self.library_path) {
             Ok(()) => {
                 self.library_dirty = false;
@@ -567,6 +582,14 @@ impl QuietReaderApp {
             tab.is_loading = true;
             tab.request_id = request_id;
             tab.load_error = None;
+        }
+    }
+
+    pub fn set_ui_design(&mut self, design: crate::core::library::UiDesignMode) {
+        if self.library.design != design {
+            self.library.design = design;
+            self.library_dirty = true;
+            self.mark_settings_dirty();
         }
     }
 

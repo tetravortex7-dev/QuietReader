@@ -909,6 +909,46 @@ mod platform_fonts {
     }
 }
 
+pub fn local_hour() -> u32 {
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        struct SystemTime {
+            w_year: u16,
+            w_month: u16,
+            w_day_of_week: u16,
+            w_day: u16,
+            w_hour: u16,
+            w_minute: u16,
+            w_second: u16,
+            w_milliseconds: u16,
+        }
+
+        unsafe extern "system" {
+            fn GetLocalTime(lpSystemTime: *mut SystemTime);
+        }
+
+        let mut st = SystemTime {
+            w_year: 0,
+            w_month: 0,
+            w_day_of_week: 0,
+            w_day: 0,
+            w_hour: 0,
+            w_minute: 0,
+            w_second: 0,
+            w_milliseconds: 0,
+        };
+        unsafe {
+            GetLocalTime(&mut st);
+        }
+        return (st.w_hour as u32).min(23);
+    }
+    #[cfg(not(windows))]
+    {
+        ((crate::core::license::unix_now() % 86400) / 3600) as u32
+    }
+}
+
 pub fn detect_system_ui_language() -> Option<String> {
     #[cfg(windows)]
     {

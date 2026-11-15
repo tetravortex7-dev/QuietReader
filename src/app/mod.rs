@@ -21,13 +21,15 @@ pub mod license_view;
 pub mod localized_document;
 pub mod onboarding;
 pub mod opds_covers;
-pub mod opds_sidebar;
 pub mod opds_view;
+mod top_bar_opds;
 pub mod paged_common;
 mod pdf_page;
 pub mod pdf_toolbar;
 pub mod pdf_view;
 mod post_central;
+pub mod reader_bottom_bar;
+pub mod reader_chrome;
 pub mod reading_stats;
 pub mod scan_processor;
 pub mod search_view;
@@ -36,6 +38,8 @@ pub mod settings_about;
 pub mod settings_system;
 pub mod settings_view;
 pub mod tabs;
+#[cfg(feature = "enable_tests")]
+mod test_capture;
 pub mod text_images;
 pub mod text_view;
 pub mod theme;
@@ -44,9 +48,9 @@ mod top_bar_actions;
 pub mod translate;
 pub mod tts;
 
-use crate::core::ReaderCore;
 use crate::core::library::{LibraryStore, UiDesignMode};
 use crate::core::license::ProFeature;
+use crate::core::{Command, ReaderCore};
 use crate::document::{Document, DocumentViewKind};
 use crate::settings::AppSettings;
 use eframe::egui::{self, RichText};
@@ -219,8 +223,16 @@ impl eframe::App for QuietReaderApp {
             vp.close_requested()
         });
         if close_requested {
-            self.flush_settings_now();
+            #[cfg(feature = "enable_tests")]
+            let skip_flush = self::test_capture::is_active();
+            #[cfg(not(feature = "enable_tests"))]
+            let skip_flush = false;
+            if !skip_flush {
+                self.flush_settings_now();
+            }
         }
+        #[cfg(feature = "enable_tests")]
+        self::test_capture::step(self, &ctx);
 
         for dropped in ctx.input(|i| i.raw.dropped_files.clone()) {
             let path = dropped.path();
@@ -281,7 +293,18 @@ impl eframe::App for QuietReaderApp {
         let commands = poll_keyboard_commands(&ctx, is_manga);
 
         for cmd in &commands {
-            if self.show_library
+            if self.show_settings_dialog {
+                let allowed_in_settings = match cmd {
+                    crate::core::Command::ToggleSettings
+                    | crate::core::Command::ToggleSearch
+                    | crate::core::Command::ToggleFullscreen => true,
+                    crate::core::Command::ExitFullscreen => self.pro_upgrade.is_open,
+                    _ => false,
+                };
+                if !allowed_in_settings {
+                    continue;
+                }
+            } else if self.show_library
                 && !matches!(
                     cmd,
                     crate::core::Command::ToggleSettings
@@ -294,7 +317,7 @@ impl eframe::App for QuietReaderApp {
             self.execute_command(&ctx, cmd, view_kind);
         }
 
-        if !self.show_library {
+        if !self.show_library && !self.show_settings_dialog {
             self.handle_trackpad_swipe(&ctx, view_kind, is_manga);
             match view_kind {
                 DocumentViewKind::Text => {
@@ -304,17 +327,31 @@ impl eframe::App for QuietReaderApp {
                             doc.as_ref(),
                             self.current_chapter,
                         );
-                        self.autoscroll.update(
-                            &ctx,
-                            &self.settings.auto_scroll,
-                            self.current_scroll_y,
-                            self.max_scroll_y,
-                            total_chapters,
-                            &mut self.current_chapter,
-                            &mut self.pending_scroll_y,
-                            &mut self.last_rendered_chapter,
-                            next_non_empty,
-                        );
+                        if self.settings.text_two_columns {
+                            let has_more = self.current_scroll_y + 2.0 < self.max_scroll_y
+                                || next_non_empty.is_some();
+                            let (virt_cur, virt_total) = if has_more { (0, 2) } else { (1, 1) };
+                            if self.autoscroll.update_paged(
+                                &ctx,
+                                &self.settings.auto_scroll,
+                                virt_cur,
+                                virt_total,
+                            ) {
+                                self.execute_command(&ctx, &Command::NextPage, view_kind);
+                            }
+                        } else {
+                            self.autoscroll.update(
+                                &ctx,
+                                &self.settings.auto_scroll,
+                                self.current_scroll_y,
+                                self.max_scroll_y,
+                                total_chapters,
+                                &mut self.current_chapter,
+                                &mut self.pending_scroll_y,
+                                &mut self.last_rendered_chapter,
+                                next_non_empty,
+                            );
+                        }
                     }
                 }
                 DocumentViewKind::Pdf => {
@@ -399,63 +436,41 @@ impl eframe::App for QuietReaderApp {
             ctx.request_repaint();
         }
 
-        let (status_text, status_opacity) = if let Some(ref msg) = self.status_message {
+        let status_opacity = if self.status_message.is_some() {
             if let Some(time) = self.status_time {
                 let elapsed = time.elapsed().as_secs_f32();
                 if elapsed >= 5.0 {
                     self.status_message = None;
                     self.status_time = None;
                     self.last_status_text = None;
-                    (None, 0.0)
+                    0.0
+                } else if elapsed < 3.5 {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                    1.0
                 } else {
-                    let opacity = if elapsed < 3.5 {
-                        ctx.request_repaint_after(std::time::Duration::from_millis(50));
-                        1.0
-                    } else {
-                        ctx.request_repaint();
-                        ((5.0 - elapsed) / 1.5).clamp(0.0, 1.0)
-                    };
-                    (Some(msg.as_str()), opacity)
+                    ctx.request_repaint();
+                    ((5.0 - elapsed) / 1.5).clamp(0.0, 1.0)
                 }
             } else {
-                (Some(msg.as_str()), 1.0)
+                1.0
             }
         } else {
-            (None, 0.0)
+            0.0
         };
 
-        let hide_bottom_bar = self.show_library && self.library.design == UiDesignMode::Cozy;
-        if !hide_bottom_bar && (!self.show_library || status_text.is_some()) {
-            let text_pages_override = if self.settings.text_paged_scroll
-                && view_kind == DocumentViewKind::Text
-                && self.viewport_height > 1.0
-                && self.max_scroll_y > 0.0
-            {
-                let total = ((self.max_scroll_y + self.viewport_height) / self.viewport_height)
-                    .ceil()
-                    .max(1.0) as usize;
-                let current = ((self.current_scroll_y / self.viewport_height).round() as usize + 1)
-                    .min(total);
-                Some((current, total))
-            } else {
-                None
-            };
-            render_bottom_bar(
-                ui,
-                &self.document,
-                &self.theme,
-                status_text,
-                status_opacity,
-                view_kind,
-                pdf_info,
-                comic_info,
-                text_info,
-                text_pages_override,
-                self.settings.ui_language,
-            );
-        }
+        reader_bottom_bar::render_active_app_bottom_bar(
+            self,
+            ui,
+            &ctx,
+            status_opacity,
+            view_kind,
+            pdf_info,
+            comic_info,
+            text_info,
+        );
 
-        if (!self.is_fullscreen || self.show_toc) && !self.show_library {
+        let is_cozy_opds = self.show_opds_dialog && self.library.design == UiDesignMode::Cozy;
+        if (!self.is_fullscreen || self.show_toc) && !self.show_library && !is_cozy_opds {
             let prev_pdf_page = self.pdf_view.current_page;
             let prev_comic_page = self.comic_view.current_page;
             let current_page_ref = match view_kind {
@@ -503,7 +518,6 @@ impl eframe::App for QuietReaderApp {
         let mut toggle_autoscroll_action = false;
         let mut save_settings_action = false;
         let mut register_assoc_action = false;
-        let mut reload_text_action = false;
         let mut close_tab_action = false;
         let mut library_actions = LibraryActions::default();
 
@@ -513,12 +527,23 @@ impl eframe::App for QuietReaderApp {
             .map(|t| (t.is_loading, t.title.clone(), t.load_error.clone()));
 
         let is_cozy_lib = self.show_library && self.library.design == UiDesignMode::Cozy;
-        let panel_fill = if is_cozy_lib && !self.theme.is_dark() {
+        let is_cozy_book = !self.show_library
+            && !is_cozy_opds
+            && self.library.design == UiDesignMode::Cozy
+            && self.library_unlocked
+            && self.document.is_some()
+            && view_kind == DocumentViewKind::Text
+            && !self.focus_read.rsvp.active
+            && !self.settings.text_paragraph_mode;
+        let panel_fill = if is_cozy_book {
+            reader_chrome::ReaderSurfaceColors::for_theme(&self.theme, self.library.design)
+                .outer_canvas_bg
+        } else if (is_cozy_lib || is_cozy_opds) && !self.theme.is_dark() {
             crate::app::theme::CozyPalette::CANVAS
         } else {
             self.theme.bg_color()
         };
-        let panel_margin = if is_cozy_lib {
+        let content_margin = if is_cozy_lib || is_cozy_book || is_cozy_opds {
             egui::Margin::ZERO
         } else {
             egui::Margin::same(16)
@@ -528,294 +553,401 @@ impl eframe::App for QuietReaderApp {
             .frame(
                 egui::Frame::default()
                     .fill(panel_fill)
-                    .inner_margin(panel_margin),
+                    .inner_margin(egui::Margin::ZERO),
             )
             .show(ui, |ui| {
+                let central_bounds = ui.max_rect();
                 if self.show_library && !self.library_unlocked {
-                    LibraryLockView::render(
-                        ui,
-                        &self.theme,
-                        self.settings.ui_language,
-                        &mut self.library_unlocked,
-                        &self.settings,
-                        &mut self.library_pin_draft,
-                        &mut self.library_pin_error,
-                    );
-                } else if self.show_settings_dialog {
-                    let mut is_autoscrolling_flag = self.autoscroll.is_active();
-                    SettingsView::render(
-                        ui,
-                        &ctx,
-                        &mut self.show_settings_dialog,
-                        &mut self.settings_tab,
-                        &mut self.settings,
-                        &mut self.font_size,
-                        &mut self.theme,
-                        &mut self.keep_screen_on,
-                        &mut is_autoscrolling_flag,
-                        &mut toggle_autoscroll_action,
-                        &mut save_settings_action,
-                        &mut register_assoc_action,
-                        &mut reload_text_action,
-                        &self.updater,
-                        &mut self.pro_upgrade,
-                    );
-                    if reload_text_action {
-                        self.reload_current_text_encoding();
-                    }
-                } else if self.show_library || (self.document.is_none() && self.tabs.is_empty()) {
-                    let settings = &self.settings;
-                    let theme = &self.theme;
-                    self.library_view.render(
-                        ui,
-                        settings,
-                        &mut self.library,
-                        theme,
-                        settings.ui_language,
-                        &mut library_actions,
-                    );
-                } else if let Some((true, title, _)) = active_tab_info {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(ui.available_height() * 0.35);
-                        ui.spinner();
-                        let t = self.settings.ui_language.t();
-                        ui.add_space(16.0);
-                        ui.label(
-                            RichText::new(t.loading_doc.replace("{}", &title))
-                                .size(18.0)
-                                .color(self.theme.text_color()),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(t.please_wait)
-                                .size(13.0)
-                                .color(self.theme.secondary_text_color()),
-                        );
-                    });
-                } else if let Some((false, _, Some(err))) = active_tab_info {
-                    let t = self.settings.ui_language.t();
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(ui.available_height() * 0.35);
-                        ui.add(
-                            self::icons::IconLabel::new(
-                                self::icons::Icon::Warning,
-                                t.failed_open_doc,
-                            )
-                            .size(20.0)
-                            .color(egui::Color32::RED)
-                            .strong(),
-                        );
-                        ui.add_space(12.0);
-                        ui.label(RichText::new(err).size(14.0).color(self.theme.text_color()));
-                        ui.add_space(16.0);
-                        if ui.button(t.close_tab).clicked() {
-                            close_tab_action = true;
-                        }
-                    });
+                    egui::Frame::default()
+                        .inner_margin(content_margin)
+                        .show(ui, |ui| {
+                            LibraryLockView::render(
+                                ui,
+                                &self.theme,
+                                self.settings.ui_language,
+                                &mut self.library_unlocked,
+                                &self.settings,
+                                &mut self.library_pin_draft,
+                                &mut self.library_pin_error,
+                            );
+                        });
                 } else {
-                    if self.document.is_some()
-                        && !self.show_library
-                        && (view_kind == DocumentViewKind::Text
-                            || (view_kind == DocumentViewKind::Comic
-                                && self.settings.comic.reading_mode == "Webtoon"))
-                        && !self.show_recent_dialog
-                        && !self.show_association_dialog
-                    {
-                        self.autoscroll.handle_middle_click_scroll(
-                            &ctx,
-                            self.show_toc,
-                            self.current_scroll_y,
-                            self.max_scroll_y,
-                            &mut self.pending_scroll_y,
-                        );
-                    }
+                    ui.add_enabled_ui(!self.show_settings_dialog, |ui| {
+                        egui::Frame::default()
+                            .inner_margin(content_margin)
+                            .show(ui, |ui| {
+                                if is_cozy_opds {
+                                    if let Some(path) = self.opds_state.render_embedded(
+                                        ui.ctx(),
+                                        ui,
+                                        &mut self.settings,
+                                        &self.theme,
+                                        self.library.design,
+                                        &mut pro_required,
+                                    ) {
+                                        on_load_recent = Some(path);
+                                        self.show_opds_dialog = false;
+                                        self.show_library = false;
+                                    }
+                                } else if self.show_library
+                                    || (self.document.is_none() && self.tabs.is_empty())
+                                {
+                                    let settings = &self.settings;
+                                    let theme = &self.theme;
+                                    self.library_view.render(
+                                        ui,
+                                        settings,
+                                        &mut self.library,
+                                        theme,
+                                        settings.ui_language,
+                                        &mut library_actions,
+                                    );
+                                } else if let Some((true, title, _)) = active_tab_info {
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(ui.available_height() * 0.35);
+                                        ui.spinner();
+                                        let t = self.settings.ui_language.t();
+                                        ui.add_space(16.0);
+                                        ui.label(
+                                            RichText::new(t.loading_doc.replace("{}", &title))
+                                                .size(18.0)
+                                                .color(self.theme.text_color()),
+                                        );
+                                        ui.add_space(8.0);
+                                        ui.label(
+                                            RichText::new(t.please_wait)
+                                                .size(13.0)
+                                                .color(self.theme.secondary_text_color()),
+                                        );
+                                    });
+                                } else if let Some((false, _, Some(err))) = active_tab_info {
+                                    let t = self.settings.ui_language.t();
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(ui.available_height() * 0.35);
+                                        ui.add(
+                                            self::icons::IconLabel::new(
+                                                self::icons::Icon::Warning,
+                                                t.failed_open_doc,
+                                            )
+                                            .size(20.0)
+                                            .color(egui::Color32::RED)
+                                            .strong(),
+                                        );
+                                        ui.add_space(12.0);
+                                        ui.label(
+                                            RichText::new(err)
+                                                .size(14.0)
+                                                .color(self.theme.text_color()),
+                                        );
+                                        ui.add_space(16.0);
+                                        if ui.button(t.close_tab).clicked() {
+                                            close_tab_action = true;
+                                        }
+                                    });
+                                } else {
+                                    if self.document.is_some()
+                                        && !self.show_library
+                                        && !self.show_settings_dialog
+                                        && (view_kind == DocumentViewKind::Text
+                                            || (view_kind == DocumentViewKind::Comic
+                                                && self.settings.comic.reading_mode == "Webtoon"))
+                                        && !self.show_recent_dialog
+                                        && !self.show_association_dialog
+                                    {
+                                        self.autoscroll.handle_middle_click_scroll(
+                                            &ctx,
+                                            self.show_toc,
+                                            self.current_scroll_y,
+                                            self.max_scroll_y,
+                                            &mut self.pending_scroll_y,
+                                        );
+                                    }
 
-                    let mut on_translate = None;
-                    let mut on_dictionary = None;
-                    let mut on_wikipedia = None;
+                                    let mut on_translate = None;
+                                    let mut on_dictionary = None;
+                                    let mut on_wikipedia = None;
 
-                    match view_kind {
-                        DocumentViewKind::Pdf => {
-                            let smart_scan_allowed =
-                                self.settings.can_use(ProFeature::SmartScanProcessing);
-                            let highlight_query = if self.search.is_open
-                                && self
-                                    .document
-                                    .as_ref()
-                                    .is_some_and(|d| d.supports_search_highlight())
-                            {
-                                Some(self.search.query.clone())
-                            } else {
-                                None
-                            };
-                            self.pdf_view.render(
-                                ui,
-                                &ctx,
-                                &self.document,
-                                &mut self.settings.pdf,
-                                &self.theme,
-                                &mut self.pending_scroll_y,
-                                &mut self.current_scroll_y,
-                                &mut self.viewport_height,
-                                &mut self.max_scroll_y,
-                                &mut self.status_message,
-                                self.settings.ui_language,
-                                highlight_query.as_deref(),
-                                &mut on_translate,
-                                &mut on_dictionary,
-                                smart_scan_allowed,
-                                &mut pro_required,
-                            );
-                        }
-                        DocumentViewKind::Comic => {
-                            let smart_scan_allowed =
-                                self.settings.can_use(ProFeature::SmartScanProcessing);
-                            self.comic_view.render(
-                                ui,
-                                &ctx,
-                                &self.document,
-                                &mut self.settings.comic,
-                                &self.theme,
-                                &mut self.pending_scroll_y,
-                                &mut self.current_scroll_y,
-                                &mut self.viewport_height,
-                                &mut self.max_scroll_y,
-                                &mut self.status_message,
-                                self.settings.ui_language,
-                                smart_scan_allowed,
-                                &mut pro_required,
-                            );
-                        }
-                        DocumentViewKind::Text => {
-                            let tts_st = self.tts.status();
-                            if tts_st.is_playing && !tts_st.is_paused {
-                                ctx.request_repaint_after(Duration::from_millis(50));
-                                if self.current_chapter != tts_st.current_chapter {
-                                    self.current_chapter = tts_st.current_chapter;
-                                    self.last_rendered_chapter = tts_st.current_chapter;
-                                }
-                                if self.last_tts_paragraph != Some(tts_st.current_paragraph) {
-                                    if let Some(doc) = &self.document {
-                                        let scroll_y =
+                                    match view_kind {
+                                        DocumentViewKind::Pdf => {
+                                            let smart_scan_allowed = self
+                                                .settings
+                                                .can_use(ProFeature::SmartScanProcessing);
+                                            let highlight_query = if self.search.is_open
+                                                && self
+                                                    .document
+                                                    .as_ref()
+                                                    .is_some_and(|d| d.supports_search_highlight())
+                                            {
+                                                Some(self.search.query.clone())
+                                            } else {
+                                                None
+                                            };
+                                            self.pdf_view.render(
+                                                ui,
+                                                &ctx,
+                                                &self.document,
+                                                &mut self.settings.pdf,
+                                                &self.theme,
+                                                &mut self.pending_scroll_y,
+                                                &mut self.current_scroll_y,
+                                                &mut self.viewport_height,
+                                                &mut self.max_scroll_y,
+                                                &mut self.status_message,
+                                                self.settings.ui_language,
+                                                highlight_query.as_deref(),
+                                                &mut on_translate,
+                                                &mut on_dictionary,
+                                                smart_scan_allowed,
+                                                &mut pro_required,
+                                            );
+                                        }
+                                        DocumentViewKind::Comic => {
+                                            let smart_scan_allowed = self
+                                                .settings
+                                                .can_use(ProFeature::SmartScanProcessing);
+                                            self.comic_view.render(
+                                                ui,
+                                                &ctx,
+                                                &self.document,
+                                                &mut self.settings.comic,
+                                                &self.theme,
+                                                &mut self.pending_scroll_y,
+                                                &mut self.current_scroll_y,
+                                                &mut self.viewport_height,
+                                                &mut self.max_scroll_y,
+                                                &mut self.status_message,
+                                                self.settings.ui_language,
+                                                smart_scan_allowed,
+                                                &mut pro_required,
+                                            );
+                                        }
+                                        DocumentViewKind::Text => {
+                                            let tts_st = self.tts.status();
+                                            if tts_st.is_playing && !tts_st.is_paused {
+                                                ctx.request_repaint_after(Duration::from_millis(
+                                                    50,
+                                                ));
+                                                if self.current_chapter != tts_st.current_chapter {
+                                                    self.current_chapter = tts_st.current_chapter;
+                                                    self.last_rendered_chapter =
+                                                        tts_st.current_chapter;
+                                                }
+                                                if self.last_tts_paragraph
+                                                    != Some(tts_st.current_paragraph)
+                                                {
+                                                    if let Some(doc) = &self.document {
+                                                        let scroll_y =
                                             crate::core::ReaderCore::estimate_paragraph_scroll_y(
                                                 doc.as_ref(),
                                                 tts_st.current_chapter,
                                                 Some(tts_st.current_paragraph),
                                                 self.font_size,
                                             );
-                                        self.pending_scroll_y = Some(scroll_y);
-                                    }
-                                    self.last_tts_paragraph = Some(tts_st.current_paragraph);
-                                }
-                            }
-                            if tts_st.needs_next_chapter {
-                                if let Some(doc) = &self.document {
-                                    let next_ch = tts_st.current_chapter + 1;
-                                    if let Some(text_content) = doc.text_content() {
-                                        if let Some(ch) = text_content.chapters().get(next_ch) {
-                                            self.current_chapter = next_ch;
-                                            self.last_rendered_chapter = next_ch;
-                                            self.pending_scroll_y = Some(0.0);
-                                            self.tts
-                                                .play_next_chapter(next_ch, ch.paragraphs.clone());
-                                        } else {
-                                            self.tts.stop();
+                                                        self.pending_scroll_y = Some(scroll_y);
+                                                    }
+                                                    self.last_tts_paragraph =
+                                                        Some(tts_st.current_paragraph);
+                                                }
+                                            }
+                                            if tts_st.needs_next_chapter {
+                                                if let Some(doc) = &self.document {
+                                                    let next_ch = tts_st.current_chapter + 1;
+                                                    if let Some(text_content) = doc.text_content() {
+                                                        if let Some(ch) =
+                                                            text_content.chapters().get(next_ch)
+                                                        {
+                                                            self.current_chapter = next_ch;
+                                                            self.last_rendered_chapter = next_ch;
+                                                            self.pending_scroll_y = Some(0.0);
+                                                            self.tts.play_next_chapter(
+                                                                next_ch,
+                                                                ch.paragraphs.clone(),
+                                                            );
+                                                        } else {
+                                                            self.tts.stop();
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            let search_highlight = if self.search.is_open
+                                                && !self.search.query.trim().is_empty()
+                                            {
+                                                let active_para = self
+                                                    .search
+                                                    .current_hit()
+                                                    .filter(|h| {
+                                                        h.chapter_index == self.current_chapter
+                                                    })
+                                                    .and_then(|h| h.paragraph_index);
+                                                Some((self.search.query.clone(), active_para))
+                                            } else {
+                                                None
+                                            };
+
+                                            let (tts_highlight, tts_word_range) = if (tts_st
+                                                .is_playing
+                                                || tts_st.is_paused)
+                                                && tts_st.current_chapter == self.current_chapter
+                                            {
+                                                (
+                                                    Some(tts_st.current_paragraph),
+                                                    tts_st.current_word_range,
+                                                )
+                                            } else {
+                                                (None, None)
+                                            };
+                                            let mut on_start_tts = None;
+                                            let mut on_open_opds = false;
+                                            let mut on_save_quote = None;
+
+                                            if !self.render_focus_reader(ui) {
+                                                let spread_chrome = if is_cozy_book {
+                                                    Some(reader_chrome::begin_cozy_spread_frame(
+                                                        ui,
+                                                        &self.theme,
+                                                        self.library.design,
+                                                        &self.settings,
+                                                    ))
+                                                } else {
+                                                    None
+                                                };
+                                                let (spread_rect, eff_two_cols) =
+                                                    if let Some((_, ref layout)) = spread_chrome {
+                                                        (
+                                                            Some(layout.content_rect),
+                                                            layout.effective_two_columns,
+                                                        )
+                                                    } else {
+                                                        let eff =
+                                                        reader_chrome::compute_studio_two_columns(
+                                                            ui.available_width(),
+                                                            self.settings.text_two_columns,
+                                                        );
+                                                        reader_chrome::set_effective_spread(
+                                                            &ctx, eff,
+                                                        );
+                                                        (None, eff)
+                                                    };
+                                                TextView::render(
+                                                    ui,
+                                                    &ctx,
+                                                    &self.document,
+                                                    &self.current_file_path,
+                                                    &mut self.current_chapter,
+                                                    &mut self.last_rendered_chapter,
+                                                    &mut self.pending_scroll_y,
+                                                    &mut self.current_scroll_y,
+                                                    &mut self.viewport_height,
+                                                    &mut self.max_scroll_y,
+                                                    self.font_size,
+                                                    &self.theme,
+                                                    self.library.design,
+                                                    spread_rect,
+                                                    eff_two_cols,
+                                                    &mut self.settings,
+                                                    &mut self.text_images,
+                                                    &mut on_open_file,
+                                                    &mut on_open_folder,
+                                                    &mut on_load_recent,
+                                                    search_highlight.as_ref().map(
+                                                        |(query, paragraph)| {
+                                                            (query.as_str(), *paragraph)
+                                                        },
+                                                    ),
+                                                    tts_highlight,
+                                                    tts_word_range,
+                                                    &mut on_start_tts,
+                                                    &mut on_open_opds,
+                                                    &mut on_translate,
+                                                    &mut on_dictionary,
+                                                    &mut on_wikipedia,
+                                                    &mut on_save_quote,
+                                                );
+                                                if let Some((ref colors, ref layout)) =
+                                                    spread_chrome
+                                                {
+                                                    let chrome_resp =
+                                                        reader_chrome::finish_cozy_spread_frame(
+                                                            ui,
+                                                            layout,
+                                                            colors,
+                                                            &self.document,
+                                                            self.current_file_path.as_deref(),
+                                                            &self.settings,
+                                                            self.current_chapter,
+                                                            self.current_scroll_y,
+                                                            self.max_scroll_y,
+                                                            self.viewport_height,
+                                                        );
+                                                    if chrome_resp.toggle_bookmark {
+                                                        self.execute_command(
+                                                            &ctx,
+                                                            &crate::core::Command::ToggleBookmark,
+                                                            view_kind,
+                                                        );
+                                                    }
+                                                    if let Some(cmd) = chrome_resp.nav_command {
+                                                        self.execute_command(&ctx, &cmd, view_kind);
+                                                    }
+                                                }
+                                            }
+
+                                            if let Some(text) = on_save_quote {
+                                                self.save_quote_bookmark(text);
+                                            }
+
+                                            if on_open_opds {
+                                                self.show_opds_dialog = true;
+                                            }
+
+                                            if let Some(para_idx) = on_start_tts {
+                                                self.start_tts_at_paragraph(para_idx);
+                                            }
                                         }
                                     }
+
+                                    if let Some(text) = on_translate {
+                                        if self.settings.can_use(ProFeature::Translation) {
+                                            let target_code =
+                                                self.settings.ui_language.resolve().code();
+                                            self.translate.translate(
+                                                text,
+                                                target_code,
+                                                self.settings.translation.provider,
+                                                &self.settings.translation.deepl_api_key,
+                                            );
+                                        } else {
+                                            pro_required = Some(ProFeature::Translation);
+                                        }
+                                    }
+                                    if let Some(word) = on_dictionary {
+                                        self.dictionary.open_word(
+                                            word,
+                                            self.settings.ui_language,
+                                            false,
+                                        );
+                                    }
+                                    if let Some(word) = on_wikipedia {
+                                        self.dictionary.open_word(
+                                            word,
+                                            self.settings.ui_language,
+                                            true,
+                                        );
+                                    }
                                 }
-                            }
+                            });
+                    });
 
-                            let search_highlight =
-                                if self.search.is_open && !self.search.query.trim().is_empty() {
-                                    let active_para = self
-                                        .search
-                                        .current_hit()
-                                        .filter(|h| h.chapter_index == self.current_chapter)
-                                        .and_then(|h| h.paragraph_index);
-                                    Some((self.search.query.clone(), active_para))
-                                } else {
-                                    None
-                                };
-
-                            let (tts_highlight, tts_word_range) = if (tts_st.is_playing
-                                || tts_st.is_paused)
-                                && tts_st.current_chapter == self.current_chapter
-                            {
-                                (Some(tts_st.current_paragraph), tts_st.current_word_range)
-                            } else {
-                                (None, None)
-                            };
-                            let mut on_start_tts = None;
-                            let mut on_open_opds = false;
-                            let mut on_save_quote = None;
-
-                            if !self.render_focus_reader(ui) {
-                                TextView::render(
-                                    ui,
-                                    &ctx,
-                                    &self.document,
-                                    &self.current_file_path,
-                                    &mut self.current_chapter,
-                                    &mut self.last_rendered_chapter,
-                                    &mut self.pending_scroll_y,
-                                    &mut self.current_scroll_y,
-                                    &mut self.viewport_height,
-                                    &mut self.max_scroll_y,
-                                    self.font_size,
-                                    &self.theme,
-                                    &mut self.settings,
-                                    &mut self.text_images,
-                                    &mut on_open_file,
-                                    &mut on_open_folder,
-                                    &mut on_load_recent,
-                                    search_highlight
-                                        .as_ref()
-                                        .map(|(query, paragraph)| (query.as_str(), *paragraph)),
-                                    tts_highlight,
-                                    tts_word_range,
-                                    &mut on_start_tts,
-                                    &mut on_open_opds,
-                                    &mut on_translate,
-                                    &mut on_dictionary,
-                                    &mut on_wikipedia,
-                                    &mut on_save_quote,
-                                );
-                            }
-
-                            if let Some(text) = on_save_quote {
-                                self.save_quote_bookmark(text);
-                            }
-
-                            if on_open_opds {
-                                self.show_opds_dialog = true;
-                            }
-
-                            if let Some(para_idx) = on_start_tts {
-                                self.start_tts_at_paragraph(para_idx);
-                            }
-                        }
-                    }
-
-                    if let Some(text) = on_translate {
-                        if self.settings.can_use(ProFeature::Translation) {
-                            let target_code = self.settings.ui_language.resolve().code();
-                            self.translate.translate(
-                                text,
-                                target_code,
-                                self.settings.translation.provider,
-                                &self.settings.translation.deepl_api_key,
-                            );
-                        } else {
-                            pro_required = Some(ProFeature::Translation);
-                        }
-                    }
-                    if let Some(word) = on_dictionary {
-                        self.dictionary
-                            .open_word(word, self.settings.ui_language, false);
-                    }
-                    if let Some(word) = on_wikipedia {
-                        self.dictionary
-                            .open_word(word, self.settings.ui_language, true);
+                    if self.show_settings_dialog {
+                        SettingsView::render_overlay(
+                            self,
+                            &ctx,
+                            central_bounds,
+                            &mut toggle_autoscroll_action,
+                            &mut save_settings_action,
+                            &mut register_assoc_action,
+                        );
                     }
                 }
             });
@@ -860,78 +992,6 @@ impl eframe::App for QuietReaderApp {
         }
         self::gestures::paint_brightness(&ctx, self.settings.reading_brightness);
         self.accrue_reading_time(&ctx);
-    }
-}
-
-impl QuietReaderApp {
-    fn handle_trackpad_swipe(
-        &mut self,
-        ctx: &egui::Context,
-        view_kind: DocumentViewKind,
-        is_manga: bool,
-    ) {
-        let active = self.settings.trackpad_swipe_pages
-            && !self.show_library
-            && !self.show_settings_dialog
-            && !self.show_association_dialog
-            && !self.show_recent_dialog
-            && self.document.is_some();
-        let paged = active
-            && match view_kind {
-                DocumentViewKind::Pdf => self.settings.pdf.layout != "Continuous",
-                DocumentViewKind::Comic => self.settings.comic.reading_mode != "Webtoon",
-                DocumentViewKind::Text => false,
-            };
-        if !paged {
-            self.swipe_accum = 0.0;
-            return;
-        }
-
-        let delta = ctx.input(|input| input.smooth_scroll_delta);
-        let now = Instant::now();
-        if let Some(last) = self.last_swipe_event
-            && now.duration_since(last).as_secs_f32() > 0.4
-        {
-            self.swipe_accum = 0.0;
-        }
-        let horizontal = delta.x.abs() > delta.y.abs() * 1.5 && delta.x.abs() > 0.5;
-        if horizontal {
-            self.swipe_accum += delta.x;
-            self.last_swipe_event = Some(now);
-        } else if delta != egui::Vec2::ZERO {
-            self.swipe_accum = 0.0;
-        }
-
-        let Some(forward) = self::gestures::swipe_forward(self.swipe_accum, is_manga) else {
-            return;
-        };
-        if let Some(last) = self.last_swipe_turn
-            && now.duration_since(last).as_secs_f32() < 0.3
-        {
-            return;
-        }
-        self.swipe_accum = 0.0;
-        self.last_swipe_turn = Some(now);
-
-        match view_kind {
-            DocumentViewKind::Pdf => {
-                let total_pages = self.pdf_view.page_count(&self.document);
-                if forward {
-                    self.pdf_view.next_page(total_pages, &self.settings.pdf);
-                } else {
-                    self.pdf_view.prev_page(&self.settings.pdf);
-                }
-            }
-            DocumentViewKind::Comic => {
-                let total_pages = self.comic_view.page_count(&self.document);
-                if forward {
-                    self.comic_view.next_page(total_pages, &self.settings.comic);
-                } else {
-                    self.comic_view.prev_page(&self.settings.comic);
-                }
-            }
-            DocumentViewKind::Text => {}
-        }
     }
 }
 

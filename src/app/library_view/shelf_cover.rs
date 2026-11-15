@@ -155,7 +155,7 @@ pub(super) fn shelf_cover(
     cover_response
 }
 
-pub(super) fn paint_procedural_cover(
+pub(crate) fn paint_procedural_cover(
     painter: &egui::Painter,
     rect: egui::Rect,
     title: &str,
@@ -196,7 +196,7 @@ pub(super) fn paint_procedural_cover(
         StrokeKind::Inside,
     );
 
-    if rect.width() >= 100.0 {
+    if rect.width() >= 96.0 {
         let inner_frame = frame_rect.shrink(3.0);
         painter.rect_stroke(
             inner_frame,
@@ -206,10 +206,14 @@ pub(super) fn paint_procedural_cover(
         );
     }
 
-    let center_x = rect.min.x + spine_w + (rect.width() - spine_w) * 0.5;
-    let icon_size = (rect.width() * 0.22).clamp(16.0, 26.0);
-    let icon_y = if rect.width() >= 100.0 {
-        rect.min.y + rect.height() * 0.28
+    let text_left = rect.min.x + spine_w + frame_inset + 6.0;
+    let text_right = rect.max.x - frame_inset - 6.0;
+    let max_text_w = (text_right - text_left).max(32.0);
+    let center_x = (text_left + text_right) * 0.5;
+
+    let icon_size = (rect.width() * 0.20).clamp(16.0, 26.0);
+    let icon_y = if rect.width() >= 96.0 {
+        rect.min.y + rect.height() * 0.25
     } else {
         rect.center().y
     };
@@ -220,8 +224,7 @@ pub(super) fn paint_procedural_cover(
         foil.gamma_multiply(0.85),
     );
 
-    if rect.width() >= 100.0 {
-        let clipped = painter.with_clip_rect(rect.shrink(2.0));
+    if rect.width() >= 96.0 {
         let display_title = if title.trim().is_empty() {
             path.file_stem()
                 .and_then(|s| s.to_str())
@@ -230,23 +233,41 @@ pub(super) fn paint_procedural_cover(
             title
         };
 
-        let title_short: String = display_title.chars().take(22).collect();
-        clipped.text(
-            Pos2::new(center_x, rect.min.y + rect.height() * 0.48),
-            egui::Align2::CENTER_CENTER,
-            &title_short,
+        let title_clip = Rect::from_min_max(
+            Pos2::new(text_left, rect.min.y + rect.height() * 0.36),
+            Pos2::new(text_right, rect.min.y + rect.height() * 0.70),
+        );
+        let title_galley = painter.layout(
+            display_title.to_string(),
             egui::FontId::proportional(11.0),
             foil,
+            max_text_w,
         );
+        let title_y = (title_clip.center().y - title_galley.size().y * 0.5).max(title_clip.min.y);
+        let title_x = (center_x - title_galley.size().x * 0.5).max(title_clip.min.x);
+        painter
+            .with_clip_rect(title_clip)
+            .galley(Pos2::new(title_x, title_y), title_galley, foil);
 
         if !author.trim().is_empty() {
-            let author_short: String = author.chars().take(18).collect();
-            clipped.text(
-                Pos2::new(center_x, rect.min.y + rect.height() * 0.72),
-                egui::Align2::CENTER_CENTER,
-                &author_short,
-                egui::FontId::proportional(9.5),
-                foil.gamma_multiply(0.8),
+            let author_clip = Rect::from_min_max(
+                Pos2::new(text_left, rect.min.y + rect.height() * 0.73),
+                Pos2::new(text_right, rect.max.y - frame_inset - 4.0),
+            );
+            let author_color = foil.gamma_multiply(0.82);
+            let author_galley = painter.layout(
+                author.to_string(),
+                egui::FontId::proportional(9.2),
+                author_color,
+                max_text_w,
+            );
+            let author_y =
+                (author_clip.center().y - author_galley.size().y * 0.5).max(author_clip.min.y);
+            let author_x = (center_x - author_galley.size().x * 0.5).max(author_clip.min.x);
+            painter.with_clip_rect(author_clip).galley(
+                Pos2::new(author_x, author_y),
+                author_galley,
+                author_color,
             );
         }
     }
@@ -255,14 +276,14 @@ pub(super) fn paint_procedural_cover(
 pub(super) fn render_add_book_card(
     ui: &mut egui::Ui,
     width: f32,
-    min_height: f32,
+    height: f32,
     t: &Translations,
     is_cozy: bool,
     theme: &ReaderTheme,
     actions: &mut LibraryActions,
 ) {
     let card_fill = if is_cozy {
-        CozyPalette::SURFACE_LOW.gamma_multiply(0.6)
+        CozyPalette::SURFACE_LOW.gamma_multiply(0.65)
     } else {
         theme.panel_bg_color()
     };
@@ -271,19 +292,19 @@ pub(super) fn render_add_book_card(
         if is_cozy {
             CozyPalette::OUTLINE.gamma_multiply(0.55)
         } else {
-            theme.accent_color().gamma_multiply(0.3)
+            theme.accent_color().gamma_multiply(0.32)
         },
     );
 
     let (card_rect, card_resp) =
-        ui.allocate_exact_size(Vec2::new(width, min_height), egui::Sense::click());
+        ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
     let is_hovered = card_resp.hovered();
 
     ui.painter().rect_filled(
         card_rect,
         12.0,
         if is_hovered {
-            card_fill.gamma_multiply(1.3)
+            card_fill.gamma_multiply(1.25)
         } else {
             card_fill
         },
@@ -291,9 +312,9 @@ pub(super) fn render_add_book_card(
     ui.painter()
         .rect_stroke(card_rect, 12.0, border_stroke, StrokeKind::Inside);
 
-    let center = card_rect.center();
-    let circle_rect =
-        Rect::from_center_size(Pos2::new(center.x, center.y - 45.0), Vec2::splat(40.0));
+    let center_x = card_rect.center().x;
+    let circle_cy = card_rect.min.y + card_rect.height() * 0.36;
+    let circle_rect = Rect::from_center_size(Pos2::new(center_x, circle_cy), Vec2::splat(40.0));
     let circle_bg = if is_hovered {
         if is_cozy {
             CozyPalette::PRIMARY
@@ -322,32 +343,44 @@ pub(super) fn render_add_book_card(
         icon_color,
     );
 
-    ui.painter().text(
-        Pos2::new(center.x, center.y - 8.0),
-        egui::Align2::CENTER_CENTER,
-        t.library_add_books,
+    let wrap_w = (width - 24.0).max(80.0);
+    let title_col = if is_cozy {
+        CozyPalette::ON_SURFACE
+    } else {
+        theme.text_color()
+    };
+    let title_galley = ui.painter().layout(
+        t.library_add_books.to_string(),
         egui::FontId::proportional(13.0),
-        if is_cozy {
-            CozyPalette::ON_SURFACE
-        } else {
-            theme.text_color()
-        },
+        title_col,
+        wrap_w,
+    );
+    let title_y = circle_cy + 30.0;
+    let title_h = title_galley.size().y;
+    ui.painter().galley(
+        Pos2::new(center_x - title_galley.size().x * 0.5, title_y),
+        title_galley,
+        title_col,
     );
 
-    let hint_rect = Rect::from_center_size(
-        Pos2::new(center.x, center.y + 22.0),
-        Vec2::new(width - 24.0, 32.0),
-    );
-    ui.painter().text(
-        hint_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        t.library_drop_hint,
+    let hint_col = if is_cozy {
+        CozyPalette::ON_SURFACE_VARIANT
+    } else {
+        theme.secondary_text_color()
+    };
+    let hint_galley = ui.painter().layout(
+        t.library_drop_hint.to_string(),
         egui::FontId::proportional(10.5),
-        if is_cozy {
-            CozyPalette::ON_SURFACE_VARIANT
-        } else {
-            theme.secondary_text_color()
-        },
+        hint_col,
+        wrap_w,
+    );
+    ui.painter().galley(
+        Pos2::new(
+            center_x - hint_galley.size().x * 0.5,
+            title_y + title_h + 6.0,
+        ),
+        hint_galley,
+        hint_col,
     );
 
     if card_resp.clicked() {
@@ -355,8 +388,8 @@ pub(super) fn render_add_book_card(
     }
 
     let badge_rect = Rect::from_center_size(
-        Pos2::new(center.x, card_rect.max.y - 32.0),
-        Vec2::new(width - 32.0, 20.0),
+        Pos2::new(center_x, card_rect.max.y - 26.0),
+        Vec2::new((width - 24.0).max(96.0), 20.0),
     );
     ui.painter().rect_filled(
         badge_rect,
@@ -364,7 +397,7 @@ pub(super) fn render_add_book_card(
         if is_cozy {
             CozyPalette::SURFACE_CONTAINER
         } else {
-            theme.panel_bg_color().gamma_multiply(1.2)
+            theme.panel_bg_color().gamma_multiply(1.22)
         },
     );
     let badge_text_color = if is_cozy {

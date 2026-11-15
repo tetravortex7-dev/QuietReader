@@ -1,12 +1,20 @@
 use crate::app::icons::{Icon, paint_icon};
 use crate::app::theme::{CozyPalette, ReaderTheme};
-use crate::core::library::{LibraryStore, unix_day_index};
+use crate::core::library::{LibraryStore, unix_day_index, weekday_index_from_unix_day};
 use crate::i18n::Translations;
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke, Vec2};
 
+pub(crate) const DAILY_GOAL_MINUTES: u64 = 30;
+
+pub(crate) fn daily_goal_met(today_seconds: u64) -> bool {
+    today_seconds / 60 >= DAILY_GOAL_MINUTES
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn render_reading_rhythm_panel(
     ui: &mut egui::Ui,
     panel_width: f32,
+    target_outer_h: Option<f32>,
     library: &LibraryStore,
     theme: &ReaderTheme,
     t: &Translations,
@@ -14,24 +22,27 @@ pub fn render_reading_rhythm_panel(
     border_stroke: Stroke,
     is_cozy: bool,
 ) {
+    let target_inner_h = target_outer_h
+        .map(|h| (h - 24.0).max(176.0))
+        .unwrap_or(180.0);
     egui::Frame::new()
         .fill(container_fill)
         .stroke(border_stroke)
         .corner_radius(12.0)
-        .inner_margin(egui::Margin::same(14))
+        .inner_margin(egui::Margin::symmetric(14, 12))
         .show(ui, |ui| {
             let inner_w = (panel_width - 28.0).max(100.0);
             ui.set_width(inner_w);
-            ui.set_min_height(190.0);
+            ui.set_min_height(target_inner_h);
 
             let (header_rect, _) =
-                ui.allocate_exact_size(Vec2::new(inner_w, 24.0), egui::Sense::hover());
+                ui.allocate_exact_size(Vec2::new(inner_w, 22.0), egui::Sense::hover());
 
             ui.painter().text(
                 header_rect.left_center(),
                 egui::Align2::LEFT_CENTER,
                 t.library_rhythm_title,
-                egui::FontId::proportional(16.0),
+                egui::FontId::proportional(15.5),
                 if is_cozy {
                     CozyPalette::ON_SURFACE
                 } else {
@@ -74,7 +85,7 @@ pub fn render_reading_rhythm_panel(
                 shield_color,
             );
 
-            ui.add_space(10.0);
+            ui.add_space(6.0);
 
             let today = unix_day_index(crate::core::license::unix_now());
             let streak = library.current_streak_days(today);
@@ -129,11 +140,19 @@ pub fn render_reading_rhythm_panel(
                 );
             });
 
-            ui.add_space(10.0);
+            ui.add_space(6.0);
 
             render_sparkline_card(ui, inner_w, library, theme, t, is_cozy);
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
+
+            let today_secs = library
+                .daily_reading_seconds
+                .get(&today)
+                .copied()
+                .unwrap_or(0);
+            let today_mins = today_secs / 60;
+            let goal_done = daily_goal_met(today_secs);
 
             let (footer_rect, _) =
                 ui.allocate_exact_size(Vec2::new(inner_w, 16.0), egui::Sense::hover());
@@ -149,29 +168,48 @@ pub fn render_reading_rhythm_panel(
                 },
             );
 
-            let check_color = if is_cozy {
-                CozyPalette::TERTIARY
+            let status_color = if goal_done {
+                if is_cozy {
+                    CozyPalette::TERTIARY
+                } else {
+                    Color32::from_rgb(72, 187, 120)
+                }
+            } else if is_cozy {
+                CozyPalette::ON_SURFACE_VARIANT
             } else {
-                Color32::from_rgb(72, 187, 120)
+                theme.secondary_text_color()
             };
-            let completed_text = t.library_goal_completed;
-            let text_font = egui::FontId::proportional(11.0);
-            let text_w = ui.fonts_mut(|f| {
-                f.layout_no_wrap(completed_text.to_string(), text_font.clone(), check_color)
-                    .size()
-                    .x
-            });
-            let check_icon_rect = Rect::from_center_size(
-                Pos2::new(footer_rect.max.x - text_w - 10.0, footer_rect.center().y),
-                Vec2::splat(12.0),
+            let status_text = if goal_done {
+                t.library_goal_completed.to_string()
+            } else {
+                t.extra
+                    .library_goal_today_progress
+                    .replace("{minutes}", &today_mins.to_string())
+            };
+            let status_icon = if goal_done {
+                Icon::Check
+            } else {
+                Icon::Hourglass
+            };
+            let text_font = egui::FontId::proportional(10.5);
+            let galley = ui
+                .painter()
+                .layout_no_wrap(status_text, text_font, status_color);
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(
+                    footer_rect.max.x - galley.size().x - 10.0,
+                    footer_rect.center().y,
+                ),
+                Vec2::splat(11.0),
             );
-            paint_icon(ui.painter(), Icon::Check, check_icon_rect, check_color);
-            ui.painter().text(
-                footer_rect.right_center(),
-                egui::Align2::RIGHT_CENTER,
-                completed_text,
-                text_font,
-                check_color,
+            paint_icon(ui.painter(), status_icon, icon_rect, status_color);
+            ui.painter().galley(
+                Pos2::new(
+                    footer_rect.max.x - galley.size().x,
+                    footer_rect.center().y - galley.size().y * 0.5,
+                ),
+                galley,
+                status_color,
             );
         });
 }
@@ -188,14 +226,14 @@ fn render_stat_box(
     let box_fill = if is_cozy {
         CozyPalette::CARD_BG
     } else {
-        theme.panel_bg_color().gamma_multiply(1.2)
+        theme.panel_bg_color().gamma_multiply(1.22)
     };
     let border = Stroke::new(
         1.0,
         if is_cozy {
             CozyPalette::OUTLINE.gamma_multiply(0.3)
         } else {
-            theme.accent_color().gamma_multiply(0.2)
+            theme.accent_color().gamma_multiply(0.22)
         },
     );
 
@@ -203,17 +241,20 @@ fn render_stat_box(
         .fill(box_fill)
         .stroke(border)
         .corner_radius(8.0)
-        .inner_margin(egui::Margin::symmetric(4, 8))
+        .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
             let w = (box_width - 8.0).max(40.0);
             ui.set_width(w);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new(value).size(19.0).strong().color(value_color));
-                ui.label(RichText::new(label).size(8.5).color(if is_cozy {
-                    CozyPalette::ON_SURFACE_VARIANT
-                } else {
-                    theme.secondary_text_color()
-                }));
+                ui.label(RichText::new(value).size(17.0).strong().color(value_color));
+                ui.add(
+                    egui::Label::new(RichText::new(label).size(9.0).color(if is_cozy {
+                        CozyPalette::ON_SURFACE_VARIANT
+                    } else {
+                        theme.secondary_text_color()
+                    }))
+                    .truncate(),
+                );
             });
         });
 }
@@ -229,14 +270,14 @@ fn render_sparkline_card(
     let box_fill = if is_cozy {
         CozyPalette::CARD_BG
     } else {
-        theme.panel_bg_color().gamma_multiply(1.2)
+        theme.panel_bg_color().gamma_multiply(1.22)
     };
     let border = Stroke::new(
         1.0,
         if is_cozy {
             CozyPalette::OUTLINE.gamma_multiply(0.3)
         } else {
-            theme.accent_color().gamma_multiply(0.2)
+            theme.accent_color().gamma_multiply(0.22)
         },
     );
 
@@ -244,7 +285,7 @@ fn render_sparkline_card(
         .fill(box_fill)
         .stroke(border)
         .corner_radius(8.0)
-        .inner_margin(egui::Margin::same(10))
+        .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             let inner_w = (width - 20.0).max(80.0);
             ui.set_width(inner_w);
@@ -274,10 +315,10 @@ fn render_sparkline_card(
                 },
             );
 
-            ui.add_space(6.0);
+            ui.add_space(4.0);
 
             let today = unix_day_index(crate::core::license::unix_now());
-            let day_labels = [
+            let day_names = [
                 t.extra.weekday_mon,
                 t.extra.weekday_tue,
                 t.extra.weekday_wed,
@@ -287,7 +328,7 @@ fn render_sparkline_card(
                 t.extra.weekday_sun,
             ];
 
-            let chart_height = 40.0;
+            let chart_height = 34.0;
             let (chart_rect, _) = ui.allocate_exact_size(
                 Vec2::new(inner_w, chart_height + 16.0),
                 egui::Sense::hover(),
@@ -310,16 +351,26 @@ fn render_sparkline_card(
 
             for i in 0..7usize {
                 let day = today.saturating_sub((6 - i) as u64);
-                let mins = library
+                let secs = library
                     .daily_reading_seconds
                     .get(&day)
                     .copied()
-                    .unwrap_or(0) as f32
-                    / 60.0;
+                    .unwrap_or(0);
+                let mins = secs as f32 / 60.0;
                 let fraction = (mins / max_minutes).clamp(0.08, 1.0);
                 let bar_h = chart_height * fraction;
 
-                let cx = chart_rect.min.x + (i as f32 + 0.5) * col_w;
+                let col_rect = Rect::from_min_size(
+                    Pos2::new(chart_rect.min.x + i as f32 * col_w, chart_rect.min.y),
+                    Vec2::new(col_w, chart_height + 16.0),
+                );
+                let bar_resp = ui.interact(
+                    col_rect,
+                    ui.scope_id().with(("spark_bar", i)),
+                    egui::Sense::hover(),
+                );
+
+                let cx = col_rect.center().x;
                 let bar_w = (col_w - 6.0).clamp(8.0, 24.0);
                 let bar_rect = Rect::from_min_max(
                     Pos2::new(cx - bar_w * 0.5, chart_rect.min.y + chart_height - bar_h),
@@ -327,7 +378,7 @@ fn render_sparkline_card(
                 );
 
                 let is_today = i == 6;
-                let bar_color = if is_today {
+                let base_color = if is_today {
                     if is_cozy {
                         CozyPalette::PRIMARY
                     } else {
@@ -335,18 +386,29 @@ fn render_sparkline_card(
                     }
                 } else if mins > 0.0 {
                     if is_cozy {
-                        CozyPalette::PRIMARY.gamma_multiply(0.4)
+                        CozyPalette::PRIMARY.gamma_multiply(0.45)
                     } else {
-                        theme.accent_color().gamma_multiply(0.4)
+                        theme.accent_color().gamma_multiply(0.45)
                     }
                 } else if is_cozy {
                     CozyPalette::SURFACE_HIGHEST
                 } else {
                     theme.panel_bg_color().gamma_multiply(1.5)
                 };
+                let bar_color = if bar_resp.hovered() {
+                    if is_cozy {
+                        CozyPalette::PRIMARY_CONTAINER
+                    } else {
+                        theme.accent_color()
+                    }
+                } else {
+                    base_color
+                };
 
                 ui.painter().rect_filled(bar_rect, 2.5, bar_color);
 
+                let wd_idx = weekday_index_from_unix_day(day);
+                let day_label = day_names[wd_idx];
                 let label_pos = Pos2::new(cx, chart_rect.min.y + chart_height + 8.0);
                 let label_color = if is_today {
                     if is_cozy {
@@ -362,10 +424,18 @@ fn render_sparkline_card(
                 ui.painter().text(
                     label_pos,
                     egui::Align2::CENTER_CENTER,
-                    day_labels[i],
+                    day_label,
                     egui::FontId::proportional(9.5),
                     label_color,
                 );
+
+                let rounded_mins = secs.div_ceil(60);
+                let mins_str = t
+                    .extra
+                    .library_minutes_short
+                    .replace("{minutes}", &rounded_mins.to_string());
+                let tip = format!("{day_label}: {mins_str}");
+                bar_resp.on_hover_text(tip);
             }
         });
 }

@@ -18,8 +18,10 @@ pub struct TopBarActions {
     pub open_dictionary: bool,
     pub toggle_tts: bool,
     pub toggle_fullscreen: bool,
+    pub toggle_design: bool,
     pub toggle_settings: bool,
     pub toggle_reading_ruler: bool,
+    pub set_text_spread: Option<bool>,
     pub toggle_paragraph_mode: bool,
     pub toggle_rsvp: bool,
     pub toggle_ambient: bool,
@@ -31,6 +33,7 @@ pub fn render_top_bar(
     ui: &mut egui::Ui,
     has_document: bool,
     text_reader: bool,
+    text_two_columns: bool,
     paragraph_mode: bool,
     rsvp_active: bool,
     library_visible: bool,
@@ -55,8 +58,10 @@ pub fn render_top_bar(
         open_dictionary: false,
         toggle_tts: false,
         toggle_fullscreen: false,
+        toggle_design: false,
         toggle_settings: false,
         toggle_reading_ruler: false,
+        set_text_spread: None,
         toggle_paragraph_mode: false,
         toggle_rsvp: false,
         toggle_ambient: false,
@@ -66,183 +71,201 @@ pub fn render_top_bar(
 
     Panel::top("top_bar").show(ui, |ui| {
         let is_rtl = lang.is_rtl();
+        let avail_w = ui.available_width();
         let main_layout = if is_rtl {
-            egui::Layout::right_to_left(egui::Align::Center)
+            egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true)
         } else {
-            egui::Layout::left_to_right(egui::Align::Center)
+            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true)
         };
         let secondary_layout = if is_rtl {
-            egui::Layout::left_to_right(egui::Align::Center)
+            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true)
         } else {
-            egui::Layout::right_to_left(egui::Align::Center)
+            egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true)
         };
 
         let row_height = ui.spacing().interact_size.y.max(24.0) + 6.0;
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), row_height),
-            main_layout,
-            |ui| {
-                if icon_button(ui, Icon::OpenFile, t.open_file)
-                    .on_hover_text(t.open_file_tooltip)
+        ui.allocate_ui_with_layout(egui::vec2(avail_w, row_height), main_layout, |ui| {
+            ui.set_max_width(avail_w);
+            if icon_button(ui, Icon::OpenFile, t.open_file)
+                .on_hover_text(t.open_file_tooltip)
+                .clicked()
+            {
+                actions.open_file = true;
+            }
+            if icon_button(ui, Icon::Folder, t.open_folder)
+                .on_hover_text(t.open_folder_tooltip)
+                .clicked()
+            {
+                actions.open_folder = true;
+            }
+            if icon_button(ui, Icon::Recent, t.recent_books)
+                .on_hover_text(t.recent_books_tooltip)
+                .clicked()
+            {
+                actions.toggle_recent = true;
+            }
+            if library_visible
+                && icon_button(ui, Icon::Library, t.library_title)
+                    .on_hover_text(t.library_open_tooltip)
+                    .clicked()
+            {
+                actions.toggle_library = true;
+            }
+            if icon_button(ui, Icon::Globe, t.opds_catalogs)
+                .on_hover_text(t.opds_catalogs_tooltip)
+                .clicked()
+            {
+                actions.toggle_opds = true;
+            }
+            if has_document {
+                ui.separator();
+                let toc_text = if show_toc { t.hide_toc } else { t.toc };
+                if icon_button(ui, Icon::Toc, toc_text)
+                    .on_hover_text(t.toc_tooltip)
                     .clicked()
                 {
-                    actions.open_file = true;
+                    actions.toggle_toc = true;
                 }
-                if icon_button(ui, Icon::Folder, t.open_folder)
-                    .on_hover_text(t.open_folder_tooltip)
+                let bm_btn =
+                    icon_button(ui, Icon::Bookmark, t.add_bookmark).on_hover_text(t.bookmark_added);
+                if bm_btn.clicked() {
+                    actions.toggle_bookmark = true;
+                }
+                if bm_btn.secondary_clicked() {
+                    actions.toggle_bookmarks_panel = true;
+                }
+                if icon_button(ui, Icon::Search, t.search)
+                    .on_hover_text(t.search_tooltip)
                     .clicked()
                 {
-                    actions.open_folder = true;
+                    actions.toggle_search = true;
                 }
-                if icon_button(ui, Icon::Recent, t.recent_books)
-                    .on_hover_text(t.recent_books_tooltip)
+                if icon_button(ui, Icon::Book, t.dictionary_title)
+                    .on_hover_text(t.dictionary_lookup)
                     .clicked()
                 {
-                    actions.toggle_recent = true;
+                    actions.open_dictionary = true;
                 }
-                if library_visible
-                    && icon_button(ui, Icon::Library, t.library_title)
-                        .on_hover_text(t.library_open_tooltip)
-                        .clicked()
-                {
-                    actions.toggle_library = true;
-                }
-                if icon_button(ui, Icon::Globe, t.opds_catalogs)
-                    .on_hover_text(t.opds_catalogs_tooltip)
+                if icon_button(ui, Icon::Speech, t.speech)
+                    .on_hover_text(t.speech_tooltip)
                     .clicked()
                 {
-                    actions.toggle_opds = true;
+                    actions.toggle_tts = true;
                 }
-                if has_document {
-                    ui.separator();
-                    let toc_text = if show_toc { t.hide_toc } else { t.toc };
-                    if icon_button(ui, Icon::Toc, toc_text)
-                        .on_hover_text(t.toc_tooltip)
-                        .clicked()
-                    {
-                        actions.toggle_toc = true;
-                    }
-                    let bm_btn = icon_button(ui, Icon::Bookmark, t.add_bookmark)
-                        .on_hover_text(t.bookmark_added);
-                    if bm_btn.clicked() {
-                        actions.toggle_bookmark = true;
-                    }
-                    if bm_btn.secondary_clicked() {
-                        actions.toggle_bookmarks_panel = true;
-                    }
-                    if icon_button(ui, Icon::Search, t.search)
-                        .on_hover_text(t.search_tooltip)
-                        .clicked()
-                    {
-                        actions.toggle_search = true;
-                    }
-                    if icon_button(ui, Icon::Book, t.dictionary_title)
-                        .on_hover_text(t.dictionary_lookup)
-                        .clicked()
-                    {
-                        actions.open_dictionary = true;
-                    }
-                    if icon_button(ui, Icon::Speech, t.speech)
-                        .on_hover_text(t.speech_tooltip)
-                        .clicked()
-                    {
-                        actions.toggle_tts = true;
-                    }
-                    let ruler_text = if reading_ruler {
-                        t.hide_reading_ruler
-                    } else {
-                        t.reading_ruler
-                    };
-                    if icon_button(ui, Icon::Ruler, ruler_text)
-                        .on_hover_text(t.reading_ruler_tooltip)
-                        .clicked()
-                    {
-                        actions.toggle_reading_ruler = true;
-                    }
-                    if text_reader {
-                        if ui
-                            .add(
-                                IconButton::new(Icon::Fonts, t.paragraph_mode_short)
-                                    .selected(paragraph_mode),
-                            )
-                            .on_hover_text(t.paragraph_mode_desc)
-                            .clicked()
-                        {
-                            actions.toggle_paragraph_mode = true;
-                        }
-                        if ui
-                            .add(
-                                IconButton::new(Icon::Hourglass, t.rsvp_short)
-                                    .selected(rsvp_active),
-                            )
-                            .on_hover_text(t.rsvp_desc)
-                            .clicked()
-                        {
-                            actions.toggle_rsvp = true;
-                        }
-                    }
-                    if icon_button(ui, Icon::Headphones, t.ambient)
-                        .on_hover_text(format!("{} (M)", t.ambient_tooltip))
-                        .clicked()
-                    {
-                        actions.toggle_ambient = true;
-                    }
-                }
-            },
-        );
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), row_height),
-            secondary_layout,
-            |ui| {
-                let license_color = if pro_active {
-                    egui::Color32::from_rgb(214, 164, 52)
+                let ruler_text = if reading_ruler {
+                    t.hide_reading_ruler
                 } else {
-                    ui.visuals().text_color()
+                    t.reading_ruler
                 };
-                let license_tip = if pro_active {
-                    t.license_pro_activated
-                } else {
-                    t.license_open_tooltip
-                };
-                if ui
-                    .add(IconButton::new(Icon::Pro, t.license_open).color(license_color))
-                    .on_hover_text(license_tip)
+                if icon_button(ui, Icon::Ruler, ruler_text)
+                    .on_hover_text(t.reading_ruler_tooltip)
                     .clicked()
                 {
-                    actions.open_license = true;
+                    actions.toggle_reading_ruler = true;
                 }
-                if icon_button(ui, Icon::Settings, t.settings)
-                    .on_hover_text(t.settings_tooltip)
-                    .clicked()
-                {
-                    actions.toggle_settings = true;
-                }
-                let (fs_icon, fs_text) = if is_fullscreen {
-                    (Icon::Windowed, t.windowed)
-                } else {
-                    (Icon::Fullscreen, t.fullscreen)
-                };
-                if icon_button(ui, fs_icon, fs_text)
-                    .on_hover_text(t.fullscreen_tooltip)
-                    .clicked()
-                {
-                    actions.toggle_fullscreen = true;
-                }
-                if let Some(tag) = update_available_version {
-                    let label = format!("v{tag}");
+                if text_reader {
                     if ui
                         .add(
-                            IconButton::new(Icon::ChevronUp, &label)
-                                .color(egui::Color32::from_rgb(220, 140, 20)),
+                            IconButton::new(Icon::Scroll, t.extra.text_mode_scroll)
+                                .selected(!text_two_columns),
                         )
-                        .on_hover_text(t.update_available_tip)
+                        .on_hover_text(t.extra.text_scroll_tip)
                         .clicked()
                     {
-                        actions.open_update = true;
+                        actions.set_text_spread = Some(false);
+                    }
+                    if ui
+                        .add(
+                            IconButton::new(Icon::Spread, t.extra.text_mode_spread)
+                                .selected(text_two_columns),
+                        )
+                        .on_hover_text(t.extra.text_spread_tip)
+                        .clicked()
+                    {
+                        actions.set_text_spread = Some(true);
+                    }
+                    if ui
+                        .add(
+                            IconButton::new(Icon::Fonts, t.paragraph_mode_short)
+                                .selected(paragraph_mode),
+                        )
+                        .on_hover_text(t.paragraph_mode_desc)
+                        .clicked()
+                    {
+                        actions.toggle_paragraph_mode = true;
+                    }
+                    if ui
+                        .add(IconButton::new(Icon::Hourglass, t.rsvp_short).selected(rsvp_active))
+                        .on_hover_text(t.rsvp_desc)
+                        .clicked()
+                    {
+                        actions.toggle_rsvp = true;
                     }
                 }
-            },
-        );
+                if icon_button(ui, Icon::Headphones, t.ambient)
+                    .on_hover_text(format!("{} (M)", t.ambient_tooltip))
+                    .clicked()
+                {
+                    actions.toggle_ambient = true;
+                }
+            }
+        });
+        ui.allocate_ui_with_layout(egui::vec2(avail_w, row_height), secondary_layout, |ui| {
+            ui.set_max_width(avail_w);
+            let license_color = if pro_active {
+                egui::Color32::from_rgb(214, 164, 52)
+            } else {
+                ui.visuals().text_color()
+            };
+            let license_tip = if pro_active {
+                t.license_pro_activated
+            } else {
+                t.license_open_tooltip
+            };
+            if ui
+                .add(IconButton::new(Icon::Pro, t.license_open).color(license_color))
+                .on_hover_text(license_tip)
+                .clicked()
+            {
+                actions.open_license = true;
+            }
+            if icon_button(ui, Icon::Settings, t.settings)
+                .on_hover_text(t.settings_tooltip)
+                .clicked()
+            {
+                actions.toggle_settings = true;
+            }
+            let (fs_icon, fs_text) = if is_fullscreen {
+                (Icon::Windowed, t.windowed)
+            } else {
+                (Icon::Fullscreen, t.fullscreen)
+            };
+            if icon_button(ui, fs_icon, fs_text)
+                .on_hover_text(t.fullscreen_tooltip)
+                .clicked()
+            {
+                actions.toggle_fullscreen = true;
+            }
+            if icon_button(ui, Icon::Cozy, t.library_design_cozy)
+                .on_hover_text(t.library_design_tooltip)
+                .clicked()
+            {
+                actions.toggle_design = true;
+            }
+            if let Some(tag) = update_available_version {
+                let label = format!("v{tag}");
+                if ui
+                    .add(
+                        IconButton::new(Icon::ChevronUp, &label)
+                            .color(egui::Color32::from_rgb(220, 140, 20)),
+                    )
+                    .on_hover_text(t.update_available_tip)
+                    .clicked()
+                {
+                    actions.open_update = true;
+                }
+            }
+        });
     });
 
     actions
@@ -371,63 +394,84 @@ pub fn render_bottom_bar(
     };
 
     Panel::bottom("bottom_bar").show(ui, |ui| {
-        ui.with_layout(main_layout, |ui| {
-            if let Some(doc) = document {
-                let meta = doc.metadata();
-                let book_info = if meta.author.is_empty() {
-                    meta.title.clone()
-                } else {
-                    format!("{} — {}", meta.author, meta.title)
-                };
-                ui.add(IconLabel::new(Icon::Book, &book_info).strong());
-                if let Some(err) = crate::settings::AppSettings::last_save_error() {
-                    ui.separator();
-                    ui.add(IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED));
-                } else if let Some(err) = crate::settings::AppSettings::last_secret_error() {
-                    ui.separator();
-                    ui.add(
-                        IconLabel::new(Icon::Warning, &t.secrets_storage_error.replace("{}", &err))
-                            .color(egui::Color32::RED),
-                    );
-                } else if let Some(msg) = status_message {
-                    if status_opacity > 0.01 {
-                        ui.separator();
-                        render_status_text(
-                            ui,
-                            msg,
-                            theme.accent_color().gamma_multiply(status_opacity),
-                            is_rtl,
-                        );
-                    }
-                }
-            } else if let Some(err) = crate::settings::AppSettings::last_save_error() {
-                ui.add(IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED));
-            } else if let Some(err) = crate::settings::AppSettings::last_secret_error() {
-                ui.add(
-                    IconLabel::new(Icon::Warning, &t.secrets_storage_error.replace("{}", &err))
-                        .color(egui::Color32::RED),
-                );
-            } else if let Some(msg) = status_message {
-                if status_opacity > 0.01 {
-                    render_status_text(
-                        ui,
-                        msg,
-                        theme.text_color().gamma_multiply(status_opacity),
-                        is_rtl,
-                    );
-                } else {
-                    ui.label(t.ready_to_read);
-                }
-            } else {
-                ui.label(t.ready_to_read);
-            }
-
-            if !cur_str.is_empty() {
-                ui.with_layout(secondary_layout, |ui| {
+        let row_h = ui.spacing().interact_size.y.max(22.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), row_h),
+            secondary_layout,
+            |ui| {
+                if !cur_str.is_empty() {
                     ui.label(RichText::new(format!("{cur_str}  |  {pct_str}")).strong());
-                });
-            }
-        });
+                    ui.add_space(10.0);
+                }
+                let left_w = ui.available_width().max(0.0);
+                if left_w > 12.0 {
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, row_h), main_layout, |ui| {
+                        ui.set_max_width(left_w);
+                        ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                        if let Some(doc) = document {
+                            let meta = doc.metadata();
+                            let book_info = if meta.author.is_empty() {
+                                meta.title.clone()
+                            } else {
+                                format!("{} — {}", meta.author, meta.title)
+                            };
+                            ui.add(IconLabel::new(Icon::Book, &book_info).strong());
+                            if let Some(err) = crate::settings::AppSettings::last_save_error() {
+                                ui.separator();
+                                ui.add(
+                                    IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED),
+                                );
+                            } else if let Some(err) =
+                                crate::settings::AppSettings::last_secret_error()
+                            {
+                                ui.separator();
+                                ui.add(
+                                    IconLabel::new(
+                                        Icon::Warning,
+                                        &t.secrets_storage_error.replace("{}", &err),
+                                    )
+                                    .color(egui::Color32::RED),
+                                );
+                            } else if let Some(msg) = status_message {
+                                if status_opacity > 0.01 {
+                                    ui.separator();
+                                    render_status_text(
+                                        ui,
+                                        msg,
+                                        theme.accent_color().gamma_multiply(status_opacity),
+                                        is_rtl,
+                                    );
+                                }
+                            }
+                        } else if let Some(err) = crate::settings::AppSettings::last_save_error() {
+                            ui.add(IconLabel::new(Icon::Warning, &err).color(egui::Color32::RED));
+                        } else if let Some(err) = crate::settings::AppSettings::last_secret_error()
+                        {
+                            ui.add(
+                                IconLabel::new(
+                                    Icon::Warning,
+                                    &t.secrets_storage_error.replace("{}", &err),
+                                )
+                                .color(egui::Color32::RED),
+                            );
+                        } else if let Some(msg) = status_message {
+                            if status_opacity > 0.01 {
+                                render_status_text(
+                                    ui,
+                                    msg,
+                                    theme.text_color().gamma_multiply(status_opacity),
+                                    is_rtl,
+                                );
+                            } else {
+                                ui.add(egui::Label::new(t.ready_to_read).truncate());
+                            }
+                        } else {
+                            ui.add(egui::Label::new(t.ready_to_read).truncate());
+                        }
+                    });
+                }
+            },
+        );
 
         if document.is_some() && progress_frac > 0.0 {
             let bar_rect = ui.max_rect();
@@ -499,7 +543,7 @@ fn render_status_text(ui: &mut egui::Ui, msg: &str, color: egui::Color32, is_rtl
     if let Some((left, right)) = msg.split_once(STATUS_ARROW_SEP) {
         paint_arrow_pair(ui, left, right, color, is_rtl);
     } else {
-        ui.label(RichText::new(msg).color(color));
+        ui.add(egui::Label::new(RichText::new(msg).color(color)).truncate());
     }
 }
 

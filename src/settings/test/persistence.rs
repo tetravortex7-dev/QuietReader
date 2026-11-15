@@ -524,6 +524,30 @@ fn test_typography_settings_defaults_migration_and_roundtrip() {
 }
 
 #[test]
+fn test_schema_v3_migrates_text_two_columns_to_spread_and_preserves_v4_scroll() {
+    let dir = unique_test_dir("v3_spread_migration");
+    let path = dir.join("settings.json");
+
+    let v3_json = r#"{"schema_version":3,"text_two_columns":false,"font_size":20.0}"#;
+    std::fs::write(&path, v3_json).unwrap();
+    let migrated = AppSettings::load_from_path(&path);
+    assert_eq!(
+        migrated.schema_version,
+        settings::CURRENT_SETTINGS_SCHEMA_VERSION
+    );
+    assert!(migrated.text_two_columns);
+    assert_eq!(migrated.font_size, 20.0);
+
+    let v4_scroll_json = r#"{"schema_version":4,"text_two_columns":false,"font_size":20.0}"#;
+    std::fs::write(&path, v4_scroll_json).unwrap();
+    let preserved = AppSettings::load_from_path(&path);
+    assert!(!preserved.text_two_columns);
+    assert!(AppSettings::default().text_two_columns);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn portable_mode_resolves_and_persists_settings() {
     AppSettings::set_portable(true);
     assert!(AppSettings::is_portable());
